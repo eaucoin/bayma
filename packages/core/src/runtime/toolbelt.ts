@@ -7,8 +7,9 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { dataRoot, type PathEnvironment } from "../paths.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
 
@@ -23,6 +24,35 @@ export const TOOLBELT_DIR = "toolbelt";
 
 export function toolbeltPath(env: PathEnvironment = process.env): string {
   return join(dataRoot(env), TOOLBELT_DIR);
+}
+
+/**
+ * Bind the toolbelt's Python environment to where its payload lives. The
+ * environment's interpreter link is relative, but Python finds that
+ * interpreter's platform libraries through the `home` its `pyvenv.cfg` names
+ * by absolute path, so a payload carries the path it was built at until it is
+ * bound. `payloadFiles` holds the payload now; `payloadRoot` is where it will
+ * run from, when an install stages it elsewhere first.
+ */
+export function bindToolbelt(
+  payloadFiles: string,
+  payloadRoot: string = payloadFiles,
+): void {
+  const venv = join(TOOLBELT_DIR, ".venv");
+  const config = join(payloadFiles, venv, "pyvenv.cfg");
+  if (!existsSync(config)) return;
+  const bin = join(venv, "bin");
+  const interpreter = resolve(
+    join(payloadRoot, bin),
+    readlinkSync(join(payloadFiles, bin, "python")),
+  );
+  writeFileSync(
+    config,
+    readFileSync(config, "utf8").replace(
+      /^home\s*=.*$/m,
+      `home = ${dirname(interpreter)}`,
+    ),
+  );
 }
 
 function payloadVersion(payloadRoot: string): number[] | undefined {

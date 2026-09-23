@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   mkdirSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
   symlinkSync,
@@ -8,6 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  bindToolbelt,
   linkToolbelt,
   PAYLOAD_MANIFEST,
   TOOLBELT_DIR,
@@ -95,5 +97,38 @@ test("a payload without a toolbelt links nothing", async () => {
     linkToolbelt(payload, env);
 
     expect(() => readlinkSync(toolbeltPath(env))).toThrow();
+  });
+});
+
+test("binding points the toolbelt's environment at the payload's interpreter where the payload will run", async () => {
+  await withTempDir((dir) => {
+    const root = realpathSync(dir);
+    const staged = writePayload(root, "0.3.1");
+    const bin = join(staged, TOOLBELT_DIR, ".venv", "bin");
+    mkdirSync(bin, { recursive: true });
+    symlinkSync(
+      join("..", "..", "..", "python", "bin", "python3"),
+      join(bin, "python"),
+    );
+    const config = join(staged, TOOLBELT_DIR, ".venv", "pyvenv.cfg");
+    writeFileSync(
+      config,
+      "home = /build/.work/python/python/bin\nrelocatable = true\n",
+    );
+    const installed = join(root, "payloads", "installed");
+
+    bindToolbelt(staged, installed);
+
+    expect(readFileSync(config, "utf8")).toBe(
+      `home = ${join(installed, "python", "bin")}\nrelocatable = true\n`,
+    );
+  });
+});
+
+test("binding a payload without a toolbelt environment changes nothing", async () => {
+  await withTempDir((dir) => {
+    const payload = writePayload(realpathSync(dir), "0.3.1");
+
+    expect(() => bindToolbelt(payload)).not.toThrow();
   });
 });
