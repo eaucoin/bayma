@@ -1,5 +1,5 @@
 ---
-name: bayma-github-platform
+name: bayma-platform-github
 description: Inspect the source code of and execute code from the installed `octokit` npm package; bootstrap authentication with credentials kept in this skill's folder.
 ---
 
@@ -36,7 +36,7 @@ await (async () => {
 
   globalThis.ghOctokit = new Octokit({
     auth: readGitHubToken(),
-    userAgent: "bayma-github-platform",
+    userAgent: "bayma-platform-github",
     request: {
       headers: {
         "X-GitHub-Api-Version": "2022-11-28",

@@ -1,5 +1,5 @@
 {
-  "name": "bayma-github-platform",
+  "name": "bayma-platform-github",
   "private": true,
   "type": "module",
   "dependencies": {
