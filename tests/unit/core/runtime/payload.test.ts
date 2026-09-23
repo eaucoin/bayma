@@ -61,6 +61,21 @@ function writePayload(
         pathEnvPrepend: { PATH: ["toolchain/bin"] },
         pins: {},
       },
+      // C and C++ share one host, in one payload directory.
+      c: {
+        root: "clang",
+        env: {},
+        envPaths: { BAYMA_C_HOST_BIN: "bin/bayma-cpp-host" },
+        pathEnvPrepend: { PATH: ["bin"] },
+        pins: {},
+      },
+      cpp: {
+        root: "clang",
+        env: {},
+        envPaths: { BAYMA_CPP_HOST_BIN: "bin/bayma-cpp-host" },
+        pathEnvPrepend: { PATH: ["bin"] },
+        pins: {},
+      },
     },
   };
   edit(manifest);
@@ -87,7 +102,7 @@ function writePayload(
   return root;
 }
 
-test("the manifest describes exactly the four runtimes", async () => {
+test("the manifest describes exactly the runtimes bayma hosts", async () => {
   await withTempDir(async (dir) => {
     const manifest = readPayloadManifest(writePayload(dir));
     expect(Object.keys(manifest.runtimes).sort()).toEqual(
@@ -121,6 +136,10 @@ test("the resolved environment points every runtime at the payload", async () =>
     expect(env.BAYMA_RUST_HOST_BIN).toBe(
       join(root, "rust", "host", "bayma-rust-host"),
     );
+    expect(env.BAYMA_C_HOST_BIN).toBe(
+      join(root, "clang", "bin", "bayma-cpp-host"),
+    );
+    expect(env.BAYMA_CPP_HOST_BIN).toBe(env.BAYMA_C_HOST_BIN);
     expect(env.CARGO_HOME).toBeUndefined();
     expect(env.RUSTUP_TOOLCHAIN).toBeUndefined();
     expect(env.HOME).toBe("/home/someone");
@@ -130,6 +149,7 @@ test("the resolved environment points every runtime at the payload", async () =>
       join(root, "python", "bin"),
       join(root, "dotnet-script"),
       join(root, "rust", "toolchain", "bin"),
+      join(root, "clang", "bin"),
       "/usr/bin",
     ]);
   });

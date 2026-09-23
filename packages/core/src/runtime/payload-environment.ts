@@ -45,6 +45,8 @@ const REQUIRED_ENV_PATHS: Record<RuntimeId, readonly string[]> = {
     "BAYMA_RUST_SUPPORT_DIR",
     "BAYMA_RUST_CARGO_SEED_DIR",
   ],
+  c: ["BAYMA_C_HOST_BIN"],
+  cpp: ["BAYMA_CPP_HOST_BIN"],
 };
 
 /** Host variables that would redirect a runtime away from its payload. */

@@ -96,6 +96,10 @@ function smokeCode(runtimeId: RuntimeId): string {
       return 'System.Console.WriteLine("alpha")\nSystem.Console.WriteLine("beta")\nawait System.Threading.Tasks.Task.Delay(20)\n40 + 2';
     case "rust":
       return 'for line in ["alpha", "beta"] { println!("{}", line); }\nstd::thread::sleep(std::time::Duration::from_millis(20));\n40 + 2';
+    case "c":
+      return '#include <stdio.h>\nconst char *lines[] = {"alpha", "beta"};\nfor (int i = 0; i < 2; ++i) puts(lines[i]);\n40 + 2';
+    case "cpp":
+      return '#include <cstdio>\nconst char *lines[] = {"alpha", "beta"};\nfor (const char *line : lines) std::puts(line);\n40 + 2';
   }
 }
 

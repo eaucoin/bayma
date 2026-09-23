@@ -11,6 +11,7 @@ import { pipeline } from "node:stream/promises";
 import { sha256File } from "./hashing.ts";
 import type { PinnedArchive } from "../platforms.ts";
 
+/** The bound on a download whose pin does not state its size. */
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 
 /**
@@ -36,14 +37,13 @@ export async function fetchPinned(
       `failed to download ${label}: ${response.status} ${response.statusText}`,
     );
   }
+  const limit = archive.bytes ?? MAX_ARCHIVE_BYTES;
   let received = 0;
   const bound = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       received += chunk.byteLength;
       callback(
-        received <= MAX_ARCHIVE_BYTES
-          ? null
-          : new Error(`${label} exceeds ${MAX_ARCHIVE_BYTES} bytes`),
+        received <= limit ? null : new Error(`${label} exceeds ${limit} bytes`),
         chunk,
       );
     },

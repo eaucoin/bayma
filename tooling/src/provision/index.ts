@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { RuntimeId } from "@bayma/core";
 import { readJson, writeJson } from "../shared/files.ts";
 import { provisionBun } from "./bun.ts";
+import { provisionClang } from "./clang.ts";
 import { provisionDotnet } from "./dotnet.ts";
 import type { ProvisionContext, RuntimePayload } from "./payload.ts";
 import { provisionPython } from "./python.ts";
@@ -37,6 +38,7 @@ export async function provision(
     python: await provisionPython(context),
     "dotnet-script": await provisionDotnet(context),
     rust: await provisionRust(context),
+    ...(await provisionClang(context)),
   };
   const record: ProvisionRecord = {
     provisionedAt: new Date().toISOString(),

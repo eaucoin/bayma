@@ -24,6 +24,10 @@ test("every platform pins an archive and a digest for each toolchain", () => {
       pins.dotnet,
       ...Object.values(pins.rustComponents),
       ...(pins.linker ? [pins.linker] : []),
+      pins.llvm,
+      ...(pins.clangSysroot
+        ? [...pins.clangSysroot.cells, ...pins.clangSysroot.build]
+        : []),
     ];
     for (const archive of archives) {
       expect(archive.url).toStartWith("https://");
@@ -33,6 +37,12 @@ test("every platform pins an archive and a digest for each toolchain", () => {
   // Only Linux pins a linker: macOS links the host with Apple's clang.
   expect(PLATFORMS["linux-x64"].linker).toBeDefined();
   expect(PLATFORMS["darwin-arm64"].linker).toBeUndefined();
+  // Linux holds its native hosts to a glibc floor, with a sysroot at it;
+  // macOS builds against the SDK, for the release's oldest macOS.
+  expect(PLATFORMS["linux-x64"].glibcFloor).toBe("2.35");
+  expect(PLATFORMS["linux-x64"].clangSysroot).toBeDefined();
+  expect(PLATFORMS["darwin-arm64"].clangSysroot).toBeUndefined();
+  expect(PLATFORMS["darwin-arm64"].llvm.macosMinimum).toBeDefined();
 });
 
 test("the payload tarball is named for its platform and version", () => {
@@ -53,10 +63,14 @@ test.if(existsSync(join(payloadDir, "payload.json")))(
     );
     for (const runtimeId of RUNTIME_IDS) {
       const runtime = manifest.runtimes[runtimeId];
-      expect(runtime.root).toBe(runtimeId);
       expect(existsSync(join(payloadDir, runtime.root))).toBe(true);
       expect(Object.keys(runtime.pins).length).toBeGreaterThan(0);
     }
+    // Each runtime has its own directory, except C and C++, which share
+    // their host.
+    expect(
+      RUNTIME_IDS.map((runtimeId) => manifest.runtimes[runtimeId].root),
+    ).toEqual(["bun", "python", "dotnet-script", "rust", "clang", "clang"]);
   },
 );
 

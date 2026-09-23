@@ -166,7 +166,7 @@ async function provisionLinker(
       '  set -- "$@" "$arg"',
       "  count=$((count - 1))",
       "done",
-      `exec ${JSON.stringify(join(directory, "zig", "zig"))} cc -target ${PLATFORM.rustTarget.replace("unknown-", "")}.${pinned.glibcFloor} "$@"`,
+      `exec ${JSON.stringify(join(directory, "zig", "zig"))} cc -target ${PLATFORM.rustTarget.replace("unknown-", "")}.${RUST.glibcFloor} "$@"`,
       "",
     ].join("\n"),
   );

@@ -1,0 +1,10 @@
+{
+  "name": "@bayma/runtime-cpp",
+  "private": true,
+  "version": "0.3.1",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@bayma/core": "workspace:*"
+  }
+}

@@ -33,6 +33,7 @@
     "@bayma/runtime-dotnet-script": "workspace:*",
     "@bayma/runtime-python": "workspace:*",
     "@bayma/runtime-rust": "workspace:*",
+    "@bayma/runtime-cpp": "workspace:*",
     "@bayma/tooling": "workspace:*",
     "@types/node": "26.6.2",
     "bun-types": "1.3.14",

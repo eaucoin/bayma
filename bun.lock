@@ -15,6 +15,7 @@
         "@bayma-repl/bayma": "workspace:*",
         "@bayma/core": "workspace:*",
         "@bayma/runtime-bun": "workspace:*",
+        "@bayma/runtime-cpp": "workspace:*",
         "@bayma/runtime-dotnet-script": "workspace:*",
         "@bayma/runtime-python": "workspace:*",
         "@bayma/runtime-rust": "workspace:*",
@@ -27,45 +28,53 @@
     },
     "packages/core": {
       "name": "@bayma/core",
-      "version": "0.1.0",
+      "version": "0.3.1",
     },
     "packages/runtime-bun": {
       "name": "@bayma/runtime-bun",
-      "version": "0.1.0",
+      "version": "0.3.1",
+      "dependencies": {
+        "@bayma/core": "workspace:*",
+      },
+    },
+    "packages/runtime-cpp": {
+      "name": "@bayma/runtime-cpp",
+      "version": "0.3.1",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-dotnet-script": {
       "name": "@bayma/runtime-dotnet-script",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-python": {
       "name": "@bayma/runtime-python",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-rust": {
       "name": "@bayma/runtime-rust",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/server": {
       "name": "@bayma-repl/bayma",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "bin": {
         "bayma": "dist/bayma.js",
       },
       "devDependencies": {
         "@bayma/core": "workspace:*",
         "@bayma/runtime-bun": "workspace:*",
+        "@bayma/runtime-cpp": "workspace:*",
         "@bayma/runtime-dotnet-script": "workspace:*",
         "@bayma/runtime-python": "workspace:*",
         "@bayma/runtime-rust": "workspace:*",
@@ -73,7 +82,7 @@
     },
     "tooling": {
       "name": "@bayma/tooling",
-      "version": "0.1.0",
+      "version": "0.3.1",
     },
   },
   "packages": {
@@ -82,6 +91,8 @@
     "@bayma/core": ["@bayma/core@workspace:packages/core"],
 
     "@bayma/runtime-bun": ["@bayma/runtime-bun@workspace:packages/runtime-bun"],
+
+    "@bayma/runtime-cpp": ["@bayma/runtime-cpp@workspace:packages/runtime-cpp"],
 
     "@bayma/runtime-dotnet-script": ["@bayma/runtime-dotnet-script@workspace:packages/runtime-dotnet-script"],
 
