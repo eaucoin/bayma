@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # On demand, for a branch that needs macOS proven before it merges.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -36,7 +38,7 @@ jobs:
       - run: bun run test:e2e
 
   macos:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 120
     steps:
