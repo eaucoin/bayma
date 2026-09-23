@@ -1,0 +1,108 @@
+{
+  "//": "Ubuntu 22.04 packages of the libraries Blender takes from the system, for a system without them. The release pocket never changes, so each is pinned by its sha256.",
+  "mirror": "http://archive.ubuntu.com/ubuntu/",
+  "libraries": [
+    {
+      "soname": "libX11.so.6",
+      "package": "libx11-6",
+      "filename": "pool/main/libx/libx11/libx11-6_1.7.5-1_amd64.deb",
+      "sha256": "027e5e6c748c9a826125df013284caa78ca04213aba1967cd8c8067165e58020"
+    },
+    {
+      "soname": "libXrender.so.1",
+      "package": "libxrender1",
+      "filename": "pool/main/libx/libxrender/libxrender1_0.9.10-1build4_amd64.deb",
+      "sha256": "a68f6db4320b5963dd499b83b6cc8c7b5cd39b05e84862d5945da9244e4c96d6"
+    },
+    {
+      "soname": "libXfixes.so.3",
+      "package": "libxfixes3",
+      "filename": "pool/main/libx/libxfixes/libxfixes3_6.0.0-1_amd64.deb",
+      "sha256": "f627555440060edf19801d77d369c99547cf47123fe4e30c5bdb8b664f0b4467"
+    },
+    {
+      "soname": "libXi.so.6",
+      "package": "libxi6",
+      "filename": "pool/main/libx/libxi/libxi6_1.8-1build1_amd64.deb",
+      "sha256": "47662736cca4be456fd42a5f0a9d3bed8a5cfad4ee08b809a95dde6004daf275"
+    },
+    {
+      "soname": "libxkbcommon.so.0",
+      "package": "libxkbcommon0",
+      "filename": "pool/main/libx/libxkbcommon/libxkbcommon0_1.4.0-1_amd64.deb",
+      "sha256": "a0470edb237d52b71ad41f755c043164abed01423585ed5ea19525b3baaf84f7"
+    },
+    {
+      "soname": "libxcb.so.1",
+      "package": "libxcb1",
+      "filename": "pool/main/libx/libxcb/libxcb1_1.14-3ubuntu3_amd64.deb",
+      "sha256": "9258f04136434e7a0ccd76041505421934284209693373cfa9c24acb3a641ec5"
+    },
+    {
+      "soname": "libXext.so.6",
+      "package": "libxext6",
+      "filename": "pool/main/libx/libxext/libxext6_1.3.4-1build1_amd64.deb",
+      "sha256": "875ec849749511dff61c8cc5a775f6f93427b9c3f392fdcec6925f14428e89cd"
+    },
+    {
+      "soname": "libSM.so.6",
+      "package": "libsm6",
+      "filename": "pool/main/libs/libsm/libsm6_1.2.3-1build2_amd64.deb",
+      "sha256": "e652e286a79d9e8e15189d79b290bdce20aca83651f3dfed1b9b7dc0bbf0702f"
+    },
+    {
+      "soname": "libICE.so.6",
+      "package": "libice6",
+      "filename": "pool/main/libi/libice/libice6_1.0.10-1build2_amd64.deb",
+      "sha256": "eea6d52d12ad610d70b0f70c825ed3c560dafb09f4c272e3c6b0b493d984d13f"
+    },
+    {
+      "soname": "libGL.so.1",
+      "package": "libgl1",
+      "filename": "pool/main/libg/libglvnd/libgl1_1.4.0-1_amd64.deb",
+      "sha256": "4fb2bbff94bb1a59bbdb40041e7a8ab58db2a003a151f4055357af03f0b78666"
+    },
+    {
+      "soname": "libXau.so.6",
+      "package": "libxau6",
+      "filename": "pool/main/libx/libxau/libxau6_1.0.9-1build5_amd64.deb",
+      "sha256": "551fa4101394af894f5f401285eeca9756da94bb31ecb08ed36a549ec580cd10"
+    },
+    {
+      "soname": "libXdmcp.so.6",
+      "package": "libxdmcp6",
+      "filename": "pool/main/libx/libxdmcp/libxdmcp6_1.1.3-0ubuntu5_amd64.deb",
+      "sha256": "6f6c869dcfc072fa77d24b72ba127bdf15d606bdffbeba4314fb39f4f324363d"
+    },
+    {
+      "soname": "libuuid.so.1",
+      "package": "libuuid1",
+      "filename": "pool/main/u/util-linux/libuuid1_2.37.2-4ubuntu3_amd64.deb",
+      "sha256": "94f24383876c575a85c4fd87226e72fe9c9bbdbb52b6f4d71dade805e0d60d48"
+    },
+    {
+      "soname": "libbsd.so.0",
+      "package": "libbsd0",
+      "filename": "pool/main/libb/libbsd/libbsd0_0.11.5-1_amd64.deb",
+      "sha256": "09367acdf59f28ffb71ba7bc36c516cff03b2765930cf9be7bb7ea7273e4c312"
+    },
+    {
+      "soname": "libGLdispatch.so.0",
+      "package": "libglvnd0",
+      "filename": "pool/main/libg/libglvnd/libglvnd0_1.4.0-1_amd64.deb",
+      "sha256": "6956d8be93b160b439a043141a061adfd54561d877423a956ace84d2fb3bfb4e"
+    },
+    {
+      "soname": "libGLX.so.0",
+      "package": "libglx0",
+      "filename": "pool/main/libg/libglvnd/libglx0_1.4.0-1_amd64.deb",
+      "sha256": "950068e8a3ad3905058d21a8c870c37989e48c0a537a7c57231c277af19f5395"
+    },
+    {
+      "soname": "libmd.so.0",
+      "package": "libmd0",
+      "filename": "pool/main/libm/libmd/libmd0_1.0.4-1build1_amd64.deb",
+      "sha256": "bcdad5e400aeb660f0337a1c5c1a77e3effa91d0803e64ce2d000e9006f67cdb"
+    }
+  ]
+}
