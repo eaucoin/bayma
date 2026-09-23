@@ -53,6 +53,9 @@ function llvmMember(path: string): boolean {
     /^include\/(llvm|llvm-c|clang|clang-c)\//.test(path) ||
     // Every library `llvm-config --libs` names, which includes Polly's.
     /^lib\/lib(clang[A-Z]|LLVM|Polly)\w*\.a$/.test(path) ||
+    // macOS: the release's libraries are LLVM bitcode, which only its own
+    // libLTO can read.
+    (!IS_LINUX && path === "lib/libLTO.dylib") ||
     path.startsWith(`lib/clang/${LLVM_MAJOR}/include/`) ||
     (IS_LINUX &&
       (path.startsWith("include/c++/v1/") ||
@@ -313,7 +316,17 @@ function buildHost(
           "-lm",
           "-l:libz.a",
         ]
-      : ["-Wl,-dead_strip", ...clangLibraries, ...llvmLibraries, "-lz"]),
+      : [
+          "-Wl,-dead_strip",
+          // The libraries are bitcode, so linking them compiles what the host
+          // reaches. Apple's linker compiles it with the release's libLTO,
+          // keeping what it compiled for the next build.
+          `-Wl,-lto_library,${join(llvm, "lib", "libLTO.dylib")}`,
+          `-Wl,-cache_path_lto,${join(context.workDir, "clang", "lto-cache")}`,
+          ...clangLibraries,
+          ...llvmLibraries,
+          "-lz",
+        ]),
   ]);
   return host;
 }
