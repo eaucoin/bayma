@@ -1,15 +1,25 @@
 name: release
 
+# On demand only, from the version tag being released.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
+  # The release is named after the ref it runs from, so a run from a branch
+  # must stop before it creates a release by the branch's name.
+  tag:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          [[ "$GITHUB_REF" == refs/tags/v* ]] ||
+            { echo "::error::Run the release from a v* tag, not $GITHUB_REF"; exit 1; }
+
   payload-linux:
+    needs: tag
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -26,6 +36,7 @@ jobs:
           path: dist/bayma-payload-*.tar.gz
 
   payload-macos:
+    needs: tag
     runs-on: macos-15
     timeout-minutes: 120
     steps:
