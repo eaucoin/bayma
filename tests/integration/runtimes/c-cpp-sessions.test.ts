@@ -78,8 +78,8 @@ test("C++ results show what they hold", async () => {
     expect((await run(client, session, "Opaque{7}")).result_text).toStartWith(
       "(Opaque) @0x",
     );
-    // A temporary whose destructor is a template's, which Clang's own value
-    // capture could not link.
+    // Temporaries with inline destructors inside the result (the maps'
+    // default allocators), which Clang's own value capture cannot link.
     expect(
       (
         await run(

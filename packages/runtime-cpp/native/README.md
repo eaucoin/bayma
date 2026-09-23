@@ -30,11 +30,14 @@ cell in each language before the payload carries it.
   arrives between cells is discarded, and stdin is empty.
 - **Diagnostics and results.** Clang's diagnostics are the exec's error, or
   its stderr when they are only warnings. A trailing expression's value is
-  the result. In C++, results of class type print their contents through a
-  small template the worker defines on first use: string-likes quoted,
-  anything `std::format` formats (C++23 formats ranges, maps, and tuples),
-  anything with an `operator<<` streamed. Otherwise the Interpreter's own
-  rendering shows the value, or where it lives.
+  the result. C++ results are captured by bayma rather than by the
+  Interpreter, whose capture drops the cleanups of temporaries in the
+  expression and then fails to link (LLVM #225868): the worker rewrites the
+  trailing expression into a call to a template from the session's prelude,
+  which renders string-likes quoted, anything `std::format` formats (C++23
+  formats ranges, maps, and tuples), and anything with an `operator<<`
+  streamed, and shows anything else by its type and address. C results use
+  the Interpreter's own rendering.
 - **Checkpoints** are JSON text that cells write and read through a C API the
   host exports to the JIT (`bayma_write_checkpoint`, `bayma_read_checkpoint`).
   A successful exec commits the checkpoint as it stands; a failed one

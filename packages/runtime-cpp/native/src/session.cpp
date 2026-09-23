@@ -130,12 +130,13 @@ int bayma_write_checkpoint(const char *json);
 /// Replaces a C++ cell's trailing expression `e` with
 /// `bayma_capture_result(e, "<type of e>")` before the cell is compiled.
 ///
-/// Clang's own value capture moves a class-typed result into storage it
-/// destroys later, and marks the class's destructor used without
-/// instantiating it, so the destructor of a template such as std::vector or
-/// std::map is never compiled: the cell fails to link, and every cell after
-/// it fails with it. The call is ordinary C++ that Sema checks like any
-/// other, so its temporaries and their destructors are handled as usual.
+/// Clang's own value capture strips the expression's cleanups before wrapping
+/// it, so the inline destructor of a temporary inside it, such as the
+/// allocator std::vector's constructor takes by default, is never emitted:
+/// the cell fails to link, and every cell after it fails with it (LLVM
+/// #225868). The call here is ordinary C++ that Sema checks like any other,
+/// with the expression's cleanups kept, so its temporaries and their
+/// destructors are handled as usual.
 class ValueCapture : public clang::SemaConsumer {
 public:
   void InitializeSema(clang::Sema &S) override { Sema = &S; }
