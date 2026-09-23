@@ -13,10 +13,17 @@ import type { PinnedArchive } from "../platforms.ts";
 
 /** The bound on a download whose pin does not state its size. */
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+/** Tries at a download before a network failure fails provisioning. */
+const DOWNLOAD_ATTEMPTS = 3;
+
+/** Bytes that cannot be what the pin names; downloading again cannot help. */
+class PinMismatch extends Error {}
 
 /**
  * Download a pinned archive into `downloadsDir/<sha256>` unless it is already
- * there, and prove the bytes match the pin before returning the path.
+ * there, and prove the bytes match the pin before returning the path. A
+ * download the network interrupts is tried again; bytes that do not match
+ * the pin are not.
  */
 export async function fetchPinned(
   archive: PinnedArchive,
@@ -30,30 +37,21 @@ export async function fetchPinned(
   rmSync(target, { force: true });
 
   const staging = `${target}.part`;
-  rmSync(staging, { force: true });
-  const response = await fetch(archive.url);
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `failed to download ${label}: ${response.status} ${response.statusText}`,
-    );
+  for (let attempt = 1; ; attempt += 1) {
+    rmSync(staging, { force: true });
+    try {
+      await download(archive, staging, label);
+      break;
+    } catch (error) {
+      if (error instanceof PinMismatch || attempt === DOWNLOAD_ATTEMPTS) {
+        rmSync(staging, { force: true });
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `failed to download ${label} from ${archive.url} (attempt ${attempt} of ${DOWNLOAD_ATTEMPTS}): ${reason}`,
+        );
+      }
+    }
   }
-  const limit = archive.bytes ?? MAX_ARCHIVE_BYTES;
-  let received = 0;
-  const bound = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      received += chunk.byteLength;
-      callback(
-        received <= limit ? null : new Error(`${label} exceeds ${limit} bytes`),
-        chunk,
-      );
-    },
-  });
-  mkdirSync(dirname(staging), { recursive: true });
-  await pipeline(
-    Readable.from(response.body as unknown as AsyncIterable<Uint8Array>),
-    bound,
-    createWriteStream(staging, { flags: "wx" }),
-  );
   const actual = sha256File(staging);
   if (actual !== archive.sha256) {
     rmSync(staging, { force: true });
@@ -61,4 +59,33 @@ export async function fetchPinned(
   }
   renameSync(staging, target);
   return target;
+}
+
+async function download(
+  archive: PinnedArchive,
+  destination: string,
+  label: string,
+): Promise<void> {
+  const response = await fetch(archive.url);
+  if (!response.ok || !response.body)
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  const limit = archive.bytes ?? MAX_ARCHIVE_BYTES;
+  let received = 0;
+  const bound = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.byteLength;
+      callback(
+        received <= limit
+          ? null
+          : new PinMismatch(`${label} exceeds ${limit} bytes`),
+        chunk,
+      );
+    },
+  });
+  mkdirSync(dirname(destination), { recursive: true });
+  await pipeline(
+    Readable.from(response.body as unknown as AsyncIterable<Uint8Array>),
+    bound,
+    createWriteStream(destination, { flags: "wx" }),
+  );
 }
