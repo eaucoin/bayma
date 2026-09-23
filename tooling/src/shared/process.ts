@@ -27,7 +27,15 @@ export function run(command: string[], options: RunOptions = {}): RunResult {
   };
 }
 
-/** Run a command that must succeed; the failure message carries its stderr. */
+/** The last lines of a stream: where a failing tool puts its verdict. */
+function tail(output: string, lines = 60): string {
+  return output.trim().split("\n").slice(-lines).join("\n");
+}
+
+/**
+ * Run a command that must succeed; the failure message carries the end of
+ * both streams, since test runners report failures on stdout.
+ */
 export function runOrThrow(
   command: string[],
   options: RunOptions = {},
@@ -35,7 +43,13 @@ export function runOrThrow(
   const result = run(command, options);
   if (result.status !== 0) {
     throw new Error(
-      `${command.join(" ")} failed with status ${result.status}\n${result.stderr.trim()}`,
+      [
+        `${command.join(" ")} failed with status ${result.status}`,
+        tail(result.stdout),
+        tail(result.stderr),
+      ]
+        .filter(Boolean)
+        .join("\n"),
     );
   }
   return result;
