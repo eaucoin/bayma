@@ -1,0 +1,10 @@
+{
+  "name": "@bayma/runtime-dotnet-script",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@bayma/core": "workspace:*"
+  }
+}

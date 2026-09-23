@@ -1,0 +1,5 @@
+packages/runtime-rust/native/evcxr/
+packages/runtime-rust/native/target/
+dist/
+.work/
+bun.lock

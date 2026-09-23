@@ -1,0 +1,50 @@
+{
+  "name": "@bayma-repl/bayma",
+  "version": "0.2.2",
+  "description": "A durable engine for REPL sessions in Bun, Python, C#, and Rust, served to agents over MCP",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eaucoin/bayma.git"
+  },
+  "homepage": "https://github.com/eaucoin/bayma#readme",
+  "bugs": "https://github.com/eaucoin/bayma/issues",
+  "keywords": [
+    "mcp",
+    "repl",
+    "sessions",
+    "bun",
+    "python",
+    "csharp",
+    "rust",
+    "agents"
+  ],
+  "type": "module",
+  "bin": {
+    "bayma": "dist/bayma.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "devDependencies": {
+    "@bayma/core": "workspace:*",
+    "@bayma/runtime-bun": "workspace:*",
+    "@bayma/runtime-python": "workspace:*",
+    "@bayma/runtime-dotnet-script": "workspace:*",
+    "@bayma/runtime-rust": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

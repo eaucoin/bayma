@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run format:check
+      - run: bun run build
+      - uses: actions/cache@v4
+        with:
+          path: .work
+          key: payload-linux-x64-${{ hashFiles('tooling/src/platforms.ts', 'packages/runtime-rust/native/**') }}
+      - run: bun run provision
+      - run: bun run payload
+      - run: bun run test
+      - run: bun run release --host-only --base-url file://${{ github.workspace }}/dist
+      - run: bun run pack
+      - run: bun run test:e2e
+
+  macos:
+    if: github.event_name == 'push'
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - uses: actions/cache@v4
+        with:
+          path: .work
+          key: payload-darwin-arm64-${{ hashFiles('tooling/src/platforms.ts', 'packages/runtime-rust/native/**') }}
+      - run: bun run provision
+      - run: bun run payload
+      - run: bun run test
+      - run: bun run release --host-only --base-url file://${{ github.workspace }}/dist
+      - run: bun run pack
+      - run: bun run test:e2e

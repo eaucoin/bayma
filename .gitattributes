@@ -1,0 +1,6 @@
+native/vendor/** -text
+native/Cargo.lock text eol=lf
+native/Cargo.toml text eol=lf
+native/bayma-rust-host/** text eol=lf
+native/bayma-rust-support/** text eol=lf
+.cargo/config.toml text eol=lf

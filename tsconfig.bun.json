@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun-types"]
+  },
+  "include": ["packages", "tests", "tooling"],
+  "exclude": ["packages/core/src/runtime/bun-sqlite.d.ts"]
+}

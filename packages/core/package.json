@@ -1,0 +1,7 @@
+{
+  "name": "@bayma/core",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "exports": "./src/index.ts"
+}
