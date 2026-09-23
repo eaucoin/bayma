@@ -42,7 +42,7 @@ class MutableToolbeltView(Protocol):
 class ActivateEnvironmentTest(unittest.TestCase):
     def test_prepends_matching_toolbelt_site_packages(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            toolbelt_root = Path(temporary_directory)
+            toolbelt_root = Path(temporary_directory).resolve()
             python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
             site_packages = (
                 toolbelt_root / ".venv" / "lib" / python_version / "site-packages"
@@ -67,7 +67,7 @@ class ActivateEnvironmentTest(unittest.TestCase):
 
     def test_rejects_environment_for_a_different_python_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            toolbelt_root = Path(temporary_directory)
+            toolbelt_root = Path(temporary_directory).resolve()
             wrong_site_packages = toolbelt_root / ".venv/lib/python0.0/site-packages"
             wrong_site_packages.mkdir(parents=True)
 
@@ -153,7 +153,7 @@ class InterpreterContractTest(unittest.TestCase):
 class RepositoryHelpersTest(unittest.TestCase):
     def test_discovers_repo_from_a_nested_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            repo_root = Path(temporary_directory)
+            repo_root = Path(temporary_directory).resolve()
             (repo_root / ".git").mkdir()
             nested = repo_root / "one/two/three"
             nested.mkdir(parents=True)
@@ -166,7 +166,7 @@ class RepositoryHelpersTest(unittest.TestCase):
 
     def test_discovers_javascript_and_python_package_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            repo_root = Path(temporary_directory)
+            repo_root = Path(temporary_directory).resolve()
             (repo_root / ".git").mkdir()
             javascript = repo_root / "apps/web"
             python = repo_root / "services/indexer"
@@ -184,7 +184,7 @@ class RepositoryHelpersTest(unittest.TestCase):
 
     def test_atomic_write_replaces_content_mode_and_temporary_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            target = Path(temporary_directory) / "nested/result.txt"
+            target = Path(temporary_directory).resolve() / "nested/result.txt"
 
             returned = subject.atomic_write(target, "complete\n", mode=0o640)
 
@@ -331,7 +331,7 @@ class ToolbeltTest(unittest.TestCase):
 
     def test_isolated_runner_imports_the_installed_toolbelt_from_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            test_file = Path(temporary_directory) / "test_installed_toolbelt.py"
+            test_file = Path(temporary_directory).resolve() / "test_installed_toolbelt.py"
             test_file.write_text(
                 "import bayma_toolbelt\n\n"
                 "def test_installed_toolbelt():\n"
@@ -350,7 +350,7 @@ class ToolbeltTest(unittest.TestCase):
 
     def test_child_interpreters_ignore_the_repl_interpreter_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            test_file = Path(temporary_directory) / "test_clean_interpreter.py"
+            test_file = Path(temporary_directory).resolve() / "test_clean_interpreter.py"
             test_file.write_text(
                 "import decimal\n\n"
                 "def test_clean_interpreter():\n"
@@ -373,13 +373,13 @@ class ToolbeltTest(unittest.TestCase):
 
     def test_project_runner_requires_pyproject_and_lockfile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            project_root = Path(temporary_directory)
+            project_root = Path(temporary_directory).resolve()
             with self.assertRaisesRegex(RuntimeError, "reproducible boundary"):
                 self.toolbelt.run_project_pytest(project_root, "test_probe.py")
 
     def test_project_runner_rejects_a_stale_lockfile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            project_root = Path(temporary_directory)
+            project_root = Path(temporary_directory).resolve()
             (project_root / "pyproject.toml").write_text(
                 "[project]\n"
                 "name = 'stale-project'\n"

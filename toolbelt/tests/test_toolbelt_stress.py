@@ -80,7 +80,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
 
     def test_filesystem_search_matching_and_editor_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             (root / ".editorconfig").write_text(
                 "root = true\n\n[*]\nindent_style = space\nindent_size = 2\n",
                 encoding="utf-8",
@@ -134,7 +134,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
 
     def test_dulwich_introspection_cache_and_iteration_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            repo_root = Path(temporary_directory)
+            repo_root = Path(temporary_directory).resolve()
             self.toolbelt.dulwich.porcelain.init(repo_root)
             tracked = repo_root / "history.txt"
             commit_ids = []
@@ -185,7 +185,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
 
     def test_griffe_packaging_and_type_checker_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             module = root / "generated_module.py"
             module.write_text(
                 "\n".join(
@@ -222,7 +222,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
         self.assertEqual((server.name, server.version), ("toolbelt-stress", "1"))
 
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
 
             def create_file() -> None:
                 time.sleep(0.15)
@@ -257,7 +257,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(
             prefix="toolbelt pytest "
         ) as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             test_file = root / "test behavior.py"
             test_file.write_text(
                 "import os\n"
@@ -312,7 +312,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
 
     def test_pytest_reports_collection_errors_bounds_output_and_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             broken = root / "test_broken.py"
             broken.write_text("def test_broken(:\n    pass\n", encoding="utf-8")
             collection = self.toolbelt.run_pytest(
@@ -360,7 +360,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
 
     def test_parallel_pytest_processes_remain_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             test_files = []
             for index in range(4):
                 test_file = root / f"test_parallel_{index}.py"
@@ -390,7 +390,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(
             prefix="toolbelt ruff "
         ) as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             for index in range(200):
                 (root / f"module_{index:03d}.py").write_text(
                     f"value_{index} = {index}\n", encoding="utf-8"
@@ -425,7 +425,7 @@ class PythonToolbeltStressTest(unittest.TestCase):
     def test_project_owned_uv_runners_use_the_locked_boundary(self) -> None:
         toolbelt_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
+            root = Path(temporary_directory).resolve()
             test_file = root / "test_project_runner.py"
             test_file.write_text(
                 "def test_project_runner():\n    assert True\n", encoding="utf-8"
