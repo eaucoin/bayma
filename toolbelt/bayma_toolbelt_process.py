@@ -50,12 +50,24 @@ def read_bounded_output(handle: BinaryIO, limit_bytes: int) -> str:
     return (head + marker + tail).decode("utf-8", errors="replace")
 
 
+def _signal_group(process: subprocess.Popen[bytes], signal_number: int) -> None:
+    try:
+        os.killpg(process.pid, signal_number)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # With its leader exited, a group whose other members are all zombies
+        # has nothing left to stop, and macOS refuses to signal it.
+        if process.poll() is None:
+            raise
+
+
 def terminate_process(
     process: subprocess.Popen[bytes], *, grace_seconds: float = 0.0
 ) -> int:
     if process.poll() is None:
         if os.name == "posix":
-            os.killpg(process.pid, signal.SIGTERM)
+            _signal_group(process, signal.SIGTERM)
         else:
             process.terminate()
         if grace_seconds > 0:
@@ -64,7 +76,7 @@ def terminate_process(
             except subprocess.TimeoutExpired:
                 pass
         if os.name == "posix":
-            os.killpg(process.pid, signal.SIGKILL)
+            _signal_group(process, signal.SIGKILL)
         else:
             process.kill()
     return process.wait()
