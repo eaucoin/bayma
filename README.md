@@ -77,9 +77,11 @@ for discovering, searching, parsing, editing, and testing code, which the
 `bayma-toolbelt` skill teaches an agent to use. bayma installs the toolbelt
 with its runtimes, at `~/.local/share/bayma/toolbelt`.
 
-The `bayma-platform-github` skill works with GitHub through Octokit in a Bun
-session. It keeps its packages and its GitHub authorization in its own
-folder, and installs nothing with bayma.
+The platform skills work in a Bun session, and keep what they need in their
+own folders rather than installing anything with bayma:
+`bayma-platform-github` works with GitHub through Octokit, with its GitHub
+authorization, and `bayma-platform-playwright` drives a headless browser
+through Playwright, with the browser.
 
 Add the skills with
 
