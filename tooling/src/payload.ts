@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { RUNTIME_IDS, TOOLBELT_DIR } from "@bayma/core";
+import { bindToolbelt, RUNTIME_IDS, TOOLBELT_DIR } from "@bayma/core";
 import { packageManifest } from "./build.ts";
 import { hostPlatformId, type PlatformId } from "./platforms.ts";
 import type { ProvisionRecord } from "./provision/index.ts";
@@ -85,6 +85,9 @@ export function assemblePayload(
     recursive: true,
     verbatimSymlinks: true,
   });
+  // Bound here, so this directory runs as a payload in place; an install
+  // binds its own copy again.
+  bindToolbelt(directory);
   const manifest: PayloadManifest = {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
     version,

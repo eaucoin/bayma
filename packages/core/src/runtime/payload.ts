@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { cacheRoot, type PathEnvironment } from "../paths.ts";
 import { hostPlatformId, type PlatformId } from "./platform.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
-import { linkToolbelt } from "./toolbelt.ts";
+import { bindToolbelt, linkToolbelt } from "./toolbelt.ts";
 import { BAYMA_VERSION } from "../version.ts";
 
 /**
@@ -25,7 +25,7 @@ import { BAYMA_VERSION } from "../version.ts";
  * package, so the package carries a pinned release for each platform and the
  * install downloads that one archive, verifies its digest, and unpacks it
  * once per machine and version. The payload also carries the toolbelt, which
- * every install links into place.
+ * every install binds to where it unpacked it and links into place.
  */
 
 export const PAYLOAD_RELEASE_MANIFEST = "payloads.json";
@@ -170,6 +170,7 @@ async function installPayload(
     if (!existsSync(join(staging, PAYLOAD_MANIFEST))) {
       throw new Error(`the payload archive carries no ${PAYLOAD_MANIFEST}`);
     }
+    bindToolbelt(staging, directory);
     writeFileSync(join(staging, COMPLETE_MARKER), version + "\n");
     try {
       renameSync(staging, directory);

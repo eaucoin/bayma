@@ -168,6 +168,29 @@ test.serial(
       expect(
         realpathSync(join(home, ".local", "share", "bayma", "toolbelt")),
       ).toBe(realpathSync(join(payload, "toolbelt")));
+      // Its Python environment, run through that link, runs the payload's
+      // interpreter where the payload was installed, silently.
+      const toolbeltPython = await run(
+        [
+          join(
+            home,
+            ".local",
+            "share",
+            "bayma",
+            "toolbelt",
+            ".venv",
+            "bin",
+            "python",
+          ),
+          "-c",
+          "import sys; print(sys.base_prefix, sys.base_exec_prefix)",
+        ],
+        { env, cwd: root },
+      );
+      expect(toolbeltPython.exitCode).toBe(0);
+      expect(toolbeltPython.output).toBe(
+        `${join(payload, "python")} ${join(payload, "python")}\n`,
+      );
 
       const doctor = await run([bayma, "doctor", "--format", "json"], {
         env,
