@@ -237,18 +237,19 @@ class PythonToolbeltStressTest(unittest.TestCase):
                 rust_timeout=100,
                 yield_on_timeout=True,
             )
+            # Platforms batch and order events differently (macOS may first
+            # report the watched directory itself), so collect until the
+            # file's own event arrives.
+            expected = (self.toolbelt.watchfiles.Change.added, str(root / "created.py"))
             observed = set()
             deadline = time.monotonic() + 5
-            while not observed and time.monotonic() < deadline:
-                observed = next(watcher)
+            while expected not in observed and time.monotonic() < deadline:
+                observed |= next(watcher)
             watcher.close()
             writer.join(timeout=2)
 
             self.assertFalse(writer.is_alive())
-            self.assertIn(
-                (self.toolbelt.watchfiles.Change.added, str(root / "created.py")),
-                observed,
-            )
+            self.assertIn(expected, observed)
 
     def test_isolated_pytest_handles_async_fixtures_selection_and_edits(self) -> None:
         original_cwd = Path.cwd()
