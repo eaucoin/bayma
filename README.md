@@ -86,6 +86,8 @@ installing anything with bayma:
   a Bun session, with the browser.
 - `bayma-platform-mltpp` edits, filters, and renders audio and video through
   MLT++ in a C++ session, with MLT and FFmpeg (Linux x64).
+- `bayma-platform-gimp` drives a headless GIMP through libgimp from a Python
+  session, with GIMP and its fonts (Linux x64).
 
 Add the skills with
 
