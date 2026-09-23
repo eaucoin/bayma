@@ -88,6 +88,10 @@ installing anything with bayma:
   MLT++ in a C++ session, with MLT and FFmpeg (Linux x64).
 - `bayma-platform-gimp` drives a headless GIMP through libgimp from a Python
   session, with GIMP and its fonts (Linux x64).
+- `bayma-platform-ardour` composes, mixes, and renders music through
+  libardour's Lua from a Python session, with Ardour and its instruments
+  (Linux x64, glibc 2.39+), and finds sounds on Freesound with your own
+  Freesound API credential.
 
 Add the skills with
 

@@ -1,0 +1,731 @@
+{
+  "//": "Ubuntu 24.04 packages: GPL builds of Ardour 8.4, its LV2 instruments and effects, and the libraries they load. The release pocket never changes, so each is pinned by its sha256.",
+  "mirror": "http://archive.ubuntu.com/ubuntu/",
+  "packages": [
+    {
+      "name": "ardour",
+      "filename": "pool/universe/a/ardour/ardour_8.4.0+ds1-2ubuntu8_amd64.deb",
+      "sha256": "f8108f0d1924bbed886b3918e49164b5d1647c9ad7abeaf924b97cc8269d4170"
+    },
+    {
+      "name": "ardour-data",
+      "filename": "pool/universe/a/ardour/ardour-data_8.4.0+ds1-2ubuntu8_all.deb",
+      "sha256": "75d7ba325e53103722b79129e66050341d1af62ce3d6212500dc5c4ec7e00b32"
+    },
+    {
+      "name": "ardour-lv2-plugins",
+      "filename": "pool/universe/a/ardour/ardour-lv2-plugins_8.4.0+ds1-2ubuntu8_amd64.deb",
+      "sha256": "3ded757734139cd942e6555703293bd2636cc70b556aad6d9c3c2b75ece4ca87"
+    },
+    {
+      "name": "avldrums.lv2",
+      "filename": "pool/universe/a/avldrums.lv2/avldrums.lv2_0.7.2-1build2_amd64.deb",
+      "sha256": "67a6d8157a6651b2f570ab4f6c6462587eaf87f9b313774d922832eb5c0a0eb9"
+    },
+    {
+      "name": "avldrums.lv2-soundfont",
+      "filename": "pool/universe/a/avldrums.lv2/avldrums.lv2-soundfont_0.7.2-1build2_all.deb",
+      "sha256": "b4bbe4a60a23b836e12a79812381a0f8ad06fab22242fcc6dd057e7d3775345a"
+    },
+    {
+      "name": "guitarix-lv2",
+      "filename": "pool/universe/g/guitarix/guitarix-lv2_0.46.0+dfsg-1_amd64.deb",
+      "sha256": "1dfe93999516a0d6ffdbcaf36abf18c7f5c997a004d867984d99871c85853a8a"
+    },
+    {
+      "name": "calf-plugins",
+      "filename": "pool/universe/c/calf/calf-plugins_0.90.3-4build2_amd64.deb",
+      "sha256": "9804291bce66f59b085bd890ee650c4568906e9ad390436cd06916488ad1c1f3"
+    },
+    {
+      "name": "libx11-6",
+      "filename": "pool/main/libx/libx11/libx11-6_1.8.7-1build1_amd64.deb",
+      "sha256": "397f84347476a3c5786b39f3ff6f0f82866eb3d8be6d2ad3efeadf019efe5b80"
+    },
+    {
+      "name": "libcairo2",
+      "filename": "pool/main/c/cairo/libcairo2_1.18.0-3build1_amd64.deb",
+      "sha256": "96950b306889ff6e4248bb937b0a3b56e72dacf643fe732214ce375f0f6bbb36"
+    },
+    {
+      "name": "libstdc++6",
+      "filename": "pool/main/g/gcc-14/libstdc++6_14-20240412-0ubuntu1_amd64.deb",
+      "sha256": "4863e880d6ee538e4734c430c5579c1ac933b88a42c25bc9980d0f148c54b21e"
+    },
+    {
+      "name": "libgcc-s1",
+      "filename": "pool/main/g/gcc-14/libgcc-s1_14-20240412-0ubuntu1_amd64.deb",
+      "sha256": "a39efdcaa2245f026dc3254ce14fcff255fc430a17064632b6ba7c5da974a912"
+    },
+    {
+      "name": "libzita-resampler1",
+      "filename": "pool/universe/z/zita-resampler/libzita-resampler1_1.11.2-1build1_amd64.deb",
+      "sha256": "118ea68fd279b229b3094ec9f05facf08cfa3aad4247a3e800b2c13a658bd4f4"
+    },
+    {
+      "name": "libzita-convolver4",
+      "filename": "pool/universe/z/zita-convolver/libzita-convolver4_4.0.3-2build1_amd64.deb",
+      "sha256": "388a1526d78c46fa7e108b8617ed5dcb239645b433b842af9ba13296f2fe093b"
+    },
+    {
+      "name": "libexpat1",
+      "filename": "pool/main/e/expat/libexpat1_2.6.1-2build1_amd64.deb",
+      "sha256": "730b29497212289cda8a3139e693a3538af0cb57846c24f807d1bb293a591c5e"
+    },
+    {
+      "name": "libgtk2.0-0t64",
+      "filename": "pool/main/g/gtk+2.0/libgtk2.0-0t64_2.24.33-4ubuntu1_amd64.deb",
+      "sha256": "74fede1b3400014d06ed5f42eb2fafd427cbc54953de960d66552f84c5f6d714"
+    },
+    {
+      "name": "libgdk-pixbuf-2.0-0",
+      "filename": "pool/main/g/gdk-pixbuf/libgdk-pixbuf-2.0-0_2.42.10+dfsg-3ubuntu3_amd64.deb",
+      "sha256": "d9779cdbb11e5fb6056b39868b689bd2e6a152f60d7fa54fcf7113942eedab24"
+    },
+    {
+      "name": "libglib2.0-0t64",
+      "filename": "pool/main/g/glib2.0/libglib2.0-0t64_2.80.0-6ubuntu1_amd64.deb",
+      "sha256": "629359e915f4466cf9cb0fa6c38270d9af1e03e28fab557ce31977d5ab34f13d"
+    },
+    {
+      "name": "libfluidsynth3",
+      "filename": "pool/universe/f/fluidsynth/libfluidsynth3_2.3.4-1build3_amd64.deb",
+      "sha256": "645b2c03798b6e02d289cc27f4b2b25a040db705cf527017e3a6cdbe568b3438"
+    },
+    {
+      "name": "libfftw3-single3",
+      "filename": "pool/main/f/fftw3/libfftw3-single3_3.3.10-1ubuntu3_amd64.deb",
+      "sha256": "07d67e30d98e41e00ce9edcfd885e0ba7f4fe99fcf390f84726a69144b17cf2b"
+    },
+    {
+      "name": "libpangocairo-1.0-0",
+      "filename": "pool/main/p/pango1.0/libpangocairo-1.0-0_1.52.1+ds-1build1_amd64.deb",
+      "sha256": "98cf5fc9076c2911fe20dfc1e41cd8f686a2bb5d539b1105fab18105b0db1376"
+    },
+    {
+      "name": "libpango-1.0-0",
+      "filename": "pool/main/p/pango1.0/libpango-1.0-0_1.52.1+ds-1build1_amd64.deb",
+      "sha256": "09dfa5c881ab273ec6bc1830adcefdc407fcd619316e68fb26ca3a23d0fc9f54"
+    },
+    {
+      "name": "libgl1",
+      "filename": "pool/main/libg/libglvnd/libgl1_1.7.0-1build1_amd64.deb",
+      "sha256": "e2b2fadeb883f073b566ad1d7874f6702397514d258473e96152a89d4d502a09"
+    },
+    {
+      "name": "libsigc++-2.0-0v5",
+      "filename": "pool/main/libs/libsigc++-2.0/libsigc++-2.0-0v5_2.12.1-2_amd64.deb",
+      "sha256": "a3158061bf6e783e3aef8c8f94eab278d0a1ad8e2d56135b18c9fab5a3d3502c"
+    },
+    {
+      "name": "libsndfile1",
+      "filename": "pool/main/libs/libsndfile/libsndfile1_1.2.2-1ubuntu5_amd64.deb",
+      "sha256": "d1c0111d685548ed0ea7d30eca963ef3fcccaad2083843d5bcc9a42e7bf79c49"
+    },
+    {
+      "name": "libglibmm-2.4-1t64",
+      "filename": "pool/main/g/glibmm2.4/libglibmm-2.4-1t64_2.66.7-1build1_amd64.deb",
+      "sha256": "b26199c73d4bc9805d2278ae5a26b0f34f5abb2e3746883e5d70a4998d8b3981"
+    },
+    {
+      "name": "libxml2",
+      "filename": "pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3ubuntu3_amd64.deb",
+      "sha256": "8c4efd7abe155df3cf0f9b64d659f2d866215785f8e8c44234fbb341d58cc967"
+    },
+    {
+      "name": "libarchive13t64",
+      "filename": "pool/main/liba/libarchive/libarchive13t64_3.7.2-2_amd64.deb",
+      "sha256": "90f7f4692ac6b2ce1755c0f2e67f9655e288d764ef9d70dba7c3f7ae8b8a5b4b"
+    },
+    {
+      "name": "libcurl3t64-gnutls",
+      "filename": "pool/main/c/curl/libcurl3t64-gnutls_8.5.0-2ubuntu10_amd64.deb",
+      "sha256": "6a5463c3acb9a5a8e1756ba7953a694cc4eb1c02b960f4faf4aa84d1ae7a00c5"
+    },
+    {
+      "name": "liblo7",
+      "filename": "pool/universe/libl/liblo/liblo7_0.31-1build1_amd64.deb",
+      "sha256": "8c5b5b91fdbe9fc33193230ae0589ef4edebc6f2f38460d3d76b66014b2fd652"
+    },
+    {
+      "name": "libusb-1.0-0",
+      "filename": "pool/main/libu/libusb-1.0/libusb-1.0-0_1.0.27-1_amd64.deb",
+      "sha256": "d59e679a82ee2b724c556397e831e879936adbe8a007705872b65a5e1ec887b5"
+    },
+    {
+      "name": "libsamplerate0",
+      "filename": "pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4build1_amd64.deb",
+      "sha256": "8a389d1cae81860c9fb7cd9641c3f9d38815e80c0379b3181b4317489126f738"
+    },
+    {
+      "name": "liblrdf0",
+      "filename": "pool/universe/libl/liblrdf/liblrdf0_0.6.1-4build1_amd64.deb",
+      "sha256": "470a5e0e88fd2e7dcfc024c789cd029578b110c65558ae423fd79d7bb4ef01ca"
+    },
+    {
+      "name": "libtag1v5-vanilla",
+      "filename": "pool/main/t/taglib/libtag1v5-vanilla_1.13.1-1build1_amd64.deb",
+      "sha256": "36efe5ed6005253c7790f5f572ac7ef52727d4ed8530c9c9a64c5589b5eaf1b2"
+    },
+    {
+      "name": "libvamp-hostsdk3v5",
+      "filename": "pool/universe/v/vamp-plugin-sdk/libvamp-hostsdk3v5_2.10.0-4build1_amd64.deb",
+      "sha256": "be4ba7eb2c54526f794fd1b8e7696bc06ae9449c102a300e47c0875421b112a6"
+    },
+    {
+      "name": "librubberband2",
+      "filename": "pool/universe/r/rubberband/librubberband2_3.3.0+dfsg-2build1_amd64.deb",
+      "sha256": "96ebaf773ad933a5269859cb3b09488b7b0b58387ebfbd7b7c469dd2b32d5d8b"
+    },
+    {
+      "name": "libltc11",
+      "filename": "pool/universe/libl/libltc/libltc11_1.3.2-1build1_amd64.deb",
+      "sha256": "92f23451cefe159faef9f255f0d24987eff50e52647dc1aa9843ad4c733ca039"
+    },
+    {
+      "name": "liblilv-0-0",
+      "filename": "pool/universe/l/lilv/liblilv-0-0_0.24.22-1build1_amd64.deb",
+      "sha256": "5fd6b6861a021e8148c9086d36b70eea28a503dd4c2f2b922f56789d2967d0ad"
+    },
+    {
+      "name": "libasound2t64",
+      "filename": "pool/main/a/alsa-lib/libasound2t64_1.2.11-1build2_amd64.deb",
+      "sha256": "c2f0caa30869876791ba349bef4907d5cfec47b8cfd1ae9889a05dce0feb7c39"
+    },
+    {
+      "name": "libreadline8t64",
+      "filename": "pool/main/r/readline/libreadline8t64_8.2-4build1_amd64.deb",
+      "sha256": "563977a16df03b611f5239cc1e9a0426e86479fcc616b5c9e200ea32063119e5"
+    },
+    {
+      "name": "zlib1g",
+      "filename": "pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2_amd64.deb",
+      "sha256": "0b93d16d7498f092fa3070fbbad28cdbc6b3d640f1a7681b96fc37f20d1219f1"
+    },
+    {
+      "name": "libpng16-16t64",
+      "filename": "pool/main/libp/libpng1.6/libpng16-16t64_1.6.43-5build1_amd64.deb",
+      "sha256": "128d505038cc19dfc218658562ca5917ec242b79e6e2bbfb65ee27f297a53924"
+    },
+    {
+      "name": "libfontconfig1",
+      "filename": "pool/main/f/fontconfig/libfontconfig1_2.15.0-1.1ubuntu2_amd64.deb",
+      "sha256": "a2bc05cfef021fdb84285036f98eda5ebec3c4b7a378f5aa2bdba5c4d3d8d586"
+    },
+    {
+      "name": "libfreetype6",
+      "filename": "pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1build3_amd64.deb",
+      "sha256": "321dda934f62fa8af08529a8c4c34b0ec040f172c0a945dce10b8be6f1014917"
+    },
+    {
+      "name": "libxext6",
+      "filename": "pool/main/libx/libxext/libxext6_1.3.4-1build2_amd64.deb",
+      "sha256": "45783969a9ece9d7b7b733b8c60981584c53c6bc5ee3b42d295d2f80d1285679"
+    },
+    {
+      "name": "libxrender1",
+      "filename": "pool/main/libx/libxrender/libxrender1_0.9.10-1.1build1_amd64.deb",
+      "sha256": "d70bd831aebe8d4834b5dd2ed98df26dd6bd27f1042c47543bd7f66df1ae22ea"
+    },
+    {
+      "name": "libxcb1",
+      "filename": "pool/main/libx/libxcb/libxcb1_1.15-1ubuntu2_amd64.deb",
+      "sha256": "e1c6611d11ad7398326f1bf028afc34c3b14c51d917a3426b966ed4b9687fa58"
+    },
+    {
+      "name": "libxcb-render0",
+      "filename": "pool/main/libx/libxcb/libxcb-render0_1.15-1ubuntu2_amd64.deb",
+      "sha256": "7d83a0668b1a693b5ea2e496206e8371fb6beda4c54a2b4b3902005915c272c5"
+    },
+    {
+      "name": "libxcb-shm0",
+      "filename": "pool/main/libx/libxcb/libxcb-shm0_1.15-1ubuntu2_amd64.deb",
+      "sha256": "229d1280d459f1ba44c22939d3f9b61d9d20932d9a646b3fe4ce50be4cdf2325"
+    },
+    {
+      "name": "libpixman-1-0",
+      "filename": "pool/main/p/pixman/libpixman-1-0_0.42.2-1build1_amd64.deb",
+      "sha256": "d9c2931c4c424615eeab9dd5ae08bfc608b84e803c1d3ccddf319270db213421"
+    },
+    {
+      "name": "libpcre2-8-0",
+      "filename": "pool/main/p/pcre2/libpcre2-8-0_10.42-4ubuntu2_amd64.deb",
+      "sha256": "bb38c38adb4ef548f2851b5cf7f70bbdbcb27d582c17550aa053edb9e4098d84"
+    },
+    {
+      "name": "libffi8",
+      "filename": "pool/main/libf/libffi/libffi8_3.4.6-1build1_amd64.deb",
+      "sha256": "637e6a7744de08cd331a41f4efd0d24e6ea9064843dea9d1c6ca87bdb5f038a2"
+    },
+    {
+      "name": "libjpeg-turbo8",
+      "filename": "pool/main/libj/libjpeg-turbo/libjpeg-turbo8_2.1.5-2ubuntu2_amd64.deb",
+      "sha256": "f68b5b23bc8a1688fb787d2aed7e2cdf895a73022f6a5025e183162dac4500b2"
+    },
+    {
+      "name": "libmount1",
+      "filename": "pool/main/u/util-linux/libmount1_2.39.3-9ubuntu6_amd64.deb",
+      "sha256": "ccf07f3dfdda05311e66882d420140e32aeceaaa17725a0956214d81f5944995"
+    },
+    {
+      "name": "libselinux1",
+      "filename": "pool/main/libs/libselinux/libselinux1_3.5-2ubuntu2_amd64.deb",
+      "sha256": "c0fe6dfac61d458f3e65c4a2bf6a920030a97d2429e33d0b405a8c4a63ef2864"
+    },
+    {
+      "name": "libxinerama1",
+      "filename": "pool/main/libx/libxinerama/libxinerama1_1.1.4-3build1_amd64.deb",
+      "sha256": "c8c93a3efdbb06e314f41bf48af4ca3652e4a3826bab5b9e00887660e619f239"
+    },
+    {
+      "name": "libxi6",
+      "filename": "pool/main/libx/libxi/libxi6_1.8.1-1build1_amd64.deb",
+      "sha256": "0ea7acb5e8a8ce4d6653b30e03a319bfe136db7bfb5ee7cad34c2aa1272ea8d9"
+    },
+    {
+      "name": "libxrandr2",
+      "filename": "pool/main/libx/libxrandr/libxrandr2_1.5.2-2build1_amd64.deb",
+      "sha256": "f2955a5e594f5724b58ad241d9231ea191cb36574a0d5e5ca6b661cd41d6256d"
+    },
+    {
+      "name": "libxcursor1",
+      "filename": "pool/main/libx/libxcursor/libxcursor1_1.2.1-1build1_amd64.deb",
+      "sha256": "1a4beee621454e42fe0d2f4e1633611126e43d891f0aec28e4a06744f6e9f04d"
+    },
+    {
+      "name": "libxcomposite1",
+      "filename": "pool/main/libx/libxcomposite/libxcomposite1_0.4.5-1build3_amd64.deb",
+      "sha256": "a12d5d9ae70b798cbbf284080eae32b87367561fc9c24492f641b8860ac0f308"
+    },
+    {
+      "name": "libxdamage1",
+      "filename": "pool/main/libx/libxdamage/libxdamage1_1.1.6-1build1_amd64.deb",
+      "sha256": "6891faf325e996ebd28ef53ebb9c043dc96f67327500490affc3e89d366d35ed"
+    },
+    {
+      "name": "libxfixes3",
+      "filename": "pool/main/libx/libxfixes/libxfixes3_6.0.0-2build1_amd64.deb",
+      "sha256": "0ee1015cccd063249e01c0cd0bf45f513c8ac9a1e5e485070c12e69192455e4a"
+    },
+    {
+      "name": "libfribidi0",
+      "filename": "pool/main/f/fribidi/libfribidi0_1.0.13-3build1_amd64.deb",
+      "sha256": "6cd50259d39ce0dfafee2632c6268538e6a02590e77161a133e9683af346dd1d"
+    },
+    {
+      "name": "libthai0",
+      "filename": "pool/main/libt/libthai/libthai0_0.1.29-2build1_amd64.deb",
+      "sha256": "5ada7045c5f84a4b774e6449151800aa6470e8d01dc9d6124ef4a44ae6af5508"
+    },
+    {
+      "name": "libharfbuzz0b",
+      "filename": "pool/main/h/harfbuzz/libharfbuzz0b_8.3.0-2build2_amd64.deb",
+      "sha256": "d6f7eea2244f98aa0463a056680d4629476bf624767ede301560e24add686b5c"
+    },
+    {
+      "name": "libpangoft2-1.0-0",
+      "filename": "pool/main/p/pango1.0/libpangoft2-1.0-0_1.52.1+ds-1build1_amd64.deb",
+      "sha256": "cc6bc9d86ef5f329edacaa4895232d8a9b8f95c5cbc77c3c460a3f64cecc213d"
+    },
+    {
+      "name": "libatk1.0-0t64",
+      "filename": "pool/main/a/at-spi2-core/libatk1.0-0t64_2.52.0-1build1_amd64.deb",
+      "sha256": "42c5d4b00954f17c2c3c4b866844f691eb8b6d57bf08b59203e65f12dc84a4f9"
+    },
+    {
+      "name": "libgomp1",
+      "filename": "pool/main/g/gcc-14/libgomp1_14-20240412-0ubuntu1_amd64.deb",
+      "sha256": "cc2ca1193d2c11d7383bdb03dd333cc621d128237b82dafeb8d7f2bd8302f3dd"
+    },
+    {
+      "name": "libpulse0",
+      "filename": "pool/main/p/pulseaudio/libpulse0_16.1+dfsg1-2ubuntu10_amd64.deb",
+      "sha256": "9f19b90d61a4a2e46a422382e4ea1d6a1083bbb2afeac896ea00b7d309a240cf"
+    },
+    {
+      "name": "libjack-jackd2-0",
+      "filename": "pool/main/j/jackd2/libjack-jackd2-0_1.9.21~dfsg-3ubuntu3_amd64.deb",
+      "sha256": "4fc5f4d0fbf2602df59bbed3ea504742bdcc7f899d7b32f6b2fd446ceb1fdf7d"
+    },
+    {
+      "name": "libpipewire-0.3-0t64",
+      "filename": "pool/main/p/pipewire/libpipewire-0.3-0t64_1.0.5-1_amd64.deb",
+      "sha256": "d4fdcc9a3f08e3762e00df7fa2d04a991eb57a0d4f48ee25a409dda616053069"
+    },
+    {
+      "name": "libdbus-1-3",
+      "filename": "pool/main/d/dbus/libdbus-1-3_1.14.10-4ubuntu4_amd64.deb",
+      "sha256": "bbb55111182a44d0fe97a84120407e17bb6e23d41e2670d73aa78f619e29efa2"
+    },
+    {
+      "name": "libinstpatch-1.0-2",
+      "filename": "pool/universe/libi/libinstpatch/libinstpatch-1.0-2_1.1.6-1build2_amd64.deb",
+      "sha256": "d48c40a9c428e40d5bbe8762802390322b06a062c735292767e73d1c6ea9007e"
+    },
+    {
+      "name": "libsdl2-2.0-0",
+      "filename": "pool/main/libs/libsdl2/libsdl2-2.0-0_2.30.0+dfsg-1build3_amd64.deb",
+      "sha256": "843864d304b9084b059c8385a2d11dd769534488b6f0091304f362e3b812d7d7"
+    },
+    {
+      "name": "libtinfo6",
+      "filename": "pool/main/n/ncurses/libtinfo6_6.4+20240113-1ubuntu2_amd64.deb",
+      "sha256": "53e1e1753729d04cf65b05e6e58abe06e2bb76cc07eff0e1b2a638a638ca209b"
+    },
+    {
+      "name": "libflac12t64",
+      "filename": "pool/main/f/flac/libflac12t64_1.4.3+ds-2.1ubuntu2_amd64.deb",
+      "sha256": "f2396692573407b2fbc92cd83148342d4aec717d42d5e24ac64c471204a0b7a9"
+    },
+    {
+      "name": "libvorbis0a",
+      "filename": "pool/main/libv/libvorbis/libvorbis0a_1.3.7-1build3_amd64.deb",
+      "sha256": "d704ac0a5dd7a9797a2f2dc86fc8333c9973023b98b3510dcd2f1cc00da3624d"
+    },
+    {
+      "name": "libvorbisenc2",
+      "filename": "pool/main/libv/libvorbis/libvorbisenc2_1.3.7-1build3_amd64.deb",
+      "sha256": "866c561fe81d4430a48c820f4e62f3cd138f4c8c7664f9203f02c1ced2eb55d4"
+    },
+    {
+      "name": "libopus0",
+      "filename": "pool/main/o/opus/libopus0_1.4-1build1_amd64.deb",
+      "sha256": "6d8da32a832e655c9603543b47a0bc90c6f60bdee0c00fe7499bd50acad566cf"
+    },
+    {
+      "name": "libogg0",
+      "filename": "pool/main/libo/libogg/libogg0_1.3.5-3build1_amd64.deb",
+      "sha256": "fbdb2fedbafb02c3f07f2c2ddeb4018b5e94e13462f93fbececdcefc06fe2ac1"
+    },
+    {
+      "name": "libmpg123-0t64",
+      "filename": "pool/main/m/mpg123/libmpg123-0t64_1.32.5-1ubuntu1_amd64.deb",
+      "sha256": "5c297ac68cecdab93a7bcf694d769e553234999c446e019257d7df0d4be4bbc2"
+    },
+    {
+      "name": "libmp3lame0",
+      "filename": "pool/main/l/lame/libmp3lame0_3.100-6build1_amd64.deb",
+      "sha256": "d739e9a3565f98b8b72a9e203a9a537bd1090af6cafb94c98adf8e27f9d3fb94"
+    },
+    {
+      "name": "libglvnd0",
+      "filename": "pool/main/libg/libglvnd/libglvnd0_1.7.0-1build1_amd64.deb",
+      "sha256": "33f5e07c74f73c2bfb44086ae0f9e6da52acd6c104d30ffe8fd768d8253d5e82"
+    },
+    {
+      "name": "libglx0",
+      "filename": "pool/main/libg/libglvnd/libglx0_1.7.0-1build1_amd64.deb",
+      "sha256": "aa4953182f30abde90cb5b072e83d7286b557b325769b8686196a7bd396d8795"
+    },
+    {
+      "name": "libnghttp2-14",
+      "filename": "pool/main/n/nghttp2/libnghttp2-14_1.59.0-1build4_amd64.deb",
+      "sha256": "4273c0501841461ab24a5a09017e084c558e5fadc6dc68aee91b6c8fbcb4092f"
+    },
+    {
+      "name": "libidn2-0",
+      "filename": "pool/main/libi/libidn2/libidn2-0_2.3.7-2build1_amd64.deb",
+      "sha256": "f1be32391a2fabf06c27618a2000ae8f9a26c30fad1b482a007049ae8156d19c"
+    },
+    {
+      "name": "librtmp1",
+      "filename": "pool/main/r/rtmpdump/librtmp1_2.4+20151223.gitfa8646d.1-2build7_amd64.deb",
+      "sha256": "967a39dbc14236d1580ede01d80fd78444668572e716734e1ac66c175052594e"
+    },
+    {
+      "name": "libssh-4",
+      "filename": "pool/main/libs/libssh/libssh-4_0.10.6-2build2_amd64.deb",
+      "sha256": "c0867b203887064777d677e18d4006f9b068a9ff98d361189cb941ab409326dd"
+    },
+    {
+      "name": "libpsl5t64",
+      "filename": "pool/main/libp/libpsl/libpsl5t64_0.21.2-1.1build1_amd64.deb",
+      "sha256": "a6c85d1303ae90b6a3209d73c4f047f82c27cdc963c48adfd95dd7abca64f039"
+    },
+    {
+      "name": "libnettle8t64",
+      "filename": "pool/main/n/nettle/libnettle8t64_3.9.1-2.2build1_amd64.deb",
+      "sha256": "4cac2064e2984c4bc5a31659d4f00c7efe0c4b691559d536dd726c05d3632a57"
+    },
+    {
+      "name": "libgnutls30t64",
+      "filename": "pool/main/g/gnutls28/libgnutls30t64_3.8.3-1.1ubuntu3_amd64.deb",
+      "sha256": "fdaa2c2fd34d7ac4ebd7d62e5b5d94c3cf9322b1fa1760d70b8e86425e9f6c36"
+    },
+    {
+      "name": "libgssapi-krb5-2",
+      "filename": "pool/main/k/krb5/libgssapi-krb5-2_1.20.1-6ubuntu2_amd64.deb",
+      "sha256": "0e22fb29a907ef6deeb56543bcbf9f736500cb37da2e3a6257c1bedf7c0783db"
+    },
+    {
+      "name": "libldap2",
+      "filename": "pool/main/o/openldap/libldap2_2.6.7+dfsg-1~exp1ubuntu8_amd64.deb",
+      "sha256": "35294f2750d3601b3f134eb90500e4b542b0f60c7f411e0b024bd00018c80c24"
+    },
+    {
+      "name": "libzstd1",
+      "filename": "pool/main/libz/libzstd/libzstd1_1.5.5+dfsg2-2build1_amd64.deb",
+      "sha256": "4dcc3ba9606a5837a55248d08162a5b426dd621f75c0eb24d86409e0d0e71d52"
+    },
+    {
+      "name": "libbrotli1",
+      "filename": "pool/main/b/brotli/libbrotli1_1.1.0-2build2_amd64.deb",
+      "sha256": "74492419b8fda803774b8c9acef6afc5d2f9ff31782635aae212906adae7b277"
+    },
+    {
+      "name": "libacl1",
+      "filename": "pool/main/a/acl/libacl1_2.3.2-1build1_amd64.deb",
+      "sha256": "892dd9edaded972367e19713e5b0a3144409d9ef6613da5b7734a56f8e8f582b"
+    },
+    {
+      "name": "liblzma5",
+      "filename": "pool/main/x/xz-utils/liblzma5_5.6.1+really5.4.5-1_amd64.deb",
+      "sha256": "28851b3997e4ba74bb3197bd58796bd3041c204c21df85fe0ddafdcaced647f0"
+    },
+    {
+      "name": "liblz4-1",
+      "filename": "pool/main/l/lz4/liblz4-1_1.9.4-1build1_amd64.deb",
+      "sha256": "b9b69dedb126755f063396a6d3a3361066f9661f1c21cf5635cdd5ff6605796a"
+    },
+    {
+      "name": "libbz2-1.0",
+      "filename": "pool/main/b/bzip2/libbz2-1.0_1.0.8-5.1_amd64.deb",
+      "sha256": "695132af8a40fe417f7d4e5ea742d64521c04e069442a4719c2bd0f10ab93d94"
+    },
+    {
+      "name": "libicu74",
+      "filename": "pool/main/i/icu/libicu74_74.2-1ubuntu3_amd64.deb",
+      "sha256": "d29c97a21a3e3254731cfac186e4d4e611e5e67d2c9a0430f6acfbd9acaefa2e"
+    },
+    {
+      "name": "libserd-0-0",
+      "filename": "pool/universe/s/serd/libserd-0-0_0.32.2-1_amd64.deb",
+      "sha256": "5ede35e66656c136b6a803aebeac92b2c061ec4d147820a730dd9c2a1315f57a"
+    },
+    {
+      "name": "libsord-0-0",
+      "filename": "pool/universe/s/sord/libsord-0-0_0.16.16-2build1_amd64.deb",
+      "sha256": "a330fa014ee2eb48053395fb91fa39d95ca910e582d515254f50ef944240303c"
+    },
+    {
+      "name": "libsratom-0-0",
+      "filename": "pool/universe/s/sratom/libsratom-0-0_0.6.16-1build1_amd64.deb",
+      "sha256": "a103c98906a7587718dabd52dfcd0af2dff6ff567781100bc8cf07de05bfc30d"
+    },
+    {
+      "name": "libzix-0-0",
+      "filename": "pool/universe/z/zix/libzix-0-0_0.4.2-2build1_amd64.deb",
+      "sha256": "3bd3271411e9f25d03e16ca430da9551200b28e854ba9b606f819c23a4dc4992"
+    },
+    {
+      "name": "libfftw3-double3",
+      "filename": "pool/main/f/fftw3/libfftw3-double3_3.3.10-1ubuntu3_amd64.deb",
+      "sha256": "ff9396076103b305efe741e9acff11d52a040c6d95527c0f2dbd11e82a11bab8"
+    },
+    {
+      "name": "libraptor2-0",
+      "filename": "pool/main/r/raptor2/libraptor2-0_2.0.16-3build3_amd64.deb",
+      "sha256": "125229612d08aa1d95b34baf2bc8c023434f79c94143e89dac1fa8342d877736"
+    },
+    {
+      "name": "libudev1",
+      "filename": "pool/main/s/systemd/libudev1_255.4-1ubuntu8_amd64.deb",
+      "sha256": "0955df93006711ba7328cc919673902c75a04f57f6ad37010b0ee052996fbb08"
+    },
+    {
+      "name": "libxau6",
+      "filename": "pool/main/libx/libxau/libxau6_1.0.9-1build6_amd64.deb",
+      "sha256": "e40d29f1d1a62393bacaedebe0da3d9006084152a9f7e5e029293f08ce1c5c80"
+    },
+    {
+      "name": "libxdmcp6",
+      "filename": "pool/main/libx/libxdmcp/libxdmcp6_1.1.3-0ubuntu6_amd64.deb",
+      "sha256": "bcd336fce11ce2a45f34d0f95e6980af22529f22147e8f98c156e5cee8ee42bb"
+    },
+    {
+      "name": "libblkid1",
+      "filename": "pool/main/u/util-linux/libblkid1_2.39.3-9ubuntu6_amd64.deb",
+      "sha256": "47433bcaf43d1c6ed2e2acbc7dc70f6d6ed149e64f12d25b2ddb714a56c4e8dd"
+    },
+    {
+      "name": "libgraphite2-3",
+      "filename": "pool/main/g/graphite2/libgraphite2-3_1.3.14-2build1_amd64.deb",
+      "sha256": "e2a91c59a2b26649ed0b331bedab0c92e56cc2021cce27df1080089edaad7aba"
+    },
+    {
+      "name": "libdatrie1",
+      "filename": "pool/main/libd/libdatrie/libdatrie1_0.2.13-3build1_amd64.deb",
+      "sha256": "1ae164e40e413eac4fbd38ce1c6ef9591f7a03278ad9076d71fa29258727f447"
+    },
+    {
+      "name": "libxss1",
+      "filename": "pool/main/libx/libxss/libxss1_1.2.3-1build3_amd64.deb",
+      "sha256": "0ac60a2cc034ccc4bf4e2f846f38110469d7ae43b47e808d67aafc538bc3695e"
+    },
+    {
+      "name": "libdrm2",
+      "filename": "pool/main/libd/libdrm/libdrm2_2.4.120-2build1_amd64.deb",
+      "sha256": "f5fb4e7ce17921cc466fb7911abf91495ffb181b36772f68e2e82cb621703112"
+    },
+    {
+      "name": "libgbm1",
+      "filename": "pool/main/m/mesa/libgbm1_24.0.5-1ubuntu1_amd64.deb",
+      "sha256": "bffad21d2383429d6dbec8395ba8d8476a0ed69e7e0b1c3ef2f27da99211b200"
+    },
+    {
+      "name": "libwayland-egl1",
+      "filename": "pool/main/w/wayland/libwayland-egl1_1.22.0-2.1build1_amd64.deb",
+      "sha256": "76cd17d2776428e0a0551b8f8fd954eeb3d39ca8ed2f88a38a5e4ce3ce3b2f16"
+    },
+    {
+      "name": "libwayland-client0",
+      "filename": "pool/main/w/wayland/libwayland-client0_1.22.0-2.1build1_amd64.deb",
+      "sha256": "6af0aed41d75149bea22fa468f01eb058ffe3e35ef07ff2f13fb88a90387881d"
+    },
+    {
+      "name": "libwayland-cursor0",
+      "filename": "pool/main/w/wayland/libwayland-cursor0_1.22.0-2.1build1_amd64.deb",
+      "sha256": "29c20da27e8e37c984cf0518635c11cd0441f4cb6a2919a9f6eee1809171d327"
+    },
+    {
+      "name": "libxkbcommon0",
+      "filename": "pool/main/libx/libxkbcommon/libxkbcommon0_1.6.0-1build1_amd64.deb",
+      "sha256": "2b9caeb423efb540296a1cb20b872cc630c23908407ecb5c1c787a617622d664"
+    },
+    {
+      "name": "libdecor-0-0",
+      "filename": "pool/main/libd/libdecor-0/libdecor-0-0_0.2.2-1build2_amd64.deb",
+      "sha256": "64bf085d16e504e9ed39b91d2a46748fb8881ad7f3603fbacef6c11c04aa7064"
+    },
+    {
+      "name": "libsystemd0",
+      "filename": "pool/main/s/systemd/libsystemd0_255.4-1ubuntu8_amd64.deb",
+      "sha256": "64ba97fddff491b86597e93b078e2fe3256cb80f9a113ae9d8dd1361f01b84ed"
+    },
+    {
+      "name": "libx11-xcb1",
+      "filename": "pool/main/libx/libx11/libx11-xcb1_1.8.7-1build1_amd64.deb",
+      "sha256": "7d0d357e47cd6e1042be34da1d37cea313420b000035e71e855087c8268ab127"
+    },
+    {
+      "name": "libasyncns0",
+      "filename": "pool/main/liba/libasyncns/libasyncns0_0.8-6build4_amd64.deb",
+      "sha256": "f8483917fd216e248143eba1c80dfc9384b94fb4dac402194a98c11505674269"
+    },
+    {
+      "name": "libapparmor1",
+      "filename": "pool/main/a/apparmor/libapparmor1_4.0.0-beta3-0ubuntu3_amd64.deb",
+      "sha256": "2adee8d676a430ca2435461b5d536140f70dbf4268d8bb7bd21db15d4deb51b2"
+    },
+    {
+      "name": "libdb5.3t64",
+      "filename": "pool/main/d/db5.3/libdb5.3t64_5.3.28+dfsg2-7_amd64.deb",
+      "sha256": "a78a25c8fad8fdd0b7bc6b297da5d5685579be1e57732aa47870830e4a13161e"
+    },
+    {
+      "name": "libsasl2-2",
+      "filename": "pool/main/c/cyrus-sasl2/libsasl2-2_2.1.28+dfsg1-5ubuntu3_amd64.deb",
+      "sha256": "9a5b0cf88b19de419e585b91b3837c4d7621df229f78a0a58935761866ca1f4d"
+    },
+    {
+      "name": "libp11-kit0",
+      "filename": "pool/main/p/p11-kit/libp11-kit0_0.25.3-4ubuntu2_amd64.deb",
+      "sha256": "2496ec055ee1660b8733e267fa0aa27068869548bc7a898773607024f2df50c3"
+    },
+    {
+      "name": "libunistring5",
+      "filename": "pool/main/libu/libunistring/libunistring5_1.1-2build1_amd64.deb",
+      "sha256": "78acc4c141a499e0c1e4cc47ca8e9082996f3972662c4d92337669ecc9b0a519"
+    },
+    {
+      "name": "libtasn1-6",
+      "filename": "pool/main/libt/libtasn1-6/libtasn1-6_4.19.0-3build1_amd64.deb",
+      "sha256": "e30d8b4b7769966185b5acb40ac81205467022c96d7b1688bf06a3eaded2b98c"
+    },
+    {
+      "name": "libhogweed6t64",
+      "filename": "pool/main/n/nettle/libhogweed6t64_3.9.1-2.2build1_amd64.deb",
+      "sha256": "594a82d7b70ecff393753ee0ab6611b0b18226c4f922d27ccb3f66caeae3d5d1"
+    },
+    {
+      "name": "libgmp10",
+      "filename": "pool/main/g/gmp/libgmp10_6.3.0+dfsg-2ubuntu6_amd64.deb",
+      "sha256": "649a5ee5f74f0aa1e1b9c4f169eabbae56a79aa5aac51ef733eb9e18700bd8fc"
+    },
+    {
+      "name": "libkrb5-3",
+      "filename": "pool/main/k/krb5/libkrb5-3_1.20.1-6ubuntu2_amd64.deb",
+      "sha256": "10ab284396a94349aa319c7c0a59cc747c5d75ba8b81e0ffcbdae96d8d8a2a78"
+    },
+    {
+      "name": "libk5crypto3",
+      "filename": "pool/main/k/krb5/libk5crypto3_1.20.1-6ubuntu2_amd64.deb",
+      "sha256": "212318ab9c98e151cfd331b9310827d43316dcf33e1e0e8d3d9fc2b3fbd88cfb"
+    },
+    {
+      "name": "libcom-err2",
+      "filename": "pool/main/e/e2fsprogs/libcom-err2_1.47.0-2.4~exp1ubuntu4_amd64.deb",
+      "sha256": "c95d59cad331f88ddffa3a85f1119bac98dd956916af642c60dd66a485ee97df"
+    },
+    {
+      "name": "libkrb5support0",
+      "filename": "pool/main/k/krb5/libkrb5support0_1.20.1-6ubuntu2_amd64.deb",
+      "sha256": "5a6aa4d7f11ccad8f4bdfbce5e718827875d9440b1fb3d40c82dff0d9edb6e9b"
+    },
+    {
+      "name": "libssl3t64",
+      "filename": "pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3_amd64.deb",
+      "sha256": "6cde53feabd28f26586a4db2ffb9fc84e7b0598aee15b33bee907b6392a92d24"
+    },
+    {
+      "name": "libxslt1.1",
+      "filename": "pool/main/libx/libxslt/libxslt1.1_1.1.39-0exp1build1_amd64.deb",
+      "sha256": "152684a8e830291d02999bbc7f35b807d365e4aa52ff921db625bb6b04c3b229"
+    },
+    {
+      "name": "libyajl2",
+      "filename": "pool/main/y/yajl/libyajl2_2.1.0-5build1_amd64.deb",
+      "sha256": "faa268c632f7d2931509cf7b8b7ddd810aa775adc26ead88ea158e2ede5208f8"
+    },
+    {
+      "name": "libcap2",
+      "filename": "pool/main/libc/libcap2/libcap2_2.66-5ubuntu2_amd64.deb",
+      "sha256": "a6cce0b5f149707a6359e4f03a05fb7417c5e1d3fde9e12c651e804b4c479bbb"
+    },
+    {
+      "name": "libbsd0",
+      "filename": "pool/main/libb/libbsd/libbsd0_0.12.1-1build1_amd64.deb",
+      "sha256": "8e97b7d541416512a81e7845c5f21910344c9c5c610893cf265d3298e0caad6b"
+    },
+    {
+      "name": "libwayland-server0",
+      "filename": "pool/main/w/wayland/libwayland-server0_1.22.0-2.1build1_amd64.deb",
+      "sha256": "edbfa4b6857691ae922cc768a753fab230eee9e956aa2ce4f2eaa8d9ad777dca"
+    },
+    {
+      "name": "libxcb-randr0",
+      "filename": "pool/main/libx/libxcb/libxcb-randr0_1.15-1ubuntu2_amd64.deb",
+      "sha256": "b5cb519823a05a617b543dc9b6a9289b7648b20048244abe021caa706309835a"
+    },
+    {
+      "name": "libgcrypt20",
+      "filename": "pool/main/libg/libgcrypt20/libgcrypt20_1.10.3-2build1_amd64.deb",
+      "sha256": "ff32bae487706ba6ca646b5b72d89b935e3b8b2811d02e4ad7360cb97d90e2d0"
+    },
+    {
+      "name": "libkeyutils1",
+      "filename": "pool/main/k/keyutils/libkeyutils1_1.6.3-3build1_amd64.deb",
+      "sha256": "0679f198b0128179e46cdf956fb2022c23c758664c00bc8efa0382d509683a8a"
+    },
+    {
+      "name": "libmd0",
+      "filename": "pool/main/libm/libmd/libmd0_1.1.0-2build1_amd64.deb",
+      "sha256": "77f8cdbf03a43656bbf6604e18bd16834fc8bf2c949d4fbdf24ac297869b667a"
+    },
+    {
+      "name": "libgpg-error0",
+      "filename": "pool/main/libg/libgpg-error/libgpg-error0_1.47-3build2_amd64.deb",
+      "sha256": "81a30b5888e0af43b72bfdbdb44209b82e521eadf8848ff201542e6d258f6a1f"
+    }
+  ]
+}
