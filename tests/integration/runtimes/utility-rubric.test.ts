@@ -24,13 +24,13 @@ test.serial(
   async () => {
     const bun = await runRuntimeUtilityReport("bun");
     writeReport(bun);
-    expect(bun.failures).toHaveLength(0);
+    expect(bun.failures).toEqual([]);
     expect(bun.recommendation).toBe("baseline");
 
     for (const runtimeId of RUNTIME_IDS.filter((id) => id !== "bun")) {
       const report = await runRuntimeUtilityReport(runtimeId, bun.latency);
       writeReport(report);
-      expect(report.failures).toHaveLength(0);
+      expect(report.failures).toEqual([]);
       expect(report.recommendation).toBe("ship-candidate");
     }
   },
