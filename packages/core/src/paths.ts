@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
  *   project's sessions without bayma writing into the project.
  * - cache: materialised harness scripts, compiled Rust hosts, EVcxR's
  *   compilation cache. Safe to delete at any time.
+ * - data: the stable path to the installed toolbelt.
  */
 
 const PRODUCT = "bayma";
@@ -34,6 +35,10 @@ export function stateRoot(env: PathEnvironment = process.env): string {
 
 export function cacheRoot(env: PathEnvironment = process.env): string {
   return env.BAYMA_CACHE_DIR || xdgRoot(env, "XDG_CACHE_HOME", [".cache"]);
+}
+
+export function dataRoot(env: PathEnvironment = process.env): string {
+  return xdgRoot(env, "XDG_DATA_HOME", [".local", "share"]);
 }
 
 /** The state directory for a server launched from `cwd`, unless one is named. */

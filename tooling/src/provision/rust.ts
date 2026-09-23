@@ -9,12 +9,17 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { CARGO_SEED_ID } from "@bayma/runtime-rust";
 import { PLATFORM, RUST } from "../platforms.ts";
 
 /** Where the Rust host, its support crate, and the patched EVcxR live. */
 const NATIVE_DIR = join("packages", "runtime-rust", "native");
+/** The toolbelt's Rust package set, whose locked crates the seed also carries. */
+const TOOLBELT_MANIFEST = join("toolbelt", "Cargo.toml");
+const TOOLBELT_LOCK = join("toolbelt", "Cargo.lock");
 import { fetchPinned } from "../shared/download.ts";
 import { copyTree, ensureDir, walkFiles } from "../shared/files.ts";
 import { sha256File } from "../shared/hashing.ts";
@@ -31,7 +36,8 @@ import {
 // The Rust payload: a pinned toolchain (rustc, cargo, std), the
 // bayma-rust-host binary built from the sources this repository ships, the
 // support crate every cell links, a verified Cargo registry seed for that
-// crate's dependencies, and the licence inventory.
+// crate's dependencies and the toolbelt's locked crates, and the licence
+// inventory.
 
 const TOOLCHAIN_IDENTITY = Object.values(RUST.components)
   .map((component) => component.sha256)
@@ -235,8 +241,9 @@ function buildHost(
 }
 
 /**
- * Fetch the support crate's dependencies into a fresh Cargo home and prove
- * every archive matches the reviewed lock, so cells compile offline.
+ * Fetch the support crate's dependencies and the toolbelt's locked crates into
+ * a fresh Cargo home and prove every archive matches its lock, so cells
+ * compile and the toolbelt resolves offline.
  */
 function buildCargoSeed(
   context: ProvisionContext,
@@ -276,12 +283,35 @@ function buildCargoSeed(
     );
     writeFileSync(join(project, "src", "lib.rs"), "// dependency seed\n");
     copyFileSync(lockSource, join(project, "Cargo.lock"));
+    const cargoEnv = {
+      CARGO_HOME: home,
+      RUSTC: join(toolchain, "bin", "rustc"),
+    };
     runOrThrow([join(toolchain, "bin", "cargo"), "fetch", "--locked"], {
       cwd: project,
-      env: { CARGO_HOME: home, RUSTC: join(toolchain, "bin", "rustc") },
+      env: cargoEnv,
     });
-    verifyCargoSeed(home, join(project, "Cargo.lock"));
-    writeFileSync(join(home, "bayma-seed-id"), lockSha256 + "\n");
+    runOrThrow(
+      [
+        join(toolchain, "bin", "cargo"),
+        "fetch",
+        "--locked",
+        "--manifest-path",
+        join(context.repoRoot, TOOLBELT_MANIFEST),
+      ],
+      { cwd: context.repoRoot, env: cargoEnv },
+    );
+    const toolbeltLock = join(context.repoRoot, TOOLBELT_LOCK);
+    verifyCargoSeed(home, [join(project, "Cargo.lock"), toolbeltLock]);
+    // The seed's identity covers both locks, so a Cargo home an earlier seed
+    // filled learns that this one carries more.
+    const seedId = createHash("sha256")
+      .update(`${lockSha256}:${sha256File(toolbeltLock)}`)
+      .digest("hex");
+    writeFileSync(join(home, CARGO_SEED_ID), seedId + "\n");
+    // Cargo unpacks archives into registry/src as it needs them; shipping
+    // them unpacked would only multiply the payload.
+    rmSync(join(home, "registry", "src"), { recursive: true, force: true });
     copyFileSync(lockSource, join(home, "bayma-support.Cargo.lock"));
     rmSync(destination, { recursive: true, force: true });
     cpSync(home, destination, { recursive: true });
@@ -290,53 +320,52 @@ function buildCargoSeed(
   }
 }
 
-export function verifyCargoSeed(cargoHome: string, lockPath: string): void {
-  const lock = Bun.TOML.parse(readFileSync(lockPath, "utf8")) as {
-    version?: number;
-    package?: Array<{
-      name?: string;
-      version?: string;
-      source?: string;
-      checksum?: string;
-    }>;
-  };
-  if (lock.version !== 4 || !Array.isArray(lock.package)) {
-    throw new Error("support seed lock has an unsupported shape");
+/** Every archive in the seed is one some lock names, with that lock's checksum. */
+function verifyCargoSeed(cargoHome: string, lockPaths: string[]): void {
+  const expected = new Map<string, string>();
+  for (const lockPath of lockPaths) {
+    const lock = Bun.TOML.parse(readFileSync(lockPath, "utf8")) as {
+      version?: number;
+      package?: Array<{
+        name?: string;
+        version?: string;
+        source?: string;
+        checksum?: string;
+      }>;
+    };
+    if (lock.version !== 4 || !Array.isArray(lock.package)) {
+      throw new Error(`${lockPath} has an unsupported shape`);
+    }
+    for (const entry of lock.package) {
+      if (entry.source === undefined) continue;
+      if (
+        entry.source !==
+          "registry+https://github.com/rust-lang/crates.io-index" ||
+        !/^[0-9a-f]{64}$/.test(entry.checksum ?? "")
+      ) {
+        throw new Error(
+          `${lockPath} entry ${entry.name} has invalid registry metadata`,
+        );
+      }
+      expected.set(`${entry.name}-${entry.version}.crate`, entry.checksum!);
+    }
   }
-  const expected = new Map<string, string>(
-    lock.package
-      .filter((entry) => entry.source !== undefined)
-      .map((entry) => {
-        if (
-          entry.source !==
-            "registry+https://github.com/rust-lang/crates.io-index" ||
-          !/^[0-9a-f]{64}$/.test(entry.checksum ?? "")
-        ) {
-          throw new Error(
-            `support seed lock entry ${entry.name} has invalid registry metadata`,
-          );
-        }
-        return [`${entry.name}-${entry.version}.crate`, entry.checksum!];
-      }),
-  );
   const archives = walkFiles(join(cargoHome, "registry", "cache")).filter(
     (path) => path.endsWith(".crate"),
   );
   if (archives.length !== expected.size) {
     throw new Error(
-      `support seed has ${archives.length} archives, lock expects ${expected.size}`,
+      `Cargo seed has ${archives.length} archives, its locks expect ${expected.size}`,
     );
   }
   for (const path of archives) {
     const checksum = expected.get(basename(path));
     if (!checksum)
-      throw new Error(
-        `support seed archive ${basename(path)} is not in the lock`,
-      );
+      throw new Error(`Cargo seed archive ${basename(path)} is in no lock`);
     const actual = sha256File(path);
     if (actual !== checksum)
       throw new Error(
-        `support seed archive ${basename(path)} checksum ${actual} != ${checksum}`,
+        `Cargo seed archive ${basename(path)} checksum ${actual} != ${checksum}`,
       );
   }
 }
@@ -356,6 +385,7 @@ export async function provisionRust(
     TOOLCHAIN_IDENTITY,
     RUST.linker?.sha256 ?? "no-linker",
     RUST.supportSeedLockSha256,
+    sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
     sha256File(join(context.repoRoot, NATIVE_DIR, "Cargo.lock")),
     ...walkFiles(
       join(context.repoRoot, NATIVE_DIR, "bayma-rust-host", "src"),
@@ -411,6 +441,7 @@ export async function provisionRust(
       evcxrVersion: RUST.evcxrVersion,
       ...(RUST.linker ? { linker: `zig-${RUST.linker.zigVersion}` } : {}),
       supportSeedLockSha256: RUST.supportSeedLockSha256,
+      toolbeltLockSha256: sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
       ...Object.fromEntries(
         Object.entries(RUST.components).map(([role, c]) => [
           `${role}Sha256`,

@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test";
-import { cacheRoot, defaultStateDir, stateRoot } from "@bayma/core";
+import { cacheRoot, dataRoot, defaultStateDir, stateRoot } from "@bayma/core";
 
 const home = { HOME: "/home/someone" };
 
-test("state and cache roots follow XDG with the conventional fallbacks", () => {
+test("state, cache, and data roots follow XDG with the conventional fallbacks", () => {
   expect(stateRoot(home)).toBe("/home/someone/.local/state/bayma");
   expect(cacheRoot(home)).toBe("/home/someone/.cache/bayma");
+  expect(dataRoot(home)).toBe("/home/someone/.local/share/bayma");
+  expect(dataRoot({ ...home, XDG_DATA_HOME: "/xdg/data" })).toBe(
+    "/xdg/data/bayma",
+  );
   expect(stateRoot({ ...home, XDG_STATE_HOME: "/xdg/state" })).toBe(
     "/xdg/state/bayma",
   );

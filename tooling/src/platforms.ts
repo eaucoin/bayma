@@ -20,6 +20,7 @@ export const DOTNET_SCRIPT_VERSION = "2.0.1";
 export const RUST_VERSION = "1.97.1";
 export const RUST_DIST_DATE = "2026-07-16";
 export const EVCXR_VERSION = "0.21.1";
+export const UV_VERSION = "0.12.9";
 
 /** The signed manifest every Rust component digest below was taken from. */
 export const RUST_CHANNEL_MANIFEST: PinnedArchive = {
@@ -39,6 +40,8 @@ export interface PlatformPins {
   python: PinnedArchive;
   dotnet: PinnedArchive;
   rustComponents: Record<"cargo" | "rustc" | "rust-std", PinnedArchive>;
+  /** uv builds the toolbelt's Python environment from its lockfile. */
+  uv: PinnedArchive;
   /**
    * Linux links the host with a pinned zig so its glibc floor does not depend
    * on the build machine. macOS links with Apple's own clang and needs none.
@@ -81,6 +84,11 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
         sha256:
           "1c1e704ae80126b7de34f72ea2825f7fd01736dec20732faed47374b95282fba",
       },
+    },
+    uv: {
+      url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz`,
+      sha256:
+        "ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460",
     },
     linker: {
       zigVersion: "0.16.0",
@@ -125,6 +133,11 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
           "a4895f5c6995e83cab8687e46b14324592398049def71ce75ca308c981cf200d",
       },
     },
+    uv: {
+      url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-aarch64-apple-darwin.tar.gz`,
+      sha256:
+        "301f72afaf54060f92da7016cb0115bd077f43a9c8e39c1d8170a0bac80fd398",
+    },
   },
 };
 
@@ -146,6 +159,7 @@ export const DOTNET = {
   scriptVersion: DOTNET_SCRIPT_VERSION,
   ...PLATFORM.dotnet,
 } as const;
+export const UV = { version: UV_VERSION, ...PLATFORM.uv } as const;
 export const RUST = {
   version: RUST_VERSION,
   distDate: RUST_DIST_DATE,

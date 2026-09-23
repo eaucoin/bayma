@@ -7,13 +7,16 @@ import { provisionDotnet } from "./dotnet.ts";
 import type { ProvisionContext, RuntimePayload } from "./payload.ts";
 import { provisionPython } from "./python.ts";
 import { provisionRust } from "./rust.ts";
+import { provisionToolbelt } from "./toolbelt.ts";
 
 export type { RuntimePayload } from "./payload.ts";
 
-/** What `provision` leaves behind: every payload, by runtime. */
+/** What `provision` leaves behind: every payload, by runtime, and the toolbelt. */
 export interface ProvisionRecord {
   provisionedAt: string;
   payloads: Record<RuntimeId, RuntimePayload>;
+  /** The toolbelt directory, built against those runtimes. */
+  toolbelt: string;
 }
 
 export function provisionRecordPath(workDir: string): string {
@@ -29,14 +32,16 @@ export async function provision(
     workDir,
     downloadsDir: join(workDir, "downloads"),
   };
+  const payloads: Record<RuntimeId, RuntimePayload> = {
+    bun: await provisionBun(context),
+    python: await provisionPython(context),
+    "dotnet-script": await provisionDotnet(context),
+    rust: await provisionRust(context),
+  };
   const record: ProvisionRecord = {
     provisionedAt: new Date().toISOString(),
-    payloads: {
-      bun: await provisionBun(context),
-      python: await provisionPython(context),
-      "dotnet-script": await provisionDotnet(context),
-      rust: await provisionRust(context),
-    },
+    payloads,
+    toolbelt: await provisionToolbelt(context, payloads),
   };
   writeJson(provisionRecordPath(workDir), record);
   return record;
