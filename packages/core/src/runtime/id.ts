@@ -1,5 +1,12 @@
 // The language runtimes bayma can host. Order is presentation order.
-export const RUNTIME_IDS = ["bun", "python", "dotnet-script", "rust"] as const;
+export const RUNTIME_IDS = [
+  "bun",
+  "python",
+  "dotnet-script",
+  "rust",
+  "c",
+  "cpp",
+] as const;
 export type RuntimeId = (typeof RUNTIME_IDS)[number];
 
 export function isRuntimeId(value: string): value is RuntimeId {

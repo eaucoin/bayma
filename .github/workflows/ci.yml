@@ -29,7 +29,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .work
-          key: payload-linux-x64-${{ hashFiles('tooling/src/platforms.ts', 'packages/runtime-rust/native/**', 'toolbelt/**', 'skills/**') }}
+          key: payload-linux-x64-${{ hashFiles('tooling/src/platforms.ts', 'tooling/src/provision/clang.ts', 'packages/runtime-rust/native/**', 'packages/runtime-cpp/native/**', 'toolbelt/**', 'skills/**') }}
       - run: bun run provision
       - run: bun run payload
       - run: bun run test
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .work
-          key: payload-darwin-arm64-${{ hashFiles('tooling/src/platforms.ts', 'packages/runtime-rust/native/**', 'toolbelt/**', 'skills/**') }}
+          key: payload-darwin-arm64-${{ hashFiles('tooling/src/platforms.ts', 'tooling/src/provision/clang.ts', 'packages/runtime-rust/native/**', 'packages/runtime-cpp/native/**', 'toolbelt/**', 'skills/**') }}
       - run: bun run provision
       - run: bun run payload
       - run: bun run test

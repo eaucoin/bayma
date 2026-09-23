@@ -56,6 +56,30 @@ const RUNTIME_SCENARIOS: RuntimeScenario[] = [
     ].join("\n"),
     expectedResult: "42",
   },
+  // C and C++ checkpoints are JSON text; bayma hands a recovered session the
+  // committed value re-serialized, so the reads parse compact JSON.
+  {
+    runtimeId: "c",
+    seedCode: 'bayma_write_checkpoint("{\\"answer\\": 41}");\n"seeded"',
+    readCode: [
+      "#include <stdio.h>",
+      "int answer = 0;",
+      'sscanf(bayma_read_checkpoint(), "{\\"answer\\":%d}", &answer);',
+      "answer + 1",
+    ].join("\n"),
+    expectedResult: "42",
+  },
+  {
+    runtimeId: "cpp",
+    seedCode: 'bayma_write_checkpoint(R"({"answer": 41})");\n"seeded"',
+    readCode: [
+      "#include <cstdio>",
+      "int answer = 0;",
+      'std::sscanf(bayma_read_checkpoint(), R"({"answer":%d})", &answer);',
+      "answer + 1",
+    ].join("\n"),
+    expectedResult: "42",
+  },
 ];
 
 for (const scenario of RUNTIME_SCENARIOS) {

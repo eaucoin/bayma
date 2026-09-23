@@ -1,0 +1,7 @@
+bayma_read_checkpoint
+bayma_write_checkpoint
+bayma_abandon_interpreter
+bayma_report_result
+__clang_Interpreter_SetValueNoAlloc
+__clang_Interpreter_SetValueWithAlloc
+_ZnwmPv26__clang_Interpreter_NewTag

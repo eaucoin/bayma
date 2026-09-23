@@ -14,7 +14,7 @@ or waiting, while viewing segments of the execution's output stream.
 
 ## Supported REPL runtimes
 
-bayma currently supports four REPL runtimes:
+bayma currently supports six REPL runtimes:
 
 - **Bun** — JavaScript and TypeScript, built on Bun's own REPL (`bun repl`)
 - **Python** — built on CPython, driven by a bayma harness that compiles each
@@ -22,9 +22,14 @@ bayma currently supports four REPL runtimes:
 - **C#** — built on dotnet-script, the Roslyn scripting REPL
 - **Rust** — built on EVcxR, embedded as a library rather than driven as a
   terminal program
+- **C** and **C++** — built on Clang's incremental Interpreter, the library
+  behind clang-repl, embedded rather than driven as a terminal program; C++ is
+  C++23 with libc++
 
 Each of them is bundled: bayma runs pinned toolchains it brings itself, not
-whatever happens to be installed.
+whatever happens to be installed. The one exception is on macOS, where C and
+C++ compile against the SDK of the Xcode Command Line Tools, which cannot be
+redistributed; install them with `xcode-select --install`.
 
 ## Install
 
@@ -57,8 +62,8 @@ startup_timeout_sec = 60
 For any other MCP client, use `{"command": "npx", "args": ["-y", "@bayma-repl/bayma", "mcp-stdio"]}`.
 
 bayma manages the runtimes for you. Installing it downloads a single archive —
-Bun, Python, .NET and Rust, and the toolbelt below — into `~/.cache/bayma`,
-about 750 MB, once per version. Nothing on your machine is used or needed
+Bun, Python, .NET, Rust, and Clang, and the toolbelt below — into `~/.cache/bayma`,
+about 800 MB, once per version. Nothing on your machine is used or needed
 beyond Node, and every install runs the same versions.
 `npx @bayma-repl/bayma doctor` checks that each runtime works.
 
@@ -80,7 +85,8 @@ npx skills add eaucoin/bayma
 
 Requires Bun 1.3.14 (the package manager, test runner, and bundler) and
 Node.js 22.13+, which is what bayma itself runs on. The toolchains come from
-`provision`, not from your machine.
+`provision`, not from your machine; it needs only `zstd` and a linker (GNU
+binutils on Linux, the Xcode Command Line Tools on macOS).
 
 ```sh
 bun install
@@ -94,6 +100,6 @@ bun run test:e2e     # npm install the tarball and drive every runtime through i
 ```
 
 The layout is `packages/` (engine, adapters, the published package; the Rust
-host sources live in the Rust adapter), `toolbelt/` (the toolbelt's code and
+and C/C++ host sources live in their adapters), `toolbelt/` (the toolbelt's code and
 lockfiles), `skills/` (the `bayma-toolbelt` skill), `tooling/` (pins,
 provisioning, payload, publish), `tests/`.

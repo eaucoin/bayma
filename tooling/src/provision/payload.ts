@@ -3,14 +3,19 @@ import { join } from "node:path";
 import type { RuntimeId } from "@bayma/core";
 
 /**
- * A provisioned runtime: a directory that is copied verbatim into the package
- * as `payloads/<runtimeId>`, plus the environment that points the runtime
- * binary at it. Every path in `envPaths` and `pathEnvPrepend` is relative to
- * `root`; `runtime-environment.cjs` resolves them at launch.
+ * A provisioned runtime: a directory that is copied verbatim into the payload,
+ * plus the environment that points the runtime binary at it. Every path in
+ * `envPaths` and `pathEnvPrepend` is relative to `root`; the payload manifest
+ * carries them, and an install resolves them at launch.
  */
 export interface RuntimePayload {
   runtimeId: RuntimeId;
   root: string;
+  /**
+   * The payload directory `root` is copied to, when runtimes share one;
+   * otherwise the runtime's id.
+   */
+  payloadDirectory?: string;
   env: Record<string, string>;
   envPaths: Record<string, string>;
   pathEnvPrepend: Record<string, string[]>;

@@ -60,19 +60,30 @@ export function assemblePayload(
   mkdirSync(directory, { recursive: true });
 
   const runtimes: Record<string, PayloadRuntime> = {};
+  // Payload directory → the provisioned tree placed there.
+  const placed = new Map<string, string>();
   for (const runtimeId of RUNTIME_IDS) {
     const provisioned = record.payloads[runtimeId];
     if (!provisioned)
       throw new Error(`no provisioned payload for ${runtimeId}`);
-    // verbatimSymlinks: a payload's internal links must stay relative, or
-    // they would point back at the machine that built it.
-    cpSync(provisioned.root, join(directory, runtimeId), {
-      recursive: true,
-      verbatimSymlinks: true,
-    });
-    rmSync(join(directory, runtimeId, ".provisioned"), { force: true });
+    const name = provisioned.payloadDirectory ?? runtimeId;
+    const source = placed.get(name);
+    if (source === undefined) {
+      // verbatimSymlinks: a payload's internal links must stay relative, or
+      // they would point back at the machine that built it.
+      cpSync(provisioned.root, join(directory, name), {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+      rmSync(join(directory, name, ".provisioned"), { force: true });
+      placed.set(name, provisioned.root);
+    } else if (source !== provisioned.root) {
+      throw new Error(
+        `${runtimeId} and another runtime claim payload directory ${name}`,
+      );
+    }
     runtimes[runtimeId] = {
-      root: runtimeId,
+      root: name,
       env: provisioned.env,
       envPaths: provisioned.envPaths,
       pathEnvPrepend: provisioned.pathEnvPrepend,

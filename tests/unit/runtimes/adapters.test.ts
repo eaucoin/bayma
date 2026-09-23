@@ -1,18 +1,28 @@
 import { expect, test } from "bun:test";
 import { createModelSurface, RUNTIME_IDS, RuntimeRegistry } from "@bayma/core";
 import { bunAdapter } from "@bayma/runtime-bun";
+import { cAdapter, cppAdapter } from "@bayma/runtime-cpp";
 import { dotnetScriptAdapter } from "@bayma/runtime-dotnet-script";
 import { pythonAdapter } from "@bayma/runtime-python";
 import { rustAdapter } from "@bayma/runtime-rust";
 import { FakeTransport } from "../../support/fake-transport.ts";
 
-const ADAPTERS = [bunAdapter, pythonAdapter, dotnetScriptAdapter, rustAdapter];
+const ADAPTERS = [
+  bunAdapter,
+  pythonAdapter,
+  dotnetScriptAdapter,
+  rustAdapter,
+  cAdapter,
+  cppAdapter,
+];
 
-test("the four runtime adapters have distinct ids, profiles, and codecs", () => {
+test("the runtime adapters have distinct ids, profiles, and codecs", () => {
   expect(ADAPTERS.map((adapter) => adapter.runtimeId)).toEqual([
     ...RUNTIME_IDS,
   ]);
-  expect(new Set(ADAPTERS.map((adapter) => adapter.displayName)).size).toBe(4);
+  expect(new Set(ADAPTERS.map((adapter) => adapter.displayName)).size).toBe(
+    ADAPTERS.length,
+  );
   for (const adapter of ADAPTERS) {
     expect(adapter.modelProfile.runtimeId).toBe(adapter.runtimeId);
     expect(adapter.checkpointCodecs.map((codec) => codec.codecId)).toContain(
