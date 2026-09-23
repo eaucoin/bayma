@@ -70,12 +70,18 @@ beyond Node, and every install runs the same versions.
 Sessions are kept under `~/.local/state/bayma`, one directory per project
 directory the client launched from.
 
-## Agent skill
+## Agent skills
 
 bayma ships a toolbelt for its sessions: pinned Bun, Python, and Rust packages
 for discovering, searching, parsing, editing, and testing code, which the
 `bayma-toolbelt` skill teaches an agent to use. bayma installs the toolbelt
-with its runtimes, at `~/.local/share/bayma/toolbelt`; add the skill with
+with its runtimes, at `~/.local/share/bayma/toolbelt`.
+
+The `bayma-github-platform` skill works with GitHub through Octokit in a Bun
+session. It keeps its packages and its GitHub authorization in its own
+folder, and installs nothing with bayma.
+
+Add the skills with
 
 ```sh
 npx skills add eaucoin/bayma
@@ -101,5 +107,5 @@ bun run test:e2e     # npm install the tarball and drive every runtime through i
 
 The layout is `packages/` (engine, adapters, the published package; the Rust
 and C/C++ host sources live in their adapters), `toolbelt/` (the toolbelt's code and
-lockfiles), `skills/` (the `bayma-toolbelt` skill), `tooling/` (pins,
+lockfiles), `skills/` (the agent skills), `tooling/` (pins,
 provisioning, payload, publish), `tests/`.
