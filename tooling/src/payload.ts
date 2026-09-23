@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { RUNTIME_IDS } from "@bayma/core";
+import { RUNTIME_IDS, TOOLBELT_DIR } from "@bayma/core";
 import { packageManifest } from "./build.ts";
 import { hostPlatformId, type PlatformId } from "./platforms.ts";
 import type { ProvisionRecord } from "./provision/index.ts";
@@ -8,8 +8,9 @@ import { writeJson } from "./shared/files.ts";
 import { sha256File } from "./shared/hashing.ts";
 import { runOrThrow } from "./shared/process.ts";
 
-// The payload: every toolchain bayma runs, assembled for one platform and
-// tarred as the release asset an install downloads.
+// The payload: every toolchain bayma runs and the toolbelt built against
+// them, assembled for one platform and tarred as the release asset an
+// install downloads.
 
 export const PAYLOAD_MANIFEST = "payload.json";
 export const PAYLOAD_SCHEMA_VERSION = 1 as const;
@@ -46,7 +47,7 @@ export function payloadTarballName(
   return `bayma-payload-${platform}-${version}.tar.gz`;
 }
 
-/** Copy every provisioned runtime into one directory and describe it. */
+/** Copy every provisioned runtime and the toolbelt into one directory and describe it. */
 export function assemblePayload(
   repoRoot: string,
   record: ProvisionRecord,
@@ -78,6 +79,12 @@ export function assemblePayload(
       pins: provisioned.pins,
     };
   }
+  if (!record.toolbelt)
+    throw new Error("no provisioned toolbelt; run `bun run provision` first");
+  cpSync(record.toolbelt, join(directory, TOOLBELT_DIR), {
+    recursive: true,
+    verbatimSymlinks: true,
+  });
   const manifest: PayloadManifest = {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
     version,

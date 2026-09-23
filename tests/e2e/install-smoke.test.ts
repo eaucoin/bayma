@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -163,6 +164,10 @@ test.serial(
         JSON.parse(readFileSync(join(payload, "payload.json"), "utf8"))
           .platform,
       ).toBe(hostPlatformId());
+      // ...and linked its toolbelt where the bayma-toolbelt skill looks.
+      expect(
+        realpathSync(join(home, ".local", "share", "bayma", "toolbelt")),
+      ).toBe(realpathSync(join(payload, "toolbelt")));
 
       const doctor = await run([bayma, "doctor", "--format", "json"], {
         env,

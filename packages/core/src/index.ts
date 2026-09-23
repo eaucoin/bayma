@@ -50,6 +50,7 @@ export * from "./runtime/profile.ts";
 export * from "./runtime/registry.ts";
 export * from "./runtime/platform.ts";
 export * from "./runtime/payload.ts";
+export * from "./runtime/toolbelt.ts";
 export * from "./runtime/payload-environment.ts";
 export * from "./runtime/adapter.ts";
 export * from "./runtime/transport.ts";

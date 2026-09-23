@@ -1,9 +1,11 @@
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
 } from "node:fs";
@@ -76,7 +78,7 @@ export function createRustTransport(): RuntimeTransport {
       const cargoHome = join(root, `cargo-home-${version}`);
       mkdirSync(cacheDir, { recursive: true });
       mkdirSync(configDir, { recursive: true });
-      seedCargoHome(cargoHome);
+      seedCargoHome(cargoHome, process.env.BAYMA_RUST_CARGO_SEED_DIR);
       return {
         file: required("BAYMA_RUST_HOST_BIN"),
         args: [],
@@ -95,13 +97,29 @@ export function createRustTransport(): RuntimeTransport {
 }
 
 /**
- * The payload carries the support crate's dependency closure, so the first
- * cell on a machine compiles without network access. The seed is copied once
- * into a writable Cargo home that later cells extend.
+ * The file naming the seed a Cargo home last received. It is written last, so
+ * its presence proves a whole seed.
  */
-function seedCargoHome(cargoHome: string): void {
-  if (existsSync(cargoHome)) return;
-  const seed = process.env.BAYMA_RUST_CARGO_SEED_DIR;
+export const CARGO_SEED_ID = "bayma-seed-id";
+
+/**
+ * The payload carries a Cargo registry seed: the support crate's dependency
+ * closure and every crate the toolbelt's lockfile names, so cells compile and
+ * the toolbelt resolves without network access. A new Cargo home receives the
+ * whole seed; one an earlier payload seeded receives what this seed adds, and
+ * keeps every crate its cells fetched since.
+ */
+export function seedCargoHome(
+  cargoHome: string,
+  seed: string | undefined,
+): void {
+  if (existsSync(cargoHome)) {
+    if (seed && readSeedId(seed) !== readSeedId(cargoHome)) {
+      mergeMissing(seed, cargoHome);
+      copyFileSync(join(seed, CARGO_SEED_ID), join(cargoHome, CARGO_SEED_ID));
+    }
+    return;
+  }
   mkdirSync(join(cargoHome, ".."), { recursive: true });
   const staging = mkdtempSync(`${cargoHome}.`);
   try {
@@ -111,5 +129,32 @@ function seedCargoHome(cargoHome: string): void {
     if (!existsSync(cargoHome)) throw error;
   } finally {
     rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+function readSeedId(directory: string): string | undefined {
+  try {
+    return readFileSync(join(directory, CARGO_SEED_ID), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Copy every file `from` holds and `to` lacks. Each lands by rename, so a
+ * Cargo running in another session never reads a partial archive.
+ */
+function mergeMissing(from: string, to: string): void {
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const source = join(from, entry.name);
+    const destination = join(to, entry.name);
+    if (entry.isDirectory()) {
+      mkdirSync(destination, { recursive: true });
+      mergeMissing(source, destination);
+    } else if (!existsSync(destination)) {
+      const staging = `${destination}.${process.pid}`;
+      copyFileSync(source, staging);
+      renameSync(staging, destination);
+    }
   }
 }

@@ -17,13 +17,15 @@ import { spawnSync } from "node:child_process";
 import { cacheRoot, type PathEnvironment } from "../paths.ts";
 import { hostPlatformId, type PlatformId } from "./platform.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
+import { linkToolbelt } from "./toolbelt.ts";
 import { BAYMA_VERSION } from "../version.ts";
 
 /**
  * bayma ships its own toolchains. They are too large to live inside the npm
  * package, so the package carries a pinned release for each platform and the
  * install downloads that one archive, verifies its digest, and unpacks it
- * once per machine and version.
+ * once per machine and version. The payload also carries the toolbelt, which
+ * every install links into place.
  */
 
 export const PAYLOAD_RELEASE_MANIFEST = "payloads.json";
@@ -107,7 +109,11 @@ export interface EnsurePayloadOptions {
   report?: (message: string) => void;
 }
 
-/** The payload directory for this version, downloading it once if it is absent. */
+/**
+ * The payload directory for this version, downloading it once if it is
+ * absent, with its toolbelt linked into place. A `BAYMA_PAYLOAD_DIR` override
+ * is used as it is and changes nothing else on the machine.
+ */
 export async function ensurePayload(
   options: EnsurePayloadOptions = {},
 ): Promise<string> {
@@ -124,8 +130,18 @@ export async function ensurePayload(
     }
     return directory;
   }
-  if (isComplete(directory, version)) return directory;
+  if (!isComplete(directory, version))
+    await installPayload(directory, version, options, report);
+  linkToolbelt(directory, env, report);
+  return directory;
+}
 
+async function installPayload(
+  directory: string,
+  version: string,
+  options: EnsurePayloadOptions,
+  report: (message: string) => void,
+): Promise<void> {
   const platform = options.platform ?? hostPlatformId();
   const release = options.release ?? readPayloadRelease();
   const pinned = release.payloads[platform];
@@ -165,5 +181,4 @@ export async function ensurePayload(
     rmSync(staging, { recursive: true, force: true });
   }
   report(`bayma: payload ready at ${directory}`);
-  return directory;
 }

@@ -13,4 +13,8 @@ export const rustAdapter: RuntimeAdapter = {
   doctor: rustDoctor,
 };
 
-export { createRustTransport } from "./transport.ts";
+export {
+  CARGO_SEED_ID,
+  createRustTransport,
+  seedCargoHome,
+} from "./transport.ts";

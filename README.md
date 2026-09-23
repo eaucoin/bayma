@@ -57,13 +57,24 @@ startup_timeout_sec = 60
 For any other MCP client, use `{"command": "npx", "args": ["-y", "@bayma-repl/bayma", "mcp-stdio"]}`.
 
 bayma manages the runtimes for you. Installing it downloads a single archive —
-Bun, Python, .NET and Rust — into `~/.cache/bayma`, about 600 MB, once per
-version. Nothing on your machine is used or needed beyond Node, and every
-install runs the same versions. `npx @bayma-repl/bayma doctor` checks that each
-runtime works.
+Bun, Python, .NET and Rust, and the toolbelt below — into `~/.cache/bayma`,
+about 750 MB, once per version. Nothing on your machine is used or needed
+beyond Node, and every install runs the same versions.
+`npx @bayma-repl/bayma doctor` checks that each runtime works.
 
 Sessions are kept under `~/.local/state/bayma`, one directory per project
 directory the client launched from.
+
+## Agent skill
+
+bayma ships a toolbelt for its sessions: pinned Bun, Python, and Rust packages
+for discovering, searching, parsing, editing, and testing code, which the
+`bayma-toolbelt` skill teaches an agent to use. bayma installs the toolbelt
+with its runtimes, at `~/.local/share/bayma/toolbelt`; add the skill with
+
+```sh
+npx skills add eaucoin/bayma
+```
 
 ## Development
 
@@ -74,7 +85,7 @@ Node.js 22.13+, which is what bayma itself runs on. The toolchains come from
 ```sh
 bun install
 bun run build        # bundle the server and the installer for Node into dist
-bun run provision    # download and verify every pinned toolchain into .work
+bun run provision    # download and verify every pinned toolchain, and build the toolbelt, into .work
 bun run payload      # assemble dist/payload and its release tarball
 bun run test         # unit, integration, and tooling tests, against that payload
 bun run release      # write dist/payloads.json from the payload tarballs
@@ -83,5 +94,6 @@ bun run test:e2e     # npm install the tarball and drive every runtime through i
 ```
 
 The layout is `packages/` (engine, adapters, the published package; the Rust
-host sources live in the Rust adapter), `tooling/` (pins, provisioning,
-payload, publish), `tests/`.
+host sources live in the Rust adapter), `toolbelt/` (the toolbelt's code and
+lockfiles), `skills/` (the `bayma-toolbelt` skill), `tooling/` (pins,
+provisioning, payload, publish), `tests/`.

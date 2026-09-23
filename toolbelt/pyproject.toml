@@ -1,0 +1,65 @@
+[project]
+name = "bayma-toolbelt"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "ast-grep-py==0.45.0",
+  "binaryornot==0.6.0",
+  "cachetools==7.1.6",
+  "dulwich==1.2.12",
+  "EditorConfig==0.17.1",
+  "griffe==2.1.0",
+  "jedi==0.20.0",
+  "json5==0.15.0",
+  "libcst==1.8.6",
+  "markdown-it-py==4.2.0",
+  "more-itertools==11.1.0",
+  "packaging==26.2",
+  "pathspec==1.1.1",
+  "ruamel.yaml==0.19.1",
+  "tomlkit==0.15.1",
+  "wcmatch==11.0",
+]
+
+[project.optional-dependencies]
+semantic-lsp = [
+  "basedpyright==1.39.9",
+  "pygls==2.1.1",
+]
+live-index = [
+  "watchfiles==1.2.0",
+]
+bundled-ripgrep = [
+  "ripgrep-bin==15.2.0",
+]
+test = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+]
+checking = [
+  "ruff==0.16.0",
+]
+
+[build-system]
+requires = ["setuptools>=80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+py-modules = [
+  "bayma_toolbelt",
+  "bayma_toolbelt_process",
+]
+
+[tool.basedpyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+include = [
+  "bayma_toolbelt.py",
+  "bayma_toolbelt_process.py",
+  "tests",
+]
