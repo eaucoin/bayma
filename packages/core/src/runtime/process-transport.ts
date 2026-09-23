@@ -553,7 +553,12 @@ export class ProcessTransport implements RuntimeTransport {
       try {
         process.kill(-state.child.pid, signal);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        // Nothing is left to signal: the group is gone, or its leader has
+        // exited and only zombies remain, which macOS refuses to signal.
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ESRCH") return;
+        if (code === "EPERM" && childHasExited(state.child)) return;
+        throw error;
       }
       return;
     }

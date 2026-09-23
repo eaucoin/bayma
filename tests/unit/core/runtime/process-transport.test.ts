@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   aggregateFailure,
@@ -177,6 +177,49 @@ test.skipIf(process.platform === "win32")(
 
     expect(processExists(handle.pid)).toBe(false);
     expect(processExists(descendantPid)).toBe(false);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "an owned process tree that leaves only zombies terminates cleanly",
+  async () => {
+    const transport = new ProcessTransport({
+      platformId: "test",
+      promptRe: /(?:^|[\r\n])READY> /g,
+      ownsProcessTree: true,
+      command: () => ({
+        file: process.execPath,
+        args: [
+          "-e",
+          'process.stdout.write("READY> "); setInterval(() => {}, 1_000)',
+        ],
+      }),
+    });
+    const handle = await transport.startSession({
+      sessionId: "sess_zombie_tree",
+      title: "zombie-tree",
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+    });
+    await transport.waitForInitialPrompt(handle);
+    // macOS refuses to signal a group whose remaining members are all
+    // zombies: its leader exited, and a descendant has yet to be reaped.
+    const kill = process.kill.bind(process);
+    const refuseZombieGroup = spyOn(process, "kill").mockImplementation(
+      (pid: number, signal?: string | number) => {
+        if (pid === -handle.pid && signal === "SIGKILL") {
+          throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+        }
+        return kill(pid, signal);
+      },
+    );
+    try {
+      await transport.terminate(handle);
+    } finally {
+      refuseZombieGroup.mockRestore();
+    }
+    expect(processExists(handle.pid)).toBe(false);
   },
 );
 
