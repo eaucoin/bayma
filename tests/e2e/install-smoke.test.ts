@@ -183,14 +183,18 @@ test.serial(
             "python",
           ),
           "-c",
-          "import sys; print(sys.base_prefix, sys.base_exec_prefix)",
+          "import sys; print(sys.base_prefix); print(sys.base_exec_prefix)",
         ],
         { env, cwd: root },
       );
       expect(toolbeltPython.exitCode).toBe(0);
-      expect(toolbeltPython.output).toBe(
-        `${join(payload, "python")} ${join(payload, "python")}\n`,
-      );
+      const installedPython = realpathSync(join(payload, "python"));
+      expect(
+        toolbeltPython.output
+          .trimEnd()
+          .split("\n")
+          .map((path) => realpathSync(path)),
+      ).toEqual([installedPython, installedPython]);
 
       const doctor = await run([bayma, "doctor", "--format", "json"], {
         env,
