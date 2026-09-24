@@ -31,7 +31,10 @@ function readArMembers(archive: Buffer): Map<string, Buffer> {
 }
 
 /** Unpack a Debian package's files into `destination`. */
-export function extractDeb(deb: string, destination: string): void {
+export async function extractDeb(
+  deb: string,
+  destination: string,
+): Promise<void> {
   const members = readArMembers(readFileSync(deb));
   const data = [...members].find(([name]) => name.startsWith("data.tar"));
   if (!data) throw new Error(`${deb} carries no data tarball`);
@@ -39,7 +42,7 @@ export function extractDeb(deb: string, destination: string): void {
   try {
     const tarball = join(staging, data[0]);
     writeFileSync(tarball, data[1]);
-    runOrThrow(["tar", "-xf", tarball, "-C", destination]);
+    await runOrThrow(["tar", "-xf", tarball, "-C", destination]);
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

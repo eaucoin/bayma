@@ -13,6 +13,7 @@ import { payloadTarballName } from "./payload.ts";
 import { writeJson } from "./shared/files.ts";
 import { sha256File } from "./shared/hashing.ts";
 import { runOrThrow } from "./shared/process.ts";
+import { recordArtifact } from "./telemetry/index.ts";
 
 // The published package: the manifest from packages/server, the two Node
 // bundles, and the pinned release each platform's payload is downloaded from.
@@ -119,7 +120,10 @@ export function stagePackage(repoRoot: string, stageDir: string): void {
   }
 }
 
-export function pack(repoRoot: string, distDir: string): PackResult {
+export async function pack(
+  repoRoot: string,
+  distDir: string,
+): Promise<PackResult> {
   const stageDir = join(distDir, "npm", "package");
   stagePackage(repoRoot, stageDir);
   // One package tarball in dist, so what is there is what was built.
@@ -127,14 +131,18 @@ export function pack(repoRoot: string, distDir: string): PackResult {
     if (name.endsWith(".tgz")) rmSync(join(distDir, name), { force: true });
   }
   const [report] = JSON.parse(
-    runOrThrow(["npm", "pack", "--json", "--pack-destination", distDir], {
-      cwd: stageDir,
-    }).stdout,
-  ) as [{ filename: string; files: { path: string }[] }];
+    (
+      await runOrThrow(
+        ["npm", "pack", "--json", "--pack-destination", distDir],
+        { cwd: stageDir },
+      )
+    ).stdout,
+  ) as [{ filename: string; size: number; files: { path: string }[] }];
   const files = report.files.map(({ path }) => path).sort();
   const stray = files.filter((path) => !ALLOWED_MEMBERS.test(path));
   if (stray.length > 0) {
     throw new Error(`tarball contains files it must not:\n${stray.join("\n")}`);
   }
+  recordArtifact("package tarball", report.size);
   return { tarball: join(distDir, report.filename), files };
 }

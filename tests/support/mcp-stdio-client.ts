@@ -6,6 +6,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { CallToolResultSchema } from "@modelcontextprotocol/core";
 import type { CallToolResult } from "@modelcontextprotocol/client";
+import { ATTR } from "../../tooling/src/telemetry/attributes.ts";
+import { outputLog } from "../../tooling/src/telemetry/index.ts";
 import {
   launchSpec,
   MCP_REQUEST_TIMEOUT_MS,
@@ -122,9 +124,15 @@ export class McpStdioClient {
       stderr: "pipe",
     });
     const serverStderr: string[] = [];
-    transport.stderr?.on("data", (chunk: Buffer | string) => {
-      serverStderr.push(Buffer.from(chunk).toString("utf8"));
+    const serverLog = outputLog("stderr", {
+      [ATTR.serverTransport]: "stdio",
     });
+    transport.stderr?.on("data", (chunk: Buffer | string) => {
+      const text = Buffer.from(chunk).toString("utf8");
+      serverStderr.push(text);
+      serverLog?.write(text);
+    });
+    transport.stderr?.on("end", () => serverLog?.end());
     try {
       await client.connect(transport);
       return new McpStdioClient(client, tempRoot, serverStderr);

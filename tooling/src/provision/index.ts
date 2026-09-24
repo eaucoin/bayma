@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { RuntimeId } from "@bayma/core";
 import { readJson, writeJson } from "../shared/files.ts";
+import { ATTR } from "../telemetry/attributes.ts";
+import { inSpan } from "../telemetry/index.ts";
 import { provisionBun } from "./bun.ts";
 import { provisionClang } from "./clang.ts";
 import { provisionDotnet } from "./dotnet.ts";
@@ -33,17 +35,23 @@ export async function provision(
     workDir,
     downloadsDir: join(workDir, "downloads"),
   };
+  const step = <T>(name: string, work: () => Promise<T>) =>
+    inSpan(`provision ${name}`, { [ATTR.provisionStep]: name }, work);
   const payloads: Record<RuntimeId, RuntimePayload> = {
-    bun: await provisionBun(context),
-    python: await provisionPython(context),
-    "dotnet-script": await provisionDotnet(context),
-    rust: await provisionRust(context),
-    ...(await provisionClang(context)),
+    bun: await step("bun", () => provisionBun(context)),
+    python: await step("python", () => provisionPython(context)),
+    "dotnet-script": await step("dotnet-script", () =>
+      provisionDotnet(context),
+    ),
+    rust: await step("rust", () => provisionRust(context)),
+    ...(await step("clang", () => provisionClang(context))),
   };
   const record: ProvisionRecord = {
     provisionedAt: new Date().toISOString(),
     payloads,
-    toolbelt: await provisionToolbelt(context, payloads),
+    toolbelt: await step("toolbelt", () =>
+      provisionToolbelt(context, payloads),
+    ),
   };
   writeJson(provisionRecordPath(workDir), record);
   return record;

@@ -4,12 +4,15 @@ import {
   mkdirSync,
   renameSync,
   rmSync,
+  statSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { sha256File } from "./hashing.ts";
 import type { PinnedArchive } from "../platforms.ts";
+import { ATTR } from "../telemetry/attributes.ts";
+import { inSpan, recordDownload } from "../telemetry/index.ts";
 
 /** The bound on a download whose pin does not state its size. */
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
@@ -30,12 +33,35 @@ export async function fetchPinned(
   downloadsDir: string,
   label: string,
 ): Promise<string> {
-  mkdirSync(downloadsDir, { recursive: true });
-  const target = join(downloadsDir, archive.sha256);
-  if (existsSync(target) && sha256File(target) === archive.sha256)
-    return target;
-  rmSync(target, { force: true });
+  return inSpan(
+    `download ${label}`,
+    { [ATTR.downloadLabel]: label, [ATTR.urlFull]: archive.url },
+    async (span) => {
+      const started = performance.now();
+      mkdirSync(downloadsDir, { recursive: true });
+      const target = join(downloadsDir, archive.sha256);
+      const cached =
+        existsSync(target) && sha256File(target) === archive.sha256;
+      span.setAttribute(ATTR.downloadCached, cached);
+      if (!cached) await downloadVerified(archive, target, label);
+      recordDownload(
+        label,
+        statSync(target).size,
+        (performance.now() - started) / 1000,
+        cached,
+      );
+      return target;
+    },
+  );
+}
 
+/** Downloads a pinned archive to `target`, proving its bytes before it is there. */
+async function downloadVerified(
+  archive: PinnedArchive,
+  target: string,
+  label: string,
+): Promise<void> {
+  rmSync(target, { force: true });
   const staging = `${target}.part`;
   for (let attempt = 1; ; attempt += 1) {
     rmSync(staging, { force: true });
@@ -58,7 +84,6 @@ export async function fetchPinned(
     throw new Error(`${label} digest mismatch: ${actual} != ${archive.sha256}`);
   }
   renameSync(staging, target);
-  return target;
 }
 
 async function download(

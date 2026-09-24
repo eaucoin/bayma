@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { RuntimeId } from "@bayma/core";
+import { recordProvisionLookup } from "../telemetry/index.ts";
 
 /**
  * A provisioned runtime: a directory that is copied verbatim into the payload,
@@ -33,9 +34,16 @@ export interface ProvisionContext {
  * Provisioners are idempotent: `identity` names the pins that produced a
  * directory, and a directory whose marker matches is reused as is.
  */
-export function isProvisioned(directory: string, identity: string): boolean {
+export function isProvisioned(
+  context: ProvisionContext,
+  directory: string,
+  identity: string,
+): boolean {
   const marker = join(directory, ".provisioned");
-  return existsSync(marker) && readFileSync(marker, "utf8").trim() === identity;
+  const provisioned =
+    existsSync(marker) && readFileSync(marker, "utf8").trim() === identity;
+  recordProvisionLookup(relative(context.workDir, directory), provisioned);
+  return provisioned;
 }
 
 export function resetDirectory(directory: string): void {

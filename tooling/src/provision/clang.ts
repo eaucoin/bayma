@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -16,7 +15,7 @@ import { extractDeb } from "../shared/deb.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { copyTree, ensureDir, walkFiles } from "../shared/files.ts";
 import { sha256File, sha256Text } from "../shared/hashing.ts";
-import { runOrThrow } from "../shared/process.ts";
+import { run, runOrThrow } from "../shared/process.ts";
 import {
   isProvisioned,
   markProvisioned,
@@ -67,16 +66,18 @@ function llvmMember(path: string): boolean {
 }
 
 /** Runs tar over the decompressed stream of a zstd-compressed tarball. */
-function tarZstd(archive: string, tarArgs: string[]): string {
+async function tarZstd(archive: string, tarArgs: string[]): Promise<string> {
   // The release is compressed with a window beyond zstd's default limit.
-  return runOrThrow([
-    "bash",
-    "-c",
-    'set -o pipefail; zstd -dcq --long=31 "$1" | tar "${@:2}"',
-    "bash",
-    archive,
-    ...tarArgs,
-  ]).stdout;
+  return (
+    await runOrThrow([
+      "bash",
+      "-c",
+      'set -o pipefail; zstd -dcq --long=31 "$1" | tar "${@:2}"',
+      "bash",
+      archive,
+      ...tarArgs,
+    ])
+  ).stdout;
 }
 
 /** The parts of the LLVM release that build the host and ship with it. */
@@ -84,7 +85,7 @@ async function provisionLlvm(context: ProvisionContext): Promise<string> {
   const directory = join(context.workDir, "clang", "llvm");
   // Which parts is part of what the directory holds.
   const identity = `${CLANG.llvm.sha256}:${sha256Text(llvmMember.toString())}`;
-  if (isProvisioned(directory, identity)) return directory;
+  if (isProvisioned(context, directory, identity)) return directory;
   resetDirectory(directory);
   ensureDir(directory);
   const archive = await fetchPinned(
@@ -94,7 +95,7 @@ async function provisionLlvm(context: ProvisionContext): Promise<string> {
   );
   // Files only: tar extracts a listed directory whole, and then reports the
   // files listed after it as missing.
-  const members = tarZstd(archive, ["-t"])
+  const members = (await tarZstd(archive, ["-t"]))
     .split("\n")
     .filter(
       (member) =>
@@ -102,12 +103,18 @@ async function provisionLlvm(context: ProvisionContext): Promise<string> {
     );
   const list = join(context.workDir, "clang", "llvm-members.txt");
   writeFileSync(list, members.join("\n") + "\n");
-  tarZstd(archive, ["-x", "-C", directory, "--strip-components=1", "-T", list]);
+  await tarZstd(archive, [
+    "-x",
+    "-C",
+    directory,
+    "--strip-components=1",
+    "-T",
+    list,
+  ]);
   rmSync(list);
-  const version = runOrThrow([
-    join(directory, "bin", "llvm-config"),
-    "--version",
-  ]).stdout.trim();
+  const version = (
+    await runOrThrow([join(directory, "bin", "llvm-config"), "--version"])
+  ).stdout.trim();
   if (version !== CLANG.llvmVersion)
     throw new Error(`the pinned LLVM release reports ${version}`);
   // The extracted parts are all later builds read; the release itself is
@@ -135,7 +142,7 @@ async function provisionSysroot(
   const identity = [...packages.cells, ...packages.build]
     .map((pinned) => pinned.sha256)
     .join(":");
-  if (isProvisioned(directory, identity)) return layout;
+  if (isProvisioned(context, directory, identity)) return layout;
   resetDirectory(directory);
   ensureDir(layout.cells);
   ensureDir(layout.build);
@@ -145,8 +152,8 @@ async function provisionSysroot(
       context.downloadsDir,
       basename(pinned.url),
     );
-    extractDeb(deb, layout.build);
-    if (packages.cells.includes(pinned)) extractDeb(deb, layout.cells);
+    await extractDeb(deb, layout.build);
+    if (packages.cells.includes(pinned)) await extractDeb(deb, layout.cells);
   }
   markProvisioned(directory, identity);
   return layout;
@@ -155,7 +162,7 @@ async function provisionSysroot(
 /** The pinned zstd release's library sources. */
 async function provisionZstd(context: ProvisionContext): Promise<string> {
   const directory = join(context.workDir, "clang", "zstd");
-  if (isProvisioned(directory, CLANG.zstd.sha256)) return directory;
+  if (isProvisioned(context, directory, CLANG.zstd.sha256)) return directory;
   resetDirectory(directory);
   ensureDir(directory);
   const archive = await fetchPinned(
@@ -163,22 +170,29 @@ async function provisionZstd(context: ProvisionContext): Promise<string> {
     context.downloadsDir,
     `zstd ${CLANG.zstdVersion}`,
   );
-  runOrThrow(["tar", "-xzf", archive, "-C", directory, "--strip-components=1"]);
+  await runOrThrow([
+    "tar",
+    "-xzf",
+    archive,
+    "-C",
+    directory,
+    "--strip-components=1",
+  ]);
   markProvisioned(directory, CLANG.zstd.sha256);
   return directory;
 }
 
-function macosSdk(): string {
-  return runOrThrow(["xcrun", "--show-sdk-path"]).stdout.trim();
+async function macosSdk(): Promise<string> {
+  return (await runOrThrow(["xcrun", "--show-sdk-path"])).stdout.trim();
 }
 
 /** What every compilation of the host and its zstd shares. */
-function targetFlags(sysroot: string | undefined): string[] {
+async function targetFlags(sysroot: string | undefined): Promise<string[]> {
   return IS_LINUX
     ? [`--sysroot=${sysroot}`]
     : [
         "-isysroot",
-        macosSdk(),
+        await macosSdk(),
         `-mmacosx-version-min=${CLANG.llvm.macosMinimum}`,
       ];
 }
@@ -204,19 +218,19 @@ function exportFlags(buildDir: string, symbols: string[]): string[] {
   ];
 }
 
-function buildHost(
+async function buildHost(
   context: ProvisionContext,
   llvm: string,
   zstd: string,
   sysroot: string | undefined,
-): string {
+): Promise<string> {
   const buildDir = join(context.workDir, "clang", "build");
   resetDirectory(buildDir);
   ensureDir(buildDir);
   const clang = join(llvm, "bin", "clang");
   const clangxx = join(llvm, "bin", "clang++");
   const llvmConfig = join(llvm, "bin", "llvm-config");
-  const target = targetFlags(sysroot);
+  const target = await targetFlags(sysroot);
 
   const objects: string[] = [];
   // zstd's x86-64 assembly is its only non-portable part, and LLVM only
@@ -225,7 +239,7 @@ function buildHost(
     for (const source of walkFiles(join(zstd, "lib", part))) {
       if (!source.endsWith(".c")) continue;
       const object = join(buildDir, `zstd-${part}-${basename(source, ".c")}.o`);
-      runOrThrow([
+      await runOrThrow([
         clang,
         ...target,
         "-O2",
@@ -246,14 +260,14 @@ function buildHost(
   const sourceFiles = walkFiles(sources).filter((path) =>
     /\.(cpp|h)$/.test(path),
   );
-  runOrThrow([
+  await runOrThrow([
     join(llvm, "bin", "clang-format"),
     "--dry-run",
     "-Werror",
     ...sourceFiles,
   ]);
-  const cxxflags = runOrThrow([llvmConfig, "--cxxflags"])
-    .stdout.trim()
+  const cxxflags = (await runOrThrow([llvmConfig, "--cxxflags"])).stdout
+    .trim()
     .split(/\s+/)
     .flatMap((flag) =>
       flag.startsWith("-I") ? ["-isystem", flag.slice(2)] : [flag],
@@ -261,7 +275,7 @@ function buildHost(
   for (const source of sourceFiles) {
     if (!source.endsWith(".cpp")) continue;
     const object = join(buildDir, `${basename(source, ".cpp")}.o`);
-    runOrThrow([
+    await runOrThrow([
       clangxx,
       ...target,
       ...cxxflags,
@@ -291,10 +305,12 @@ function buildHost(
     .filter((name) => /^libclang[A-Z]\w*\.a$/.test(name))
     .sort()
     .map((name) => join(llvm, "lib", name));
-  const llvmLibraries = runOrThrow([llvmConfig, "--libs", "--link-static"])
-    .stdout.trim()
+  const llvmLibraries = (
+    await runOrThrow([llvmConfig, "--libs", "--link-static"])
+  ).stdout
+    .trim()
     .split(/\s+/);
-  runOrThrow([
+  await runOrThrow([
     clangxx,
     ...target,
     "-o",
@@ -335,14 +351,16 @@ function buildHost(
 }
 
 /** The newest glibc symbol version `binary` requires must be at the floor. */
-function assertGlibcFloor(binary: string, llvm: string): void {
+async function assertGlibcFloor(binary: string, llvm: string): Promise<void> {
   const floor = CLANG.glibcFloor;
   if (!floor) return;
-  const versions = runOrThrow([
-    join(llvm, "bin", "llvm-readelf"),
-    "--version-info",
-    binary,
-  ]).stdout.match(/GLIBC_\d+(\.\d+)*/g);
+  const versions = (
+    await runOrThrow([
+      join(llvm, "bin", "llvm-readelf"),
+      "--version-info",
+      binary,
+    ])
+  ).stdout.match(/GLIBC_\d+(\.\d+)*/g);
   const newest = [...new Set(versions ?? [])]
     .map((version) => version.slice("GLIBC_".length).split(".").map(Number))
     .sort((a, b) => a[0]! - b[0]! || (a[1] ?? 0) - (b[1] ?? 0))
@@ -411,7 +429,7 @@ function assembleRuntime(
  * Runs one cell in each language through the assembled runtime, the way a
  * session would, and proves it answers.
  */
-function smokeTest(root: string): void {
+async function smokeTest(root: string): Promise<void> {
   const workspace = mkdtempSync(join(tmpdir(), "bayma-cpp-smoke-"));
   try {
     for (const language of ["c", "c++"]) {
@@ -427,13 +445,13 @@ function smokeTest(root: string): void {
           checkpoint_json: null,
         }),
       );
-      const result = spawnSync(
-        join(root, "bin", HOST),
+      const result = await run(
         [
+          join(root, "bin", HOST),
           `--language=${language}`,
-          ...(IS_LINUX ? [] : [`--sysroot=${macosSdk()}`]),
+          ...(IS_LINUX ? [] : [`--sysroot=${await macosSdk()}`]),
         ],
-        { cwd: workspace, input: `:exec ${spec}\n`, encoding: "utf8" },
+        { cwd: workspace, input: `:exec ${spec}\n` },
       );
       const answered = result.stdout.includes(
         `${prefix}{"kind":"result","text":"42"}\n`,
@@ -464,7 +482,7 @@ export async function provisionClang(
     sha256File(fileURLToPath(import.meta.url)),
     ...walkFiles(join(context.repoRoot, NATIVE_DIR)).map(sha256File),
   ].join(":");
-  if (!isProvisioned(root, identity)) {
+  if (!isProvisioned(context, root, identity)) {
     const llvm = await provisionLlvm(context);
     const sysroot = await provisionSysroot(context);
     const zstd = await provisionZstd(context);
@@ -488,8 +506,8 @@ export async function provisionClang(
           pkg,
           "copyright",
         );
-    const host = buildHost(context, llvm, zstd, sysroot?.build);
-    assertGlibcFloor(host, llvm);
+    const host = await buildHost(context, llvm, zstd, sysroot?.build);
+    await assertGlibcFloor(host, llvm);
     resetDirectory(root);
     assembleRuntime(root, host, llvm, sysroot, licenses);
     // The host is rebuilt only when its sources or pins change.
@@ -497,7 +515,7 @@ export async function provisionClang(
       recursive: true,
       force: true,
     });
-    smokeTest(root);
+    await smokeTest(root);
     markProvisioned(root, identity);
   }
   const pins: Record<string, string> = {

@@ -20,7 +20,7 @@ export async function provisionBun(
 ): Promise<RuntimePayload> {
   const directory = join(context.workDir, "bun");
   const executable = join(directory, "bun");
-  if (!isProvisioned(directory, BUN.sha256)) {
+  if (!isProvisioned(context, directory, BUN.sha256)) {
     resetDirectory(directory);
     mkdirSync(directory, { recursive: true });
     const archive = await fetchPinned(BUN, context.downloadsDir, "Bun");
@@ -30,7 +30,7 @@ export async function provisionBun(
     chmodSync(executable, 0o755);
     markProvisioned(directory, BUN.sha256);
   }
-  const version = runOrThrow([executable, "--version"]).stdout.trim();
+  const version = (await runOrThrow([executable, "--version"])).stdout.trim();
   if (version !== BUN.version)
     throw new Error(`bundled Bun reports ${version}, expected ${BUN.version}`);
   return {

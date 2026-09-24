@@ -20,7 +20,7 @@ export async function provisionPython(
   const directory = join(context.workDir, "python");
   const root = join(directory, "python");
   const executable = join(root, "bin", "python3");
-  if (!isProvisioned(directory, PYTHON.sha256)) {
+  if (!isProvisioned(context, directory, PYTHON.sha256)) {
     resetDirectory(directory);
     mkdirSync(directory, { recursive: true });
     const archive = await fetchPinned(
@@ -28,13 +28,13 @@ export async function provisionPython(
       context.downloadsDir,
       "portable Python",
     );
-    runOrThrow(["tar", "-xzf", archive, "-C", directory]);
+    await runOrThrow(["tar", "-xzf", archive, "-C", directory]);
     if (!existsSync(executable)) {
       throw new Error(`portable Python archive did not contain ${executable}`);
     }
     markProvisioned(directory, PYTHON.sha256);
   }
-  const version = runOrThrow([executable, "--version"]).stdout.trim();
+  const version = (await runOrThrow([executable, "--version"])).stdout.trim();
   if (version !== `Python ${PYTHON.version}`) {
     throw new Error(
       `portable Python reports ${version}, expected ${PYTHON.version}`,

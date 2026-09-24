@@ -8,6 +8,20 @@ on:
 permissions:
   contents: read
 
+# Development telemetry goes where the repository's secrets and variables of
+# these OpenTelemetry names say; with none set, nothing is exported. See
+# tooling/src/telemetry/config.ts.
+env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }}
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT }}
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT }}
+  OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_TRACES_HEADERS }}
+  OTEL_EXPORTER_OTLP_METRICS_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_METRICS_HEADERS }}
+  OTEL_EXPORTER_OTLP_LOGS_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_LOGS_HEADERS }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_EXPORTER_OTLP_PROTOCOL }}
+
 jobs:
   linux:
     runs-on: ubuntu-24.04

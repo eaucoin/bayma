@@ -13,11 +13,11 @@
     "payload": "bun tooling/src/cli.ts payload",
     "release": "bun tooling/src/cli.ts release",
     "pack": "bun tooling/src/cli.ts pack",
-    "test": "bun test tests/unit tests/integration tests/tooling",
-    "test:e2e": "bun test tests/e2e",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.bun.json",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "test": "bun tooling/src/cli.ts test tests/unit tests/integration tests/tooling",
+    "test:e2e": "bun tooling/src/cli.ts test tests/e2e",
+    "typecheck": "bun tooling/src/cli.ts typecheck",
+    "format": "bun tooling/src/cli.ts format",
+    "format:check": "bun tooling/src/cli.ts format --check"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

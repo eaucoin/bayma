@@ -97,7 +97,7 @@ export async function provisionDotnet(
     DOTNET_NOLOGO: "1",
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
   };
-  if (!isProvisioned(directory, IDENTITY)) {
+  if (!isProvisioned(context, directory, IDENTITY)) {
     resetDirectory(directory);
     // The full SDK is only needed to install the tool; the payload keeps the
     // subset dotnet-script uses at runtime.
@@ -108,9 +108,9 @@ export async function provisionDotnet(
         context.downloadsDir,
         ".NET SDK",
       );
-      runOrThrow(["tar", "-xzf", archive, "-C", sdkRoot]);
+      await runOrThrow(["tar", "-xzf", archive, "-C", sdkRoot]);
       ensureDir(root);
-      runOrThrow(
+      await runOrThrow(
         [
           join(sdkRoot, "dotnet"),
           "tool",
@@ -135,11 +135,10 @@ export async function provisionDotnet(
     }
     markProvisioned(directory, IDENTITY);
   }
-  const version = runOrThrow(
-    [join(root, "tools", "dotnet-script"), "--version"],
-    {
+  const version = (
+    await runOrThrow([join(root, "tools", "dotnet-script"), "--version"], {
       env: { ...sdkEnv, DOTNET_ROOT: root },
-    },
+    })
   ).stdout.trim();
   if (version !== DOTNET.scriptVersion) {
     throw new Error(

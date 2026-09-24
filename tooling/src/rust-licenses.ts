@@ -52,27 +52,29 @@ interface CargoMetadata {
 }
 
 /** The crates in the host's dependency closure, with where cargo has them. */
-function hostClosure(
+async function hostClosure(
   nativeRoot: string,
   host: string,
   cargo: string,
-): Map<CargoPackage, string> {
+): Promise<Map<CargoPackage, string>> {
   const metadata = JSON.parse(
-    runOrThrow(
-      [
-        cargo,
-        "metadata",
-        "--format-version",
-        "1",
-        "--locked",
-        "--manifest-path",
-        join(nativeRoot, "Cargo.toml"),
-      ],
-      {
-        cwd: nativeRoot,
-        // cargo finds rustc beside itself, never the machine's.
-        env: { RUSTC: join(dirname(cargo), "rustc") },
-      },
+    (
+      await runOrThrow(
+        [
+          cargo,
+          "metadata",
+          "--format-version",
+          "1",
+          "--locked",
+          "--manifest-path",
+          join(nativeRoot, "Cargo.toml"),
+        ],
+        {
+          cwd: nativeRoot,
+          // cargo finds rustc beside itself, never the machine's.
+          env: { RUSTC: join(dirname(cargo), "rustc") },
+        },
+      )
     ).stdout,
   ) as CargoMetadata;
   const byId = new Map(metadata.packages.map((pkg) => [pkg.id, pkg]));
@@ -96,13 +98,13 @@ function hostClosure(
   return closure;
 }
 
-export function collectLicenseInventory(
+export async function collectLicenseInventory(
   nativeRoot: string,
   host: string,
   cargo: string,
-): Map<RustLicenseInventoryEntry, string> {
+): Promise<Map<RustLicenseInventoryEntry, string>> {
   const inventory = new Map<RustLicenseInventoryEntry, string>();
-  const closure = [...hostClosure(nativeRoot, host, cargo)].sort(
+  const closure = [...(await hostClosure(nativeRoot, host, cargo))].sort(
     ([left], [right]) =>
       `${left.name}@${left.version}`.localeCompare(
         `${right.name}@${right.version}`,
@@ -137,13 +139,13 @@ function hasCanonicalText(expression: string): boolean {
 }
 
 /** Write the inventory and every license text under `licensesRoot`. */
-export function writeLicenseEvidence(
+export async function writeLicenseEvidence(
   licensesRoot: string,
   nativeRoot: string,
   host: string,
   cargo: string,
-): void {
-  const inventory = collectLicenseInventory(nativeRoot, host, cargo);
+): Promise<void> {
+  const inventory = await collectLicenseInventory(nativeRoot, host, cargo);
   const cratesRoot = join(licensesRoot, "crates");
   const commonRoot = join(licensesRoot, "common");
   ensureDir(cratesRoot);

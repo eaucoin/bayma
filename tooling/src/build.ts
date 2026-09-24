@@ -1,7 +1,15 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { readJson } from "./shared/files.ts";
 import { runOrThrow } from "./shared/process.ts";
+import { assertBundleUntraced } from "./telemetry/boundary.ts";
+import { recordArtifact } from "./telemetry/index.ts";
 
 // The published package is packages/server; its manifest is the one source
 // of the product version and of what the tarball contains.
@@ -46,12 +54,12 @@ export interface BuildResult {
   installer: string;
 }
 
-function bundleForNode(
+async function bundleForNode(
   repoRoot: string,
   entrypoint: string,
   outFile: string,
-): void {
-  runOrThrow(
+): Promise<void> {
+  await runOrThrow(
     [
       "bun",
       "build",
@@ -74,18 +82,25 @@ function bundleForNode(
     !readFileSync(outFile, "utf8").startsWith(SHEBANG)
   )
     throw new Error(`bun build produced no bundle at ${outFile}`);
+  assertBundleUntraced(outFile);
   chmodSync(outFile, 0o755);
+  recordArtifact(basename(outFile), statSync(outFile).size);
 }
 
 /** Bundle the server and the installer; the server must report the version. */
-export function build(repoRoot: string, outDir: string): BuildResult {
+export async function build(
+  repoRoot: string,
+  outDir: string,
+): Promise<BuildResult> {
   const { version } = packageManifest(repoRoot);
   mkdirSync(outDir, { recursive: true });
   const bundle = join(outDir, BUNDLE);
   const installer = join(outDir, INSTALLER);
-  bundleForNode(repoRoot, ENTRYPOINT, bundle);
-  bundleForNode(repoRoot, INSTALL_ENTRYPOINT, installer);
-  const reported = runOrThrow(["node", bundle, "version"]).stdout.trim();
+  await bundleForNode(repoRoot, ENTRYPOINT, bundle);
+  await bundleForNode(repoRoot, INSTALL_ENTRYPOINT, installer);
+  const reported = (
+    await runOrThrow(["node", bundle, "version"])
+  ).stdout.trim();
   if (reported !== version) {
     throw new Error(
       `${BUNDLE} reports version ${reported}, expected ${version}`,

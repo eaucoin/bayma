@@ -2,5 +2,12 @@
   "name": "@bayma/tooling",
   "private": true,
   "version": "0.5.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/api-logs": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-node": "0.222.0",
+    "fast-xml-parser": "5.11.1"
+  }
 }

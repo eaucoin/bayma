@@ -4,9 +4,11 @@ import { bindToolbelt, RUNTIME_IDS, TOOLBELT_DIR } from "@bayma/core";
 import { packageManifest } from "./build.ts";
 import { hostPlatformId, type PlatformId } from "./platforms.ts";
 import type { ProvisionRecord } from "./provision/index.ts";
-import { writeJson } from "./shared/files.ts";
+import { treeBytes, writeJson } from "./shared/files.ts";
 import { sha256File } from "./shared/hashing.ts";
 import { runOrThrow } from "./shared/process.ts";
+import { assertTreeUntraced } from "./telemetry/boundary.ts";
+import { recordArtifact, telemetryEnabled } from "./telemetry/index.ts";
 
 // The payload: every toolchain bayma runs and the toolbelt built against
 // them, assembled for one platform and tarred as the release asset an
@@ -48,11 +50,11 @@ export function payloadTarballName(
 }
 
 /** Copy every provisioned runtime and the toolbelt into one directory and describe it. */
-export function assemblePayload(
+export async function assemblePayload(
   repoRoot: string,
   record: ProvisionRecord,
   outDir: string,
-): PayloadResult {
+): Promise<PayloadResult> {
   const { version } = packageManifest(repoRoot);
   const platform = hostPlatformId();
   const directory = join(outDir, "payload");
@@ -106,6 +108,10 @@ export function assemblePayload(
     runtimes,
   };
   writeJson(join(directory, PAYLOAD_MANIFEST), manifest);
+  assertTreeUntraced(directory);
+  if (telemetryEnabled())
+    for (const name of [...placed.keys(), TOOLBELT_DIR])
+      recordArtifact(`payload/${name}`, treeBytes(join(directory, name)));
 
   // One payload tarball per platform in dist: an older version's would
   // outlive its payload directory and confuse a release.
@@ -115,13 +121,10 @@ export function assemblePayload(
     }
   }
   const tarball = join(outDir, payloadTarballName(platform, version));
-  runOrThrow(["tar", "-czf", tarball, "-C", outDir, "payload"]);
+  await runOrThrow(["tar", "-czf", tarball, "-C", outDir, "payload"]);
   if (!existsSync(tarball))
     throw new Error(`payload tarball was not written to ${tarball}`);
-  return {
-    directory,
-    tarball,
-    sha256: sha256File(tarball),
-    bytes: Bun.file(tarball).size,
-  };
+  const bytes = Bun.file(tarball).size;
+  recordArtifact("payload tarball", bytes);
+  return { directory, tarball, sha256: sha256File(tarball), bytes };
 }

@@ -13,7 +13,8 @@ import { UV } from "../platforms.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { walkFiles } from "../shared/files.ts";
 import { sha256File } from "../shared/hashing.ts";
-import { runOrThrow } from "../shared/process.ts";
+import { assertSucceeded, runOrThrow } from "../shared/process.ts";
+import { bunJUnitReport, runTests } from "../shared/tests.ts";
 import {
   isProvisioned,
   markProvisioned,
@@ -44,11 +45,11 @@ const NOT_SHIPPED = [
 
 async function provisionUv(context: ProvisionContext): Promise<string> {
   const directory = join(context.workDir, "uv");
-  if (!isProvisioned(directory, UV.sha256)) {
+  if (!isProvisioned(context, directory, UV.sha256)) {
     resetDirectory(directory);
     mkdirSync(directory, { recursive: true });
     const archive = await fetchPinned(UV, context.downloadsDir, "uv");
-    runOrThrow([
+    await runOrThrow([
       "tar",
       "-xzf",
       archive,
@@ -58,7 +59,8 @@ async function provisionUv(context: ProvisionContext): Promise<string> {
     ]);
     markProvisioned(directory, UV.sha256);
   }
-  const version = runOrThrow([join(directory, "uv"), "--version"]).stdout;
+  const version = (await runOrThrow([join(directory, "uv"), "--version"]))
+    .stdout;
   if (!version.startsWith(`uv ${UV.version} `))
     throw new Error(`pinned uv reports ${version.trim()}`);
   return join(directory, "uv");
@@ -114,7 +116,7 @@ export async function provisionToolbelt(
     sha256File(join(context.repoRoot, SKILL)),
     ...walkFiles(source).map(sha256File),
   ].join(":");
-  if (isProvisioned(stage, identity)) return toolbelt;
+  if (isProvisioned(context, stage, identity)) return toolbelt;
 
   resetDirectory(stage);
   mkdirSync(join(stage, dirname(SKILL)), { recursive: true });
@@ -126,8 +128,8 @@ export async function provisionToolbelt(
     UV_CACHE_DIR: join(context.workDir, "uv-cache"),
     UV_PYTHON_DOWNLOADS: "never",
   };
-  const syncPython = () => {
-    runOrThrow(
+  const syncPython = async () => {
+    await runOrThrow(
       [
         uv,
         "sync",
@@ -142,34 +144,45 @@ export async function provisionToolbelt(
     );
     linkPythonRelatively(toolbelt);
   };
-  runOrThrow([bun, "install", "--frozen-lockfile"], { cwd: toolbelt });
-  runOrThrow(
+  await runOrThrow([bun, "install", "--frozen-lockfile"], { cwd: toolbelt });
+  await runOrThrow(
     [uv, "venv", "--quiet", "--relocatable", "--python", python, ".venv"],
     { cwd: toolbelt, env: uvEnv },
   );
-  syncPython();
+  await syncPython();
 
   // The toolbelt's own suites, against exactly what the payload will carry.
   // Rust resolves offline from a copy of the seed, which proves the seed
   // holds every crate the toolbelt's lock names.
   const path = `${dirname(uv)}:${dirname(bun)}:${process.env.PATH ?? ""}`;
-  runOrThrow([bun, "test"], { cwd: toolbelt, env: { PATH: path } });
-  runOrThrow(
-    [
-      join(toolbelt, ".venv", "bin", "python"),
-      "-m",
-      "pytest",
-      "tests",
-      "-q",
-      "-p",
-      "no:cacheprovider",
-    ],
-    { cwd: toolbelt, env: { ...uvEnv, PATH: path } },
+  const bunTests = [bun, "test"];
+  assertSucceeded(
+    bunTests,
+    await runTests("bun", bunTests, bunJUnitReport, {
+      cwd: toolbelt,
+      env: { PATH: path },
+    }),
+  );
+  const pythonTests = [
+    join(toolbelt, ".venv", "bin", "python"),
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+  ];
+  assertSucceeded(
+    pythonTests,
+    await runTests("pytest", pythonTests, (report) => ["--junitxml", report], {
+      cwd: toolbelt,
+      env: { ...uvEnv, PATH: path },
+    }),
   );
   const scratch = mkdtempSync(join(tmpdir(), "bayma-toolbelt-rust-"));
   try {
     cpSync(seed, join(scratch, "cargo-home"), { recursive: true });
-    runOrThrow([cargo, "test", "--locked", "--offline", "--quiet"], {
+    await runOrThrow([cargo, "test", "--locked", "--offline", "--quiet"], {
       cwd: toolbelt,
       env: {
         CARGO_HOME: join(scratch, "cargo-home"),
@@ -183,7 +196,7 @@ export async function provisionToolbelt(
   }
 
   // A project runner the tests drove may have re-synced the environment.
-  syncPython();
+  await syncPython();
   removeUnshipped(toolbelt);
   markProvisioned(stage, identity);
   return toolbelt;

@@ -27,6 +27,14 @@ export function walkFiles(root: string): string[] {
   return files.sort();
 }
 
+/** The bytes of every file under `root`, links counted as links. */
+export function treeBytes(root: string): number {
+  return walkFiles(root).reduce(
+    (total, path) => total + lstatSync(path).size,
+    0,
+  );
+}
+
 export function writeJson(path: string, value: unknown): void {
   ensureDir(dirname(path));
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");

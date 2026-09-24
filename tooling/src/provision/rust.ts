@@ -45,7 +45,7 @@ const TOOLCHAIN_IDENTITY = Object.values(RUST.components)
 
 async function provisionToolchain(context: ProvisionContext): Promise<string> {
   const directory = join(context.workDir, "rust", "toolchain");
-  if (isProvisioned(directory, TOOLCHAIN_IDENTITY)) return directory;
+  if (isProvisioned(context, directory, TOOLCHAIN_IDENTITY)) return directory;
   resetDirectory(directory);
   mkdirSync(directory, { recursive: true });
   await assertChannelManifest(context);
@@ -57,7 +57,7 @@ async function provisionToolchain(context: ProvisionContext): Promise<string> {
     );
     const staging = mkdtempSync(join(tmpdir(), `bayma-rust-${role}-`));
     try {
-      runOrThrow([
+      await runOrThrow([
         "tar",
         "-xJf",
         archive,
@@ -65,7 +65,7 @@ async function provisionToolchain(context: ProvisionContext): Promise<string> {
         staging,
         "--strip-components=1",
       ]);
-      runOrThrow([
+      await runOrThrow([
         "sh",
         join(staging, "install.sh"),
         `--prefix=${directory}`,
@@ -75,10 +75,9 @@ async function provisionToolchain(context: ProvisionContext): Promise<string> {
       rmSync(staging, { recursive: true, force: true });
     }
   }
-  const rustc = runOrThrow([
-    join(directory, "bin", "rustc"),
-    "--version",
-  ]).stdout;
+  const rustc = (
+    await runOrThrow([join(directory, "bin", "rustc"), "--version"])
+  ).stdout;
   if (!rustc.startsWith(`rustc ${RUST.version} `)) {
     throw new Error(`pinned toolchain reports ${rustc.trim()}`);
   }
@@ -133,11 +132,11 @@ async function provisionLinker(
   if (!pinned) return undefined;
   const directory = join(context.workDir, "rust", "linker");
   const wrapper = join(directory, "cc");
-  if (isProvisioned(directory, pinned.sha256)) return wrapper;
+  if (isProvisioned(context, directory, pinned.sha256)) return wrapper;
   resetDirectory(directory);
   mkdirSync(join(directory, "zig"), { recursive: true });
   const archive = await fetchPinned(pinned, context.downloadsDir, "zig");
-  runOrThrow([
+  await runOrThrow([
     "tar",
     "-xJf",
     archive,
@@ -145,10 +144,9 @@ async function provisionLinker(
     join(directory, "zig"),
     "--strip-components=1",
   ]);
-  const version = runOrThrow([
-    join(directory, "zig", "zig"),
-    "version",
-  ]).stdout.trim();
+  const version = (
+    await runOrThrow([join(directory, "zig", "zig"), "version"])
+  ).stdout.trim();
   if (version !== pinned.zigVersion) throw new Error(`zig reports ${version}`);
   writeFileSync(
     wrapper,
@@ -175,12 +173,12 @@ async function provisionLinker(
   return wrapper;
 }
 
-function buildHost(
+async function buildHost(
   context: ProvisionContext,
   toolchain: string,
   linker: string | undefined,
   targetDir: string,
-): string {
+): Promise<string> {
   const host = join(targetDir, RUST.target, "release", "bayma-rust-host");
   const env = {
     RUSTC: join(toolchain, "bin", "rustc"),
@@ -197,7 +195,7 @@ function buildHost(
         }
       : {}),
   };
-  runOrThrow(
+  await runOrThrow(
     [
       join(toolchain, "bin", "cargo"),
       "build",
@@ -218,7 +216,7 @@ function buildHost(
     throw new Error(`bayma-rust-host was not built at ${host}`);
   // The patched evcxr carries bayma's content-addressed compilation cache;
   // its own tests are the proof that the patch still holds.
-  runOrThrow(
+  await runOrThrow(
     [
       join(toolchain, "bin", "cargo"),
       "test",
@@ -245,11 +243,11 @@ function buildHost(
  * a fresh Cargo home and prove every archive matches its lock, so cells
  * compile and the toolbelt resolves offline.
  */
-function buildCargoSeed(
+async function buildCargoSeed(
   context: ProvisionContext,
   toolchain: string,
   destination: string,
-): void {
+): Promise<void> {
   const lockSource = join(
     context.repoRoot,
     "tooling",
@@ -287,11 +285,11 @@ function buildCargoSeed(
       CARGO_HOME: home,
       RUSTC: join(toolchain, "bin", "rustc"),
     };
-    runOrThrow([join(toolchain, "bin", "cargo"), "fetch", "--locked"], {
+    await runOrThrow([join(toolchain, "bin", "cargo"), "fetch", "--locked"], {
       cwd: project,
       env: cargoEnv,
     });
-    runOrThrow(
+    await runOrThrow(
       [
         join(toolchain, "bin", "cargo"),
         "fetch",
@@ -394,14 +392,14 @@ export async function provisionRust(
     ...walkFiles(join(context.repoRoot, NATIVE_DIR, "evcxr")).map(sha256File),
     ...walkFiles(supportSource).map(sha256File),
   ].join(":");
-  if (!isProvisioned(root, identity)) {
+  if (!isProvisioned(context, root, identity)) {
     resetDirectory(root);
     ensureDir(join(root, "host"));
     copyTree(toolchain, join(root, "toolchain"));
     rmSync(join(root, "toolchain", ".provisioned"), { force: true });
     const targetDir = join(context.workDir, "rust", "host-target");
     copyFileSync(
-      buildHost(context, toolchain, linker, targetDir),
+      await buildHost(context, toolchain, linker, targetDir),
       join(root, "host", "bayma-rust-host"),
     );
     chmodSync(join(root, "host", "bayma-rust-host"), 0o755);
@@ -413,8 +411,8 @@ export async function provisionRust(
       force: true,
     });
     cpSync(supportSource, join(root, "support"), { recursive: true });
-    buildCargoSeed(context, toolchain, join(root, "cargo-seed"));
-    writeLicenseEvidence(
+    await buildCargoSeed(context, toolchain, join(root, "cargo-seed"));
+    await writeLicenseEvidence(
       join(root, "licenses"),
       join(context.repoRoot, NATIVE_DIR),
       "bayma-rust-host",
