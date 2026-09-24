@@ -1,2 +1,4 @@
 ardour/
 ardour.partial/
+ardour.build/
+compile_flags.txt

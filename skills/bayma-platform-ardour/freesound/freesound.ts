@@ -12,6 +12,28 @@ const API = "https://freesound.org/apiv2";
 export const FIELDS =
   "id,name,username,license,duration,type,samplerate,channels,tags,previews,url";
 
+// How many times a request Freesound throttles is tried again, and how long
+// to wait before each when Freesound does not say.
+const THROTTLED_RETRIES = 6;
+const THROTTLED_WAIT_MS = 15_000;
+
+/** GETs url with the authorization, waiting out Freesound's rate limits. */
+async function authorizedFetch(url: URL | string): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${await freesoundToken()}` },
+    });
+    if (response.status === 401)
+      throw authorizationNeeded("Freesound rejected the authorization");
+    if (response.status !== 429 || attempt === THROTTLED_RETRIES)
+      return response;
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    await Bun.sleep(
+      retryAfter > 0 ? retryAfter * 1000 : THROTTLED_WAIT_MS * (attempt + 1),
+    );
+  }
+}
+
 /** GET from the API, as JSON. */
 export async function api<T = Record<string, unknown>>(
   path: string,
@@ -20,11 +42,7 @@ export async function api<T = Record<string, unknown>>(
   const url = new URL(`${API}${path}`);
   for (const [name, value] of Object.entries(query))
     url.searchParams.set(name, String(value));
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${await freesoundToken()}` },
-  });
-  if (response.status === 401)
-    throw authorizationNeeded("Freesound rejected the authorization");
+  const response = await authorizedFetch(url);
   if (!response.ok)
     throw new Error(
       `Freesound answered HTTP ${response.status} for ${path}: ${await response.text()}`,
@@ -76,11 +94,7 @@ export async function download(id: number, directory: string): Promise<string> {
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-|-$/g, "");
   const path = join(directory, `${id}-${slug}.${info.type}`);
-  const response = await fetch(`${API}/sounds/${id}/download/`, {
-    headers: { Authorization: `Bearer ${await freesoundToken()}` },
-  });
-  if (response.status === 401)
-    throw authorizationNeeded("Freesound rejected the authorization");
+  const response = await authorizedFetch(`${API}/sounds/${id}/download/`);
   if (!response.ok)
     throw new Error(
       `Freesound answered HTTP ${response.status} downloading sound ${id}`,
