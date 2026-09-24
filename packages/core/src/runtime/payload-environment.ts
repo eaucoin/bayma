@@ -47,6 +47,8 @@ const REQUIRED_ENV_PATHS: Record<RuntimeId, readonly string[]> = {
   ],
   c: ["BAYMA_C_HOST_BIN"],
   cpp: ["BAYMA_CPP_HOST_BIN"],
+  lean: ["BAYMA_LEAN_HOST_BIN", "BAYMA_LAKE_BIN"],
+  go: ["BAYMA_GO_HOST_BIN", "BAYMA_GO_BIN"],
 };
 
 /** Host variables that would redirect a runtime away from its payload. */
@@ -67,6 +69,24 @@ const HOST_RUNTIME_REDIRECTS = new Set([
   "DOTNET_MULTILEVEL_LOOKUP",
   "DOTNET_ROOT",
   "DOTNET_ROOT_X64",
+  "ELAN_HOME",
+  "ELAN_TOOLCHAIN",
+  "GOBIN",
+  "GOCACHE",
+  "GOENV",
+  "GOEXPERIMENT",
+  "GOFLAGS",
+  "GOMODCACHE",
+  "GOPATH",
+  "GOROOT",
+  "GOTOOLCHAIN",
+  "LAKE",
+  "LAKE_HOME",
+  "LEAN",
+  "LEAN_CC",
+  "LEAN_PATH",
+  "LEAN_SRC_PATH",
+  "LEAN_SYSROOT",
   "PYTHONHOME",
   "PYTHONPATH",
   "RUSTC",
@@ -306,6 +326,17 @@ export function resolvePayloadEnvironment(
     env[name] = [...new Set([...entries, ...existing])].join(delimiter);
   }
   return env;
+}
+
+/**
+ * A value the payload's environment supplies, such as a runtime's executable:
+ * runtimes run what the payload brings, never what PATH happens to find.
+ */
+export function payloadValue(name: string): string {
+  const value = process.env[name];
+  if (!value)
+    throw new Error(`${name} is not set; the payload is not resolved`);
+  return value;
 }
 
 /** Put the payload's environment into this process, for the adapters to read. */

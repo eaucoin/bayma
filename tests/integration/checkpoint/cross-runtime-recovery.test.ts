@@ -80,6 +80,23 @@ const RUNTIME_SCENARIOS: RuntimeScenario[] = [
     ].join("\n"),
     expectedResult: "42",
   },
+  // A Lean checkpoint is the session's environment: what it declared.
+  {
+    runtimeId: "lean",
+    seedCode: 'def answer := 41\n#eval "seeded"',
+    readCode: "#eval answer + 1",
+    expectedResult: "42",
+  },
+  {
+    runtimeId: "go",
+    seedCode: 'bayma_write_checkpoint(map[string]int{"answer": 41})\n"seeded"',
+    readCode: [
+      "var state map[string]int",
+      "bayma_read_checkpoint(&state)",
+      'state["answer"] + 1',
+    ].join("\n"),
+    expectedResult: "42",
+  },
 ];
 
 for (const scenario of RUNTIME_SCENARIOS) {

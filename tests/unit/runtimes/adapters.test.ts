@@ -3,6 +3,8 @@ import { createModelSurface, RUNTIME_IDS, RuntimeRegistry } from "@bayma/core";
 import { bunAdapter } from "@bayma/runtime-bun";
 import { cAdapter, cppAdapter } from "@bayma/runtime-cpp";
 import { dotnetScriptAdapter } from "@bayma/runtime-dotnet-script";
+import { goAdapter } from "@bayma/runtime-go";
+import { leanAdapter } from "@bayma/runtime-lean";
 import { pythonAdapter } from "@bayma/runtime-python";
 import { rustAdapter } from "@bayma/runtime-rust";
 import { FakeTransport } from "../../support/fake-transport.ts";
@@ -14,6 +16,8 @@ const ADAPTERS = [
   rustAdapter,
   cAdapter,
   cppAdapter,
+  leanAdapter,
+  goAdapter,
 ];
 
 test("the runtime adapters have distinct ids, profiles, and codecs", () => {
@@ -28,7 +32,10 @@ test("the runtime adapters have distinct ids, profiles, and codecs", () => {
     expect(adapter.checkpointCodecs.map((codec) => codec.codecId)).toContain(
       "json-v1",
     );
-    expect(adapter.doctor.probeCode).toBe("40 + 2");
+    // Every probe asks its language for 40 + 2; Lean's commands ask with #eval.
+    expect(adapter.doctor.probeCode).toBe(
+      adapter.runtimeId === "lean" ? "#eval 40 + 2" : "40 + 2",
+    );
   }
 });
 

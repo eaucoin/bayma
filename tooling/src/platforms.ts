@@ -25,6 +25,8 @@ export const EVCXR_VERSION = "0.21.1";
 export const UV_VERSION = "0.12.9";
 export const LLVM_VERSION = "23.1.2";
 export const ZSTD_VERSION = "1.5.7";
+export const LEAN_VERSION = "4.34.0";
+export const GO_VERSION = "1.27.1";
 
 /** The LLVM release's licence texts, for the parts of it the payload ships. */
 export const LLVM_LICENSES: Record<string, PinnedArchive> = Object.fromEntries(
@@ -102,10 +104,14 @@ export interface PlatformPins {
    */
   glibcFloor?: string;
   /**
-   * Linux links the Rust host with a pinned zig so it keeps to the glibc
-   * floor. macOS links with Apple's own clang and needs none.
+   * Linux only: a pinned zig, which compiles and links what must keep to the
+   * glibc floor: the Rust host, and the Go host and the plugins its cells
+   * build. macOS uses Apple's own clang.
    */
-  linker?: { zigVersion: string } & PinnedArchive;
+  zig?: { zigVersion: string } & PinnedArchive;
+  /** Lean's release, whose size is beyond the bound on downloads. */
+  lean: PinnedArchive & { bytes: number };
+  go: PinnedArchive;
   /**
    * The LLVM release the C and C++ runtimes are built from: Clang's
    * incremental Interpreter as static libraries, the clang that compiles the
@@ -176,11 +182,22 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
         "ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460",
     },
     glibcFloor: "2.35",
-    linker: {
+    zig: {
       zigVersion: "0.16.0",
       url: "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
       sha256:
         "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
+    },
+    lean: {
+      url: `https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-linux.tar.zst`,
+      sha256:
+        "caaa98356098c85dc0fcbbd28e1ec66f39eb6551829972b752ff20e1286b646b",
+      bytes: 580_367_391,
+    },
+    go: {
+      url: `https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz`,
+      sha256:
+        "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
     },
     llvm: {
       url: `https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.zst`,
@@ -281,6 +298,17 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
       bytes: 873_761_429,
       macosMinimum: "14.0",
     },
+    lean: {
+      url: `https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-darwin_aarch64.tar.zst`,
+      sha256:
+        "69f263fa6e21bbc2466bbfb1affcd92479ee2714c883a07de548e099a5922932",
+      bytes: 561_666_156,
+    },
+    go: {
+      url: `https://dl.google.com/go/go${GO_VERSION}.darwin-arm64.tar.gz`,
+      sha256:
+        "ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12",
+    },
   },
 };
 
@@ -319,7 +347,13 @@ export const RUST = {
   evcxrVersion: EVCXR_VERSION,
   channelManifest: RUST_CHANNEL_MANIFEST,
   components: PLATFORM.rustComponents,
-  linker: PLATFORM.linker,
   glibcFloor: PLATFORM.glibcFloor,
   supportSeedLockSha256: RUST_SUPPORT_SEED_LOCK_SHA256,
+} as const;
+export const ZIG = PLATFORM.zig;
+export const LEAN = { version: LEAN_VERSION, ...PLATFORM.lean } as const;
+export const GO = {
+  version: GO_VERSION,
+  ...PLATFORM.go,
+  glibcFloor: PLATFORM.glibcFloor,
 } as const;

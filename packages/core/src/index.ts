@@ -59,6 +59,7 @@ export * from "./runtime/exec-files.ts";
 export * from "./runtime/exec-markers.ts";
 export * from "./runtime/output-capture.ts";
 export * from "./runtime/asset.ts";
+export * from "./runtime/scratch.ts";
 export * from "./runtime/state-directory-lease.ts";
 export * from "./paths.ts";
 

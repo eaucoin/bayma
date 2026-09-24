@@ -23,8 +23,10 @@ test("every platform pins an archive and a digest for each toolchain", () => {
       pins.python,
       pins.dotnet,
       ...Object.values(pins.rustComponents),
-      ...(pins.linker ? [pins.linker] : []),
+      ...(pins.zig ? [pins.zig] : []),
       pins.llvm,
+      pins.lean,
+      pins.go,
       ...(pins.clangSysroot
         ? [...pins.clangSysroot.cells, ...pins.clangSysroot.build]
         : []),
@@ -34,9 +36,9 @@ test("every platform pins an archive and a digest for each toolchain", () => {
       expect(archive.sha256).toMatch(/^[0-9a-f]{64}$/);
     }
   }
-  // Only Linux pins a linker: macOS links the host with Apple's clang.
-  expect(PLATFORMS["linux-x64"].linker).toBeDefined();
-  expect(PLATFORMS["darwin-arm64"].linker).toBeUndefined();
+  // Only Linux pins zig: macOS compiles and links with Apple's clang.
+  expect(PLATFORMS["linux-x64"].zig).toBeDefined();
+  expect(PLATFORMS["darwin-arm64"].zig).toBeUndefined();
   // Linux holds its native hosts to a glibc floor, with a sysroot at it;
   // macOS builds against the SDK, for the release's oldest macOS.
   expect(PLATFORMS["linux-x64"].glibcFloor).toBe("2.35");
@@ -70,7 +72,16 @@ test.if(existsSync(join(payloadDir, "payload.json")))(
     // their host.
     expect(
       RUNTIME_IDS.map((runtimeId) => manifest.runtimes[runtimeId].root),
-    ).toEqual(["bun", "python", "dotnet-script", "rust", "clang", "clang"]);
+    ).toEqual([
+      "bun",
+      "python",
+      "dotnet-script",
+      "rust",
+      "clang",
+      "clang",
+      "lean",
+      "go",
+    ]);
   },
 );
 

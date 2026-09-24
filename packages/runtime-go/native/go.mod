@@ -1,0 +1,3 @@
+module bayma-go-host
+
+go 1.27.1

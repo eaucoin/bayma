@@ -1,5 +1,5 @@
 import { ensureRuntimeAsset } from "@bayma/core";
-import { ProcessTransport } from "@bayma/core";
+import { payloadValue, ProcessTransport } from "@bayma/core";
 import type { RuntimeTransport } from "@bayma/core";
 import type { RuntimeCheckpointCodec } from "@bayma/core";
 import {
@@ -278,7 +278,7 @@ export function createPythonTransport(): RuntimeTransport {
       expectedOutput: `__BAYMA_READY_${nonce}__`,
     }),
     command: () => ({
-      file: requiredExecutable("BAYMA_PYTHON_BIN"),
+      file: payloadValue("BAYMA_PYTHON_BIN"),
       args: ["-u", pythonHarnessPath()],
       env: {
         PYTHONNOUSERSITE: "1",
@@ -289,11 +289,3 @@ export function createPythonTransport(): RuntimeTransport {
 }
 
 export { PYTHON_PROMPT };
-
-/** Every runtime executable comes from the payload environment, never PATH. */
-function requiredExecutable(name: string): string {
-  const value = process.env[name];
-  if (!value)
-    throw new Error(`${name} is not set; the payload is not resolved`);
-  return value;
-}

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { ProcessTransport } from "@bayma/core";
+import { payloadValue, ProcessTransport } from "@bayma/core";
 import type { RuntimeTransport } from "@bayma/core";
 
 export const CPP_PROMPT = "BAYMA> ";
@@ -25,7 +25,7 @@ export function createCppTransport(language: CppLanguage): RuntimeTransport {
     interruptStrategy: "recycle",
     ownsProcessTree: true,
     command: () => ({
-      file: required(HOST_BIN[language]),
+      file: payloadValue(HOST_BIN[language]),
       args: [
         `--language=${language}`,
         ...(process.platform === "darwin" ? [`--sysroot=${macosSdk()}`] : []),
@@ -54,12 +54,4 @@ function macosSdk(): string {
     }
   }
   return sdk;
-}
-
-/** Every runtime executable comes from the payload environment, never PATH. */
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value)
-    throw new Error(`${name} is not set; the payload is not resolved`);
-  return value;
 }

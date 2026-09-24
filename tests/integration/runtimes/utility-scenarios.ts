@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -69,6 +70,11 @@ const STARTUP_LATENCY_FLOOR_MS: Record<Exclude<RuntimeId, "bun">, number> = {
   rust: 30_000,
   c: 5_000,
   cpp: 5_000,
+  lean: 5_000,
+  // Each Go session builds its first cells' plugins, and the first on a
+  // machine compiles Go's standard library for plugins; like Rust's first
+  // compile, real work with a finite ceiling.
+  go: 30_000,
 };
 const STEADY_STATE_LATENCY_FLOOR_MS = 3_000;
 
@@ -81,6 +87,8 @@ interface RuntimeScenarioSpec {
   dependencyFileName: string;
   dependencyFileContent: string;
   dependencyFiles?: Record<string, string>;
+  /** Builds the dependency, as its user would, before the session starts. */
+  dependencyBuild?: () => string[];
   dependencySetupCode?: string;
   dependencyCode: string;
   channelCode: string;
@@ -90,6 +98,8 @@ interface RuntimeScenarioSpec {
   readableResultExpect: string[];
   readableResultReject?: string[];
   interruptCode: string;
+  /** A cell whose result is 42, where `40 + 2` is not a cell. */
+  answerCode?: string;
 }
 
 const RUNTIME_SCENARIOS: Record<RuntimeId, RuntimeScenarioSpec> = {
@@ -285,6 +295,83 @@ const RUNTIME_SCENARIOS: Record<RuntimeId, RuntimeScenarioSpec> = {
     readableResultReject: ["@0x"],
     interruptCode: "volatile unsigned long spin = 0;\nwhile (true) ++spin;",
   },
+  lean: {
+    seed: "def keep := 41",
+    state: "#eval keep + 1",
+    multiline: [
+      "def describe (name : String) : String := name.toUpper",
+      '#eval describe "bayma"',
+    ].join("\n"),
+    multilineExpect: "BAYMA",
+    asyncCode: "#eval (Task.spawn fun _ => 40 + 2).get",
+    dependencyFileName: "lakefile.toml",
+    dependencyFileContent: [
+      'name = "helper"',
+      'defaultTargets = ["Helper"]',
+      "",
+      "[[lean_lib]]",
+      'name = "Helper"',
+      "",
+    ].join("\n"),
+    dependencyFiles: {
+      "lean-toolchain": `leanprover/lean4:v${process.env.BAYMA_LEAN_VERSION}\n`,
+      "Helper.lean": "def Helper.answer : Nat := 42\n",
+    },
+    dependencyBuild: () => [process.env.BAYMA_LAKE_BIN!, "build"],
+    dependencyCode: "import Helper\n#eval Helper.answer",
+    channelCode: [
+      "#eval do",
+      '  IO.println "utility-out"',
+      '  IO.eprintln "utility-err"',
+      "  return 7",
+    ].join("\n"),
+    errorCode: '#eval (throw (IO.userError "utility boom") : IO Unit)',
+    errorExpect: "utility boom",
+    readableResultCode: '#eval ("bayma", [2, 4, 6])',
+    readableResultExpect: ['"bayma"', "[2, 4, 6]"],
+    interruptCode: [
+      "#eval Id.run do",
+      "  let mut total := 0",
+      "  for i in [0:1000000000] do total := total + i",
+      "  return total",
+    ].join("\n"),
+    answerCode: "#eval 40 + 2",
+  },
+  go: {
+    seed: "keep := 41",
+    state: "keep + 1",
+    multiline: [
+      'import "strings"',
+      "func describe(name string) string { return strings.ToUpper(name) }",
+      'describe("bayma")',
+    ].join("\n"),
+    multilineExpect: "BAYMA",
+    asyncCode: [
+      "answer := make(chan int)",
+      "go func() { answer <- 40 + 2 }()",
+      "<-answer",
+    ].join("\n"),
+    dependencyFileName: "go.mod",
+    dependencyFileContent: "module helper\n\ngo 1.27\n",
+    dependencyFiles: {
+      "answer/answer.go": "package answer\n\nfunc Value() int { return 42 }\n",
+    },
+    dependencyCode: 'import "helper/answer"\nanswer.Value()',
+    channelCode: [
+      "import (",
+      '\t"fmt"',
+      '\t"os"',
+      ")",
+      'fmt.Println("utility-out")',
+      'fmt.Fprintln(os.Stderr, "utility-err")',
+      "7",
+    ].join("\n"),
+    errorCode: 'panic("utility boom")',
+    errorExpect: "utility boom",
+    readableResultCode: 'map[string][]int{"name": {2, 4, 6}}',
+    readableResultExpect: ["name", "[2 4 6]"],
+    interruptCode: "for {\n}",
+  },
 };
 
 export async function runRuntimeUtilityReport(
@@ -454,6 +541,20 @@ async function runDependencyWorkflow(
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, content, "utf8");
     }
+    if (spec.dependencyBuild) {
+      const built = spawnSync(
+        spec.dependencyBuild()[0]!,
+        spec.dependencyBuild().slice(1),
+        {
+          cwd: root,
+          encoding: "utf8",
+        },
+      );
+      if (built.status !== 0)
+        throw new Error(
+          `building the dependency failed: ${built.stdout}${built.stderr}`,
+        );
+    }
     try {
       return await withRuntimeSession(
         runtimeId,
@@ -592,7 +693,11 @@ async function runInterruptRecovery(
           from_seq: started.next_seq,
           yield_time_ms: 250,
         });
-        const recovery = await execSubmit(client, sessionId, "40 + 2");
+        const recovery = await execSubmit(
+          client,
+          sessionId,
+          spec.answerCode ?? "40 + 2",
+        );
         return {
           ok:
             interrupted.status === "interrupted" &&
@@ -673,12 +778,13 @@ async function measureLatency(
       },
     );
     const sessionId = created.session.session_id;
+    const answer = RUNTIME_SCENARIOS[runtimeId].answerCode ?? "40 + 2";
     try {
-      await execSubmit(client, sessionId, "40 + 2");
+      await execSubmit(client, sessionId, answer);
       const startupMs = Math.round(performance.now() - startupStarted);
 
       const steadyStarted = performance.now();
-      await execSubmit(client, sessionId, "40 + 2");
+      await execSubmit(client, sessionId, answer);
       const steadyStateMs = Math.round(performance.now() - steadyStarted);
 
       return {

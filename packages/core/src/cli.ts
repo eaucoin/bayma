@@ -1,5 +1,5 @@
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
-import { parseRuntimeId } from "./runtime/id.ts";
+import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
 import { ensurePayload } from "./runtime/payload.ts";
 import { runDoctor } from "./doctor.ts";
@@ -91,7 +91,7 @@ Commands:
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability ephemeral|checkpointed]
       serve MCP over Streamable HTTP
-  doctor [--runtime all|bun|python|dotnet-script|rust]
+  doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
       executing code in it; a named runtime must be available

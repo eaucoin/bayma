@@ -7,6 +7,8 @@ import { inSpan } from "../telemetry/index.ts";
 import { provisionBun } from "./bun.ts";
 import { provisionClang } from "./clang.ts";
 import { provisionDotnet } from "./dotnet.ts";
+import { provisionGo } from "./go.ts";
+import { provisionLean } from "./lean.ts";
 import type { ProvisionContext, RuntimePayload } from "./payload.ts";
 import { provisionPython } from "./python.ts";
 import { provisionRust } from "./rust.ts";
@@ -45,6 +47,8 @@ export async function provision(
     ),
     rust: await step("rust", () => provisionRust(context)),
     ...(await step("clang", () => provisionClang(context))),
+    lean: await step("lean", () => provisionLean(context)),
+    go: await step("go", () => provisionGo(context)),
   };
   const record: ProvisionRecord = {
     provisionedAt: new Date().toISOString(),

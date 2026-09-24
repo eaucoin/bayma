@@ -14,7 +14,7 @@ or waiting, while viewing segments of the execution's output stream.
 
 ## Supported REPL runtimes
 
-bayma currently supports six REPL runtimes:
+bayma currently supports eight REPL runtimes:
 
 - **Bun** — JavaScript and TypeScript, built on Bun's own REPL (`bun repl`)
 - **Python** — built on CPython, driven by a bayma harness that compiles each
@@ -29,11 +29,19 @@ bayma currently supports six REPL runtimes:
   templates, types, and thread-local variables cells share as a linked program
   would; on Linux it can choose GCC's libstdc++, which distributions build their
   C++ libraries with
+- **Lean** — Lean 4, on Lean's own frontend in a bayma host: each cell
+  elaborates on the environment the one before it left. A Lake project in the
+  session's working directory supplies its libraries, such as Mathlib, once
+  built with the `lake` bayma brings
+- **Go** — compiled by Go's own toolchain: each cell becomes a package, built
+  as a plugin and loaded into one process that stays alive, so a session is one
+  package that grows a cell at a time, importing any module, fetched through
+  the Go module proxy
 
 Each of them is bundled: bayma runs pinned toolchains it brings itself, not
-whatever happens to be installed. The one exception is on macOS, where C and
-C++ compile against the SDK of the Xcode Command Line Tools, which cannot be
-redistributed; install them with `xcode-select --install`.
+whatever happens to be installed. The one exception is on macOS, where C, C++,
+and Go's cells compile against the SDK of the Xcode Command Line Tools, which
+cannot be redistributed; install them with `xcode-select --install`.
 
 ## Install
 
@@ -66,8 +74,8 @@ startup_timeout_sec = 60
 For any other MCP client, use `{"command": "npx", "args": ["-y", "@bayma-repl/bayma", "mcp-stdio"]}`.
 
 bayma manages the runtimes for you. Installing it downloads a single archive —
-Bun, Python, .NET, Rust, and Clang, and the toolbelt below — into `~/.cache/bayma`,
-about 800 MB, once per version. Nothing on your machine is used or needed
+Bun, Python, .NET, Rust, Clang, Lean, and Go, and the toolbelt below — into
+`~/.cache/bayma`, about 1.8 GB, once per version. Nothing on your machine is used or needed
 beyond Node, and every install runs the same versions.
 `npx @bayma-repl/bayma doctor` checks that each runtime works.
 
@@ -114,7 +122,7 @@ bun run pack         # stage the package and npm pack it into dist
 bun run test:e2e     # npm install the tarball and drive every runtime through it
 ```
 
-The layout is `packages/` (engine, adapters, the published package; the Rust
-and C/C++ host sources live in their adapters), `toolbelt/` (the toolbelt's code and
+The layout is `packages/` (engine, adapters, the published package; the Rust,
+C/C++, Lean, and Go host sources live in their adapters), `toolbelt/` (the toolbelt's code and
 lockfiles), `skills/` (the toolbelt and platform skills), `tooling/` (pins,
 provisioning, payload, publish), `tests/`.

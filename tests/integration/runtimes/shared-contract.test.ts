@@ -75,6 +75,27 @@ const RUNTIME_SCENARIOS: RuntimeScenario[] = [
     largeOutputCode: 'println!("{}", "x".repeat(200_000)); 40 + 2',
     splitUtf8OutputCode: 'print!("€\\n");',
   },
+  {
+    runtimeId: "lean",
+    seedCode: "def keep := 41",
+    asyncCode: "#eval (Task.spawn fun _ => 40 + 2).get",
+    stateCode: "#eval keep + 1",
+    largeOutputCode:
+      "#eval do\n  IO.print (\"\".pushn 'x' 200000)\n  return 40 + 2",
+    // A cell's last info message is its result, and earlier ones its output.
+    splitUtf8OutputCode: '#eval IO.println "€"\n#eval 1',
+  },
+  {
+    runtimeId: "go",
+    seedCode: "keep := 41",
+    asyncCode:
+      "answer := make(chan int)\ngo func() { answer <- 40 + 2 }()\n<-answer",
+    stateCode: "keep + 1",
+    largeOutputCode:
+      'import (\n\t"fmt"\n\t"strings"\n)\nfmt.Print(strings.Repeat("x", 200_000))\n40 + 2',
+    splitUtf8OutputCode:
+      'import "os"\nos.Stdout.Write([]byte{0xe2})\nos.Stdout.Write([]byte{0x82, 0xac, 0x0a})',
+  },
 ];
 
 function doctorExec(

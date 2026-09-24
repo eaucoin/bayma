@@ -1,0 +1,10 @@
+{
+  "name": "@bayma/runtime-lean",
+  "private": true,
+  "version": "0.6.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@bayma/core": "workspace:*"
+  }
+}

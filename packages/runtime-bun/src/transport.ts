@@ -1,4 +1,4 @@
-import { ProcessTransport } from "@bayma/core";
+import { payloadValue, ProcessTransport } from "@bayma/core";
 
 const BUN_PROMPT_RE = /(?:^|[\r\n])(?:> |❯ )/g;
 
@@ -20,16 +20,8 @@ export function createBunTransport(): ProcessTransport {
       };
     },
     command: () => ({
-      file: requiredExecutable("BAYMA_BUN_BIN"),
+      file: payloadValue("BAYMA_BUN_BIN"),
       args: ["repl"],
     }),
   });
-}
-
-/** Every runtime executable comes from the payload environment, never PATH. */
-function requiredExecutable(name: string): string {
-  const value = process.env[name];
-  if (!value)
-    throw new Error(`${name} is not set; the payload is not resolved`);
-  return value;
 }

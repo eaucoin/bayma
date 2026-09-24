@@ -133,6 +133,38 @@ const RUNTIME_SCENARIOS: RuntimeScenario[] = [
       ].join("\n"),
     expectedLargeResult: "20100",
   },
+  {
+    runtimeId: "go",
+    expectedCodecId: "json-v1",
+    expectedPayloadKind: "json-inline",
+    writeCounter: (counter) =>
+      `bayma_write_checkpoint(map[string]any{"answer": ${counter}, "nested": map[string]string{"label": "cycle-${counter}"}})\n"seed-${counter}"`,
+    writeCounterThenThrow: (counter) =>
+      `bayma_write_checkpoint(map[string]int{"answer": ${counter}})\npanic("expected failure")`,
+    readCounter: () =>
+      'var state map[string]int\nbayma_read_checkpoint(&state)\nstate["answer"]',
+    writeLargePayload: () =>
+      [
+        'import "fmt"',
+        "payload := map[string]int{}",
+        "for index := 0; index < 200; index++ {",
+        '\tpayload[fmt.Sprint("k", index)] = index',
+        "}",
+        "bayma_write_checkpoint(payload)",
+        '"large-seeded"',
+      ].join("\n"),
+    readLargePayload: () =>
+      [
+        "var payload map[string]int",
+        "bayma_read_checkpoint(&payload)",
+        "total := len(payload)",
+        "for _, value := range payload {",
+        "\ttotal += value",
+        "}",
+        "total",
+      ].join("\n"),
+    expectedLargeResult: "20100",
+  },
 ];
 
 async function submitAndWait(
@@ -246,61 +278,80 @@ test.serial(
   RUNTIME_STRESS_TIMEOUT_MS,
 );
 
-test.serial(
-  "Rust compilation failures preserve exact checkpoint authority",
-  async () => {
-    const root = mkdtempSync(join(tmpdir(), "bayma-rust-compile-checkpoint-"));
-    const stateDir = join(root, "state");
-    const client = await connectCheckpointed(stateDir);
-    try {
-      const created = await client.callTool<{
-        session: { session_id: string };
-      }>("session.create", {
-        runtime: "rust",
-        title: "rust-compile-checkpoint-preservation",
-        cwd: process.cwd(),
-      });
-      const sessionId = created.session.session_id;
-      expect(
-        (
-          await submitAndWait(
-            client,
-            sessionId,
-            RUNTIME_SCENARIOS[3]!.writeCounter(1),
-          )
-        ).status,
-      ).toBe("ok");
-      const manifestPath = join(
-        stateDir,
-        "checkpoints",
-        sessionId,
-        "manifest.json",
-      );
-      const before = readFileSync(manifestPath, "utf8");
-
-      const failed = await submitAndWait(
-        client,
-        sessionId,
-        "let invalid_binding: = 42;",
-      );
-      expect(failed.status).toBe("error");
-      expect(failed.error_text ?? "").toContain("expected type");
-      expect(readFileSync(manifestPath, "utf8")).toBe(before);
-
-      const recovered = await submitAndWait(
-        client,
-        sessionId,
-        RUNTIME_SCENARIOS[3]!.readCounter(),
-      );
-      expect(recovered.status).toBe("ok");
-      expect(recovered.result_text ?? "").toContain("1");
-    } finally {
-      await client.close();
-      rmSync(root, { recursive: true, force: true });
-    }
+/**
+ * A cell that fails to compile, and what its error says, for the runtimes
+ * that compile a cell before any of it runs.
+ */
+const COMPILE_FAILURES: {
+  runtimeId: RuntimeId;
+  code: string;
+  error: string;
+}[] = [
+  {
+    runtimeId: "rust",
+    code: "let invalid_binding: = 42;",
+    error: "expected type",
   },
-  RUNTIME_STRESS_TIMEOUT_MS,
-);
+  {
+    runtimeId: "go",
+    code: "undefined_name + 1",
+    error: "undefined: undefined_name",
+  },
+];
+
+for (const failure of COMPILE_FAILURES) {
+  test.serial(
+    `${failure.runtimeId} compilation failures preserve exact checkpoint authority`,
+    async () => {
+      const scenario = RUNTIME_SCENARIOS.find(
+        (candidate) => candidate.runtimeId === failure.runtimeId,
+      )!;
+      const root = mkdtempSync(
+        join(tmpdir(), `bayma-${failure.runtimeId}-compile-checkpoint-`),
+      );
+      const stateDir = join(root, "state");
+      const client = await connectCheckpointed(stateDir);
+      try {
+        const created = await client.callTool<{
+          session: { session_id: string };
+        }>("session.create", {
+          runtime: failure.runtimeId,
+          title: `${failure.runtimeId}-compile-checkpoint-preservation`,
+          cwd: process.cwd(),
+        });
+        const sessionId = created.session.session_id;
+        expect(
+          (await submitAndWait(client, sessionId, scenario.writeCounter(1)))
+            .status,
+        ).toBe("ok");
+        const manifestPath = join(
+          stateDir,
+          "checkpoints",
+          sessionId,
+          "manifest.json",
+        );
+        const before = readFileSync(manifestPath, "utf8");
+
+        const failed = await submitAndWait(client, sessionId, failure.code);
+        expect(failed.status).toBe("error");
+        expect(failed.error_text ?? "").toContain(failure.error);
+        expect(readFileSync(manifestPath, "utf8")).toBe(before);
+
+        const recovered = await submitAndWait(
+          client,
+          sessionId,
+          scenario.readCounter(),
+        );
+        expect(recovered.status).toBe("ok");
+        expect(recovered.result_text ?? "").toContain("1");
+      } finally {
+        await client.close();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    RUNTIME_STRESS_TIMEOUT_MS,
+  );
+}
 
 test.serial(
   "repeated checkpointed restart recovery stays stable across every runtime",

@@ -100,6 +100,10 @@ function smokeCode(runtimeId: RuntimeId): string {
       return '#include <stdio.h>\nconst char *lines[] = {"alpha", "beta"};\nfor (int i = 0; i < 2; ++i) puts(lines[i]);\n40 + 2';
     case "cpp":
       return '#include <cstdio>\nconst char *lines[] = {"alpha", "beta"};\nfor (const char *line : lines) std::puts(line);\n40 + 2';
+    case "lean":
+      return '#eval do\n  for line in ["alpha", "beta"] do IO.println line\n  IO.sleep 20\n  return 40 + 2';
+    case "go":
+      return 'import (\n\t"fmt"\n\t"time"\n)\nfor _, line := range []string{"alpha", "beta"} {\n\tfmt.Println(line)\n}\ntime.Sleep(20 * time.Millisecond)\n40 + 2';
   }
 }
 

@@ -16,6 +16,7 @@ import { fetchPinned } from "../shared/download.ts";
 import { copyTree, ensureDir, walkFiles } from "../shared/files.ts";
 import { sha256File, sha256Text } from "../shared/hashing.ts";
 import { run, runOrThrow } from "../shared/process.ts";
+import { tarZstd } from "../shared/zstd.ts";
 import {
   isProvisioned,
   markProvisioned,
@@ -63,21 +64,6 @@ function llvmMember(path: string): boolean {
           path.startsWith(`lib/${LINUX_TRIPLE}/${library}`),
         )))
   );
-}
-
-/** Runs tar over the decompressed stream of a zstd-compressed tarball. */
-async function tarZstd(archive: string, tarArgs: string[]): Promise<string> {
-  // The release is compressed with a window beyond zstd's default limit.
-  return (
-    await runOrThrow([
-      "bash",
-      "-c",
-      'set -o pipefail; zstd -dcq --long=31 "$1" | tar "${@:2}"',
-      "bash",
-      archive,
-      ...tarArgs,
-    ])
-  ).stdout;
 }
 
 /** The parts of the LLVM release that build the host and ship with it. */

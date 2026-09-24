@@ -76,6 +76,26 @@ function writePayload(
         pathEnvPrepend: { PATH: ["bin"] },
         pins: {},
       },
+      lean: {
+        root: "lean",
+        env: { BAYMA_LEAN_VERSION: "4.34.0" },
+        envPaths: {
+          BAYMA_LEAN_HOST_BIN: "bin/bayma-lean-host",
+          BAYMA_LAKE_BIN: "bin/lake",
+        },
+        pathEnvPrepend: { PATH: ["bin"] },
+        pins: {},
+      },
+      go: {
+        root: "go",
+        env: {},
+        envPaths: {
+          BAYMA_GO_HOST_BIN: "bin/bayma-go-host",
+          BAYMA_GO_BIN: "go/bin/go",
+        },
+        pathEnvPrepend: { PATH: ["go/bin"] },
+        pins: {},
+      },
     },
   };
   edit(manifest);
@@ -126,6 +146,10 @@ test("the resolved environment points every runtime at the payload", async () =>
       CARGO_HOME: "/opt/cargo",
       RUSTUP_TOOLCHAIN: "nightly",
       BAYMA_BUN_BIN: "/usr/local/bin/bun",
+      GOROOT: "/usr/local/go",
+      GOFLAGS: "-mod=vendor",
+      LEAN_PATH: "/opt/lean/lib",
+      ELAN_TOOLCHAIN: "nightly",
     });
     expect(env.BAYMA_BUN_BIN).toBe(join(root, "bun", "bun"));
     expect(env.BAYMA_PYTHON_BIN).toBe(join(root, "python", "bin", "python3"));
@@ -140,8 +164,22 @@ test("the resolved environment points every runtime at the payload", async () =>
       join(root, "clang", "bin", "bayma-cpp-host"),
     );
     expect(env.BAYMA_CPP_HOST_BIN).toBe(env.BAYMA_C_HOST_BIN);
-    expect(env.CARGO_HOME).toBeUndefined();
-    expect(env.RUSTUP_TOOLCHAIN).toBeUndefined();
+    expect(env.BAYMA_LEAN_HOST_BIN).toBe(
+      join(root, "lean", "bin", "bayma-lean-host"),
+    );
+    expect(env.BAYMA_LEAN_VERSION).toBe("4.34.0");
+    expect(env.BAYMA_GO_HOST_BIN).toBe(
+      join(root, "go", "bin", "bayma-go-host"),
+    );
+    for (const redirect of [
+      "CARGO_HOME",
+      "RUSTUP_TOOLCHAIN",
+      "GOROOT",
+      "GOFLAGS",
+      "LEAN_PATH",
+      "ELAN_TOOLCHAIN",
+    ])
+      expect(env[redirect]).toBeUndefined();
     expect(env.HOME).toBe("/home/someone");
     // Payload directories precede the host's own, in manifest order.
     expect(env.PATH.split(":")).toEqual([
@@ -150,6 +188,8 @@ test("the resolved environment points every runtime at the payload", async () =>
       join(root, "dotnet-script"),
       join(root, "rust", "toolchain", "bin"),
       join(root, "clang", "bin"),
+      join(root, "lean", "bin"),
+      join(root, "go", "go", "bin"),
       "/usr/bin",
     ]);
   });

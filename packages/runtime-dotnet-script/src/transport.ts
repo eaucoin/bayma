@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { cacheRoot, ProcessTransport } from "@bayma/core";
+import { cacheRoot, payloadValue, ProcessTransport } from "@bayma/core";
 import { ensureRuntimeAssetInDirectory } from "@bayma/core";
 import type { RuntimeTransport } from "@bayma/core";
 import type { RuntimeCheckpointCodec } from "@bayma/core";
@@ -991,7 +991,7 @@ export function createDotnetScriptTransport(): RuntimeTransport {
           "BAYMA_DOTNET_ROOT is not set; the payload is not resolved",
         );
       return {
-        file: requiredExecutable("BAYMA_DOTNET_SCRIPT_BIN"),
+        file: payloadValue("BAYMA_DOTNET_SCRIPT_BIN"),
         args: [dotnetHarnessPath(dotnetScriptLibraryDir())],
         env: {
           DOTNET_SCRIPT_CACHE_LOCATION: resolveDotnetScriptCacheRoot(),
@@ -1010,14 +1010,6 @@ function dotnetScriptLibraryDir(): string {
   const configured = process.env.BAYMA_DOTNET_SCRIPT_LIB_DIR;
   if (configured) return configured;
   return resolveDotnetScriptLibraryDirFromToolsRoot(
-    join(requiredExecutable("BAYMA_DOTNET_SCRIPT_BIN"), ".."),
+    join(payloadValue("BAYMA_DOTNET_SCRIPT_BIN"), ".."),
   );
-}
-
-/** Every runtime executable comes from the payload environment, never PATH. */
-function requiredExecutable(name: string): string {
-  const value = process.env[name];
-  if (!value)
-    throw new Error(`${name} is not set; the payload is not resolved`);
-  return value;
 }

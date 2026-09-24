@@ -1,0 +1,10 @@
+# The Lean runtime's host: bayma's line protocol in front of Lean's own
+# frontend, built against the toolchain it runs with.
+name = "bayma-lean-host"
+defaultTargets = ["bayma-lean-host"]
+
+[[lean_exe]]
+name = "bayma-lean-host"
+root = "BaymaLeanHost"
+# Cells run #eval, which interprets code against the host's own Lean.
+supportInterpreter = true

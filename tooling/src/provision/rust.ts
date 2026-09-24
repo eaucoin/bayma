@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { CARGO_SEED_ID } from "@bayma/runtime-rust";
-import { PLATFORM, RUST } from "../platforms.ts";
+import { RUST, ZIG } from "../platforms.ts";
 
 /** Where the Rust host, its support crate, and the patched EVcxR live. */
 const NATIVE_DIR = join("packages", "runtime-rust", "native");
@@ -32,6 +32,7 @@ import {
   type ProvisionContext,
   type RuntimePayload,
 } from "./payload.ts";
+import { provisionZig, zigTarget } from "./zig.ts";
 
 // The Rust payload: a pinned toolchain (rustc, cargo, std), the
 // bayma-rust-host binary built from the sources this repository ships, the
@@ -128,26 +129,13 @@ async function assertChannelManifest(context: ProvisionContext): Promise<void> {
 async function provisionLinker(
   context: ProvisionContext,
 ): Promise<string | undefined> {
-  const pinned = RUST.linker;
-  if (!pinned) return undefined;
+  if (!ZIG) return undefined;
+  const zig = await provisionZig(context, ZIG);
   const directory = join(context.workDir, "rust", "linker");
   const wrapper = join(directory, "cc");
-  if (isProvisioned(context, directory, pinned.sha256)) return wrapper;
+  if (isProvisioned(context, directory, ZIG.sha256)) return wrapper;
   resetDirectory(directory);
-  mkdirSync(join(directory, "zig"), { recursive: true });
-  const archive = await fetchPinned(pinned, context.downloadsDir, "zig");
-  await runOrThrow([
-    "tar",
-    "-xJf",
-    archive,
-    "-C",
-    join(directory, "zig"),
-    "--strip-components=1",
-  ]);
-  const version = (
-    await runOrThrow([join(directory, "zig", "zig"), "version"])
-  ).stdout.trim();
-  if (version !== pinned.zigVersion) throw new Error(`zig reports ${version}`);
+  mkdirSync(directory, { recursive: true });
   writeFileSync(
     wrapper,
     [
@@ -164,12 +152,12 @@ async function provisionLinker(
       '  set -- "$@" "$arg"',
       "  count=$((count - 1))",
       "done",
-      `exec ${JSON.stringify(join(directory, "zig", "zig"))} cc -target ${PLATFORM.rustTarget.replace("unknown-", "")}.${RUST.glibcFloor} "$@"`,
+      `exec ${JSON.stringify(join(zig, "zig"))} cc -target ${zigTarget()} "$@"`,
       "",
     ].join("\n"),
   );
   chmodSync(wrapper, 0o755);
-  markProvisioned(directory, pinned.sha256);
+  markProvisioned(directory, ZIG.sha256);
   return wrapper;
 }
 
@@ -381,7 +369,7 @@ export async function provisionRust(
   );
   const identity = [
     TOOLCHAIN_IDENTITY,
-    RUST.linker?.sha256 ?? "no-linker",
+    ZIG?.sha256 ?? "no-linker",
     RUST.supportSeedLockSha256,
     sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
     sha256File(join(context.repoRoot, NATIVE_DIR, "Cargo.lock")),
@@ -437,7 +425,7 @@ export async function provisionRust(
       distDate: RUST.distDate,
       target: RUST.target,
       evcxrVersion: RUST.evcxrVersion,
-      ...(RUST.linker ? { linker: `zig-${RUST.linker.zigVersion}` } : {}),
+      ...(ZIG ? { linker: `zig-${ZIG.zigVersion}` } : {}),
       supportSeedLockSha256: RUST.supportSeedLockSha256,
       toolbeltLockSha256: sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
       ...Object.fromEntries(

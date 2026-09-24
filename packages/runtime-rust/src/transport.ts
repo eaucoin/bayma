@@ -10,7 +10,12 @@ import {
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
-import { cacheRoot, ProcessTransport } from "@bayma/core";
+import {
+  cacheRoot,
+  claimScratchDirectory,
+  payloadValue,
+  ProcessTransport,
+} from "@bayma/core";
 import type { RuntimeTransport } from "@bayma/core";
 import type { RuntimeCheckpointCodec } from "@bayma/core";
 
@@ -25,41 +30,6 @@ export const RUST_CHECKPOINT_CODEC = {
 // cold-start tail while retaining an honest terminal failure for a host that
 // never becomes ready.
 const RUST_STARTUP_TIMEOUT_MS = 60_000;
-
-/**
- * One scratch root per server process, so leftovers from hosts that did not
- * exit gracefully are swept the next time a server starts: any sibling root
- * whose owning process is gone is removed.
- */
-function claimScratchDirectory(root: string): string {
-  mkdirSync(root, { recursive: true });
-  for (const entry of readdirSync(root)) {
-    const pid = Number(entry);
-    if (!Number.isInteger(pid) || pid === process.pid || processIsAlive(pid))
-      continue;
-    rmSync(join(root, entry), { recursive: true, force: true });
-  }
-  const own = join(root, String(process.pid));
-  mkdirSync(own, { recursive: true });
-  return own;
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/** Every runtime path comes from the payload environment, never PATH. */
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value)
-    throw new Error(`${name} is not set; the payload is not resolved`);
-  return value;
-}
 
 export function createRustTransport(): RuntimeTransport {
   const root = join(cacheRoot(), "rust");
@@ -80,7 +50,7 @@ export function createRustTransport(): RuntimeTransport {
       mkdirSync(configDir, { recursive: true });
       seedCargoHome(cargoHome, process.env.BAYMA_RUST_CARGO_SEED_DIR);
       return {
-        file: required("BAYMA_RUST_HOST_BIN"),
+        file: payloadValue("BAYMA_RUST_HOST_BIN"),
         args: [],
         env: {
           EVCXR_CONFIG_DIR: configDir,

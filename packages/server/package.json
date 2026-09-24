@@ -1,7 +1,7 @@
 {
   "name": "@bayma-repl/bayma",
-  "version": "0.5.0",
-  "description": "A durable engine for REPL sessions in Bun, Python, C#, Rust, C, and C++, served to agents over MCP",
+  "version": "0.6.0",
+  "description": "A durable engine for REPL sessions in Bun, Python, C#, Rust, C, C++, Lean, and Go, served to agents over MCP",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -19,6 +19,8 @@
     "rust",
     "c",
     "cpp",
+    "lean",
+    "go",
     "agents"
   ],
   "type": "module",
@@ -41,7 +43,9 @@
     "@bayma/runtime-python": "workspace:*",
     "@bayma/runtime-dotnet-script": "workspace:*",
     "@bayma/runtime-rust": "workspace:*",
-    "@bayma/runtime-cpp": "workspace:*"
+    "@bayma/runtime-cpp": "workspace:*",
+    "@bayma/runtime-lean": "workspace:*",
+    "@bayma/runtime-go": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

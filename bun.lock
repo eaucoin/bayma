@@ -17,6 +17,8 @@
         "@bayma/runtime-bun": "workspace:*",
         "@bayma/runtime-cpp": "workspace:*",
         "@bayma/runtime-dotnet-script": "workspace:*",
+        "@bayma/runtime-go": "workspace:*",
+        "@bayma/runtime-lean": "workspace:*",
         "@bayma/runtime-python": "workspace:*",
         "@bayma/runtime-rust": "workspace:*",
         "@bayma/tooling": "workspace:*",
@@ -28,46 +30,60 @@
     },
     "packages/core": {
       "name": "@bayma/core",
-      "version": "0.5.0",
+      "version": "0.6.0",
     },
     "packages/runtime-bun": {
       "name": "@bayma/runtime-bun",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-cpp": {
       "name": "@bayma/runtime-cpp",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-dotnet-script": {
       "name": "@bayma/runtime-dotnet-script",
-      "version": "0.5.0",
+      "version": "0.6.0",
+      "dependencies": {
+        "@bayma/core": "workspace:*",
+      },
+    },
+    "packages/runtime-go": {
+      "name": "@bayma/runtime-go",
+      "version": "0.6.0",
+      "dependencies": {
+        "@bayma/core": "workspace:*",
+      },
+    },
+    "packages/runtime-lean": {
+      "name": "@bayma/runtime-lean",
+      "version": "0.6.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-python": {
       "name": "@bayma/runtime-python",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-rust": {
       "name": "@bayma/runtime-rust",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/server": {
       "name": "@bayma-repl/bayma",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "bin": {
         "bayma": "dist/bayma.js",
       },
@@ -76,13 +92,15 @@
         "@bayma/runtime-bun": "workspace:*",
         "@bayma/runtime-cpp": "workspace:*",
         "@bayma/runtime-dotnet-script": "workspace:*",
+        "@bayma/runtime-go": "workspace:*",
+        "@bayma/runtime-lean": "workspace:*",
         "@bayma/runtime-python": "workspace:*",
         "@bayma/runtime-rust": "workspace:*",
       },
     },
     "tooling": {
       "name": "@bayma/tooling",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "@opentelemetry/api": "1.9.1",
         "@opentelemetry/api-logs": "0.222.0",
@@ -102,6 +120,10 @@
     "@bayma/runtime-cpp": ["@bayma/runtime-cpp@workspace:packages/runtime-cpp"],
 
     "@bayma/runtime-dotnet-script": ["@bayma/runtime-dotnet-script@workspace:packages/runtime-dotnet-script"],
+
+    "@bayma/runtime-go": ["@bayma/runtime-go@workspace:packages/runtime-go"],
+
+    "@bayma/runtime-lean": ["@bayma/runtime-lean@workspace:packages/runtime-lean"],
 
     "@bayma/runtime-python": ["@bayma/runtime-python@workspace:packages/runtime-python"],
 

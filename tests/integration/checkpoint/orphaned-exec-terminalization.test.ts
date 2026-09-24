@@ -4,6 +4,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { sessionExecUri } from "@bayma/core";
+import { goHostCommand } from "@bayma/runtime-go";
+import { leanHostCommand } from "@bayma/runtime-lean";
 import {
   launchMcpHttpServer,
   type McpHttpClient,
@@ -51,6 +53,49 @@ const scenarios: RuntimeRestartScenario[] = [
       "let state: std::collections::BTreeMap<String, i64> = bayma_rust_support::read_checkpoint(&bayma_checkpoint).unwrap().unwrap();",
       'state["answer"] + 1',
     ].join("\n"),
+  },
+  {
+    runtimeId: "lean",
+    seedCode: 'def answer := 41\n#eval "seeded"',
+    hangCode: "#eval IO.sleep 3600000",
+    readCode: "#eval answer + 1",
+  },
+  {
+    runtimeId: "go",
+    seedCode: 'bayma_write_checkpoint(map[string]int{"answer": 41})\n"seeded"',
+    hangCode: 'import "time"\ntime.Sleep(time.Hour)',
+    readCode: [
+      "var state map[string]int",
+      "bayma_read_checkpoint(&state)",
+      'state["answer"] + 1',
+    ].join("\n"),
+  },
+];
+
+/** Hosts, as their transports start them, with a cell that never ends. */
+const hangingHosts = [
+  {
+    runtimeId: "lean",
+    command: (scratch: string) => leanHostCommand(process.cwd(), scratch),
+    spec: (root: string) => ({
+      schema_version: 1,
+      event_prefix: "__BAYMA_WATCHDOG_TEST__",
+      code: "#eval IO.sleep 3600000",
+      durability_mode: "ephemeral",
+      restore_path: null,
+      checkpoint_output_path: join(root, "checkpoint.bin"),
+    }),
+  },
+  {
+    runtimeId: "go",
+    command: goHostCommand,
+    spec: () => ({
+      schema_version: 1,
+      event_prefix: "__BAYMA_WATCHDOG_TEST__",
+      code: "for {\n}",
+      durability_mode: "ephemeral",
+      checkpoint_json: null,
+    }),
   },
 ];
 
@@ -105,7 +150,7 @@ async function forceStopOwnedProcess(child: ChildProcess): Promise<void> {
   }
   await waitForCondition(
     () => child.exitCode !== null || child.signalCode !== null,
-    "owned Rust host cleanup",
+    "owned host cleanup",
     10_000,
   );
 }
@@ -191,6 +236,50 @@ test("Rust host exits when its protocol owner disappears during execution", asyn
     }
   });
 }, 180_000);
+
+for (const host of hangingHosts) {
+  test(`${host.runtimeId} host exits when its protocol owner disappears during execution`, async () => {
+    await withTempDir(async (root) => {
+      const command = host.command(join(root, "scratch"));
+      const specPath = join(root, "exec.json");
+      writeFileSync(specPath, JSON.stringify(host.spec(root)), "utf8");
+      const child = spawn(command.file, command.args, {
+        cwd: process.cwd(),
+        detached: true,
+        env: { ...process.env, ...command.env },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout!.on("data", (chunk) => {
+        stdout += Buffer.from(chunk).toString("utf8");
+      });
+      child.stderr!.on("data", (chunk) => {
+        stderr += Buffer.from(chunk).toString("utf8");
+      });
+      try {
+        await waitForCondition(() => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            throw new Error(`host exited before prompt; stderr=${stderr}`);
+          }
+          return stdout.includes("BAYMA> ");
+        }, `host prompt; stderr=${stderr}`);
+        child.stdin!.write(`:exec ${specPath}\n`);
+        // The cell runs; nothing it does would end it.
+        await sleep(2_000);
+        expect(child.exitCode).toBeNull();
+        child.stdin!.end();
+        await waitForCondition(
+          () => child.exitCode !== null || child.signalCode !== null,
+          `host exit after protocol EOF; stderr=${stderr}`,
+          10_000,
+        );
+      } finally {
+        await forceStopOwnedProcess(child);
+      }
+    });
+  }, 180_000);
+}
 
 for (const scenario of scenarios) {
   test(`abrupt ${scenario.runtimeId} restart terminalizes orphaned execs`, async () => {

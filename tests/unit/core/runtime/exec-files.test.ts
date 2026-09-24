@@ -8,6 +8,8 @@ import {
 import { bunAdapter } from "@bayma/runtime-bun";
 import { pythonAdapter } from "@bayma/runtime-python";
 import { dotnetScriptAdapter } from "@bayma/runtime-dotnet-script";
+import { goAdapter } from "@bayma/runtime-go";
+import { leanAdapter } from "@bayma/runtime-lean";
 import { rustAdapter } from "@bayma/runtime-rust";
 import { withTempDir } from "../../../support/temp.ts";
 
@@ -16,6 +18,8 @@ const adapters: RuntimeAdapter[] = [
   pythonAdapter,
   dotnetScriptAdapter,
   rustAdapter,
+  leanAdapter,
+  goAdapter,
 ];
 
 test("exec file workspaces are removed by every runtime adapter", async () => {

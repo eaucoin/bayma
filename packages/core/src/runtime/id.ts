@@ -6,6 +6,8 @@ export const RUNTIME_IDS = [
   "rust",
   "c",
   "cpp",
+  "lean",
+  "go",
 ] as const;
 export type RuntimeId = (typeof RUNTIME_IDS)[number];
 
