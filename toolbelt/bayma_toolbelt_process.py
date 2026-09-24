@@ -11,6 +11,8 @@ from typing import BinaryIO
 
 DEFAULT_TOOL_TIMEOUT_SECONDS = 120.0
 DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024
+# How long a process group's leader that is exiting has to finish.
+EXITING_LEADER_SECONDS = 1.0
 
 # The REPL's own interpreter may start with these pointing at its bundled
 # standard library (bayma's Python does); a child interpreter such as the
@@ -55,11 +57,14 @@ def _signal_group(process: subprocess.Popen[bytes], signal_number: int) -> None:
         os.killpg(process.pid, signal_number)
     except ProcessLookupError:
         pass
-    except PermissionError:
-        # With its leader exited, a group whose other members are all zombies
-        # has nothing left to stop, and macOS refuses to signal it.
-        if process.poll() is None:
-            raise
+    except PermissionError as refused:
+        # macOS refuses to signal a group whose members have all exited or are
+        # exiting, which has nothing left to stop. Its leader, if still
+        # exiting, is reaped in a moment; one that is not was refused.
+        try:
+            process.wait(timeout=EXITING_LEADER_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise refused from None
 
 
 def terminate_process(
