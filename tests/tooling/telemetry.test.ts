@@ -401,6 +401,20 @@ describe("a development command", () => {
         "bayma.dev.artifact.size",
       ])
         expect(names).toContain(name);
+      // Durations in seconds are bucketed in seconds, not in the SDK's
+      // default milliseconds, which have no bucket between 0 and 5.
+      for (const name of [
+        "bayma.dev.command.duration",
+        "bayma.dev.process.duration",
+        "bayma.dev.test.duration",
+      ]) {
+        const edges =
+          metrics.find((metric) => metric.name === name)?.bounds ?? [];
+        expect(
+          edges.filter((edge) => edge > 0 && edge < 1).length,
+        ).toBeGreaterThanOrEqual(3);
+        expect(edges.some((edge) => edge >= 60)).toBe(true);
+      }
       expect(
         metrics
           .filter((metric) => metric.name === "bayma.dev.artifact.size")

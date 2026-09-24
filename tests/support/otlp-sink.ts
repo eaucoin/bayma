@@ -34,7 +34,10 @@ export interface ReceivedLog {
 
 export interface ReceivedMetric {
   name: string;
+  /** Each data point's attributes. */
   points: Attributes[];
+  /** A histogram's bucket boundaries, from its first data point. */
+  bounds?: number[];
 }
 
 function decode(value: AnyValue): unknown {
@@ -80,7 +83,15 @@ interface Payload {
   resourceMetrics?: {
     scopeMetrics?: {
       metrics?: ({ name: string } & Partial<
-        Record<MetricKind, { dataPoints?: { attributes?: KeyValue[] }[] }>
+        Record<
+          MetricKind,
+          {
+            dataPoints?: {
+              attributes?: KeyValue[];
+              explicitBounds?: number[];
+            }[];
+          }
+        >
       >)[];
     }[];
   }[];
@@ -154,11 +165,12 @@ export class OtlpSink {
       for (const scope of resourceMetrics.scopeMetrics ?? [])
         for (const metric of scope.metrics ?? []) {
           const kind = METRIC_KINDS.find((name) => metric[name]);
+          const points = kind ? (metric[kind]?.dataPoints ?? []) : [];
+          const bounds = points[0]?.explicitBounds;
           this.metrics.push({
             name: metric.name,
-            points: (kind ? (metric[kind]?.dataPoints ?? []) : []).map(
-              (point) => attributes(point.attributes),
-            ),
+            points: points.map((point) => attributes(point.attributes)),
+            ...(bounds ? { bounds } : {}),
           });
         }
   }

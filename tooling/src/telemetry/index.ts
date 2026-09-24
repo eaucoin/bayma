@@ -47,16 +47,31 @@ interface Session {
 
 let session: Session | undefined;
 
+// Histogram buckets for what each measures; the SDK's defaults suit
+// milliseconds, and would put nearly every run in one bucket.
+/** Seconds, from a quick tool's run to an hour-long build. */
+const RUN_SECONDS = [
+  0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600,
+];
+/** Seconds, from a unit test's milliseconds to a slow integration test. */
+const TEST_SECONDS = [
+  0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120,
+];
+/** Bytes, from a kilobyte to ten gigabytes. */
+const BYTES = [1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10];
+
 function createInstruments(): Instruments {
   const meter = metrics.getMeter(SCOPE);
   return {
     commandDuration: meter.createHistogram(METRIC.commandDuration, {
       unit: "s",
       description: "How long a development command took.",
+      advice: { explicitBucketBoundaries: RUN_SECONDS },
     }),
     processDuration: meter.createHistogram(METRIC.processDuration, {
       unit: "s",
       description: "How long a process development tooling ran took.",
+      advice: { explicitBucketBoundaries: RUN_SECONDS },
     }),
     provisionLookups: meter.createCounter(METRIC.provisionLookups, {
       description:
@@ -65,10 +80,12 @@ function createInstruments(): Instruments {
     downloadSize: meter.createHistogram(METRIC.downloadSize, {
       unit: "By",
       description: "The size of a pinned download.",
+      advice: { explicitBucketBoundaries: BYTES },
     }),
     downloadDuration: meter.createHistogram(METRIC.downloadDuration, {
       unit: "s",
       description: "How long a pinned download took, verification included.",
+      advice: { explicitBucketBoundaries: RUN_SECONDS },
     }),
     artifactSize: meter.createGauge(METRIC.artifactSize, {
       unit: "By",
@@ -80,6 +97,7 @@ function createInstruments(): Instruments {
     testDuration: meter.createHistogram(METRIC.testDuration, {
       unit: "s",
       description: "How long a test that ran took.",
+      advice: { explicitBucketBoundaries: TEST_SECONDS },
     }),
   };
 }
