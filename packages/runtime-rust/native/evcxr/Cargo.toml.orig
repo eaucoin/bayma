@@ -4,7 +4,6 @@ version = "0.21.1"
 license = "MIT OR Apache-2.0"
 description = "An Evaluation Context for Rust"
 repository = "https://github.com/evcxr/evcxr"
-readme = "README.md"
 authors = ["The Evcxr Authors"]
 edition = "2024"
 rust-version = "1.88"

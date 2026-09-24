@@ -3,7 +3,6 @@
 //   bayma-cpp-host --language=c|c++ [--sysroot=PATH]
 //
 // It prints a prompt, then serves `:exec <spec>` lines until its input closes.
-// See ../README.md for the design.
 
 #include "capture.h"
 #include "protocol.h"

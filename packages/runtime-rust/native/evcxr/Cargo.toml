@@ -22,7 +22,6 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "An Evaluation Context for Rust"
-readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/evcxr/evcxr"
 resolver = "2"

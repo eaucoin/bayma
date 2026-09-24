@@ -74,30 +74,21 @@ beyond Node, and every install runs the same versions.
 Sessions are kept under `~/.local/state/bayma`, one directory per project
 directory the client launched from.
 
-## Agent skills
+## Toolbelt
 
-bayma ships a toolbelt for its sessions: pinned Bun, Python, and Rust packages
-for discovering, searching, parsing, editing, and testing code, which the
-`bayma-toolbelt` skill teaches an agent to use. bayma installs the toolbelt
-with its runtimes, at `~/.local/share/bayma/toolbelt`.
+The toolbelt is baked into bayma's setup: bayma installs it with its runtimes,
+at `~/.local/share/bayma/toolbelt`, from the same archive and at the same
+pinned versions. It gives every session pinned Bun, Python, and Rust packages
+for discovering, searching, parsing, editing, and testing code, and the
+`bayma-toolbelt` skill teaches an agent to load them into a session and work
+with them.
 
-The platform skills keep what they need in their own folders rather than
-installing anything with bayma:
+## Platforms
 
-- `bayma-platform-github` works with GitHub through Octokit in a Bun session,
-  with its GitHub authorization.
-- `bayma-platform-playwright` drives a headless browser through Playwright in
-  a Bun session, with the browser.
-- `bayma-platform-mltpp` edits, filters, and renders audio and video through
-  MLT++ in a C++ session, with MLT and FFmpeg (Linux x64).
-- `bayma-platform-gimp` drives a headless GIMP through libgimp from a Python
-  session, with GIMP and its fonts (Linux x64).
-- `bayma-platform-ardour` composes, mixes, and renders music through
-  libardour in a C++ session, with Ardour's engine, built from source, and
-  its instruments and effects (Linux x64, glibc 2.39+), and finds sounds on
-  Freesound with your own Freesound API credential.
-- `bayma-platform-bpy` models, animates, and renders 3D scenes and films
-  through bpy in a headless Blender, from a Python session (Linux x64).
+There is also a `bayma-platform` namespace of skills. Each shows an agent how
+to have bayma interact with a platform and gives it that platform's
+capabilities, keeping what the platform needs in the skill's own folder rather
+than installing anything with bayma.
 
 Add the skills with
 
@@ -125,5 +116,5 @@ bun run test:e2e     # npm install the tarball and drive every runtime through i
 
 The layout is `packages/` (engine, adapters, the published package; the Rust
 and C/C++ host sources live in their adapters), `toolbelt/` (the toolbelt's code and
-lockfiles), `skills/` (the agent skills), `tooling/` (pins,
+lockfiles), `skills/` (the toolbelt and platform skills), `tooling/` (pins,
 provisioning, payload, publish), `tests/`.
