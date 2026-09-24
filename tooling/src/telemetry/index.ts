@@ -106,18 +106,29 @@ export async function startTelemetry(): Promise<void> {
   };
 }
 
-/** Exports what is left and stops. */
+/**
+ * Exports what is left and stops. A backend that cannot take it is warned
+ * of, and never fails the command that recorded it.
+ */
 export async function stopTelemetry(): Promise<void> {
   const stopping = session;
   session = undefined;
   if (!stopping) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    stopping.shutdown(),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
-    }),
-  ]).finally(() => clearTimeout(timer));
+  try {
+    await Promise.race([
+      stopping.shutdown(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn(
+      `telemetry: not everything was exported: ${describe(error).message}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** The span work is recorded under: the active one, or the process's parent. */

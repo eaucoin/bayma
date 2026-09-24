@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { packageManifest } from "../../tooling/src/build.ts";
@@ -72,6 +72,46 @@ describe("configuration", () => {
       OTEL_SDK_DISABLED: "true",
     };
     expect(settleTelemetryEnvironment(env).enabled).toBe(false);
+  });
+
+  test("otel.env.example names what config.ts describes, and nothing else", () => {
+    const variables = readFileSync(join(repoRoot, "otel.env.example"), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.startsWith("#"));
+    const described = readFileSync(
+      join(repoRoot, "tooling", "src", "telemetry", "config.ts"),
+      "utf8",
+    );
+    expect(variables.length).toBeGreaterThan(0);
+    for (const line of variables) {
+      // A name, and no value: the template suggests no backend.
+      expect(line).toMatch(/^OTEL_[A-Z_]+=$/);
+      const name = line.slice(0, -1);
+      expect(
+        described.includes(name) ||
+          described.includes(name.replace(/_(TRACES|METRICS|LOGS)_/, "_*_")),
+      ).toBe(true);
+    }
+    // Copied as it is, it configures nothing.
+    const env: Record<string, string | undefined> = Object.fromEntries(
+      variables.map((line) => [line.slice(0, -1), ""]),
+    );
+    expect(settleTelemetryEnvironment(env).enabled).toBe(false);
+  });
+
+  test("every bun run script loads otel.env, which git ignores", () => {
+    const { scripts } = JSON.parse(
+      readFileSync(join(repoRoot, "package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
+    for (const [name, script] of Object.entries(scripts))
+      expect(`${name}: ${script}`).toStartWith(
+        `${name}: bun --env-file=otel.env tooling/src/cli.ts `,
+      );
+    const ignored = (path: string) =>
+      spawnSync("git", ["check-ignore", "--quiet", path], { cwd: repoRoot })
+        .status === 0;
+    expect(ignored("otel.env")).toBe(true);
+    expect(ignored("otel.env.example")).toBe(false);
   });
 });
 
@@ -212,20 +252,34 @@ function untracedEnvironment(): Record<string, string> {
   );
 }
 
+/**
+ * Runs the command with `env`, and none of the .env files Bun would load;
+ * returns how it exited, and what it wrote to stderr.
+ */
 async function runCommand(
   mode: "succeed" | "fail",
   env: Record<string, string>,
-): Promise<number> {
+): Promise<{ exitCode: number; stderr: string }> {
   const child = Bun.spawn(
-    ["bun", commandScript, mode, ...(mode === "succeed" ? [testsDir] : [])],
+    [
+      "bun",
+      "--no-env-file",
+      commandScript,
+      mode,
+      ...(mode === "succeed" ? [testsDir] : []),
+    ],
     {
       cwd: repoRoot,
       env: { ...untracedEnvironment(), ...env },
       stdout: "ignore",
-      stderr: "ignore",
+      stderr: "pipe",
     },
   );
-  return child.exited;
+  const [exitCode, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  return { exitCode, stderr };
 }
 
 /** Where the command's own tests are: one passes, one fails, one is skipped. */
@@ -264,7 +318,7 @@ describe("a development command", () => {
   test(
     "exports its processes, their output, its tests, and its metrics",
     async () => {
-      expect(await runCommand("succeed", exported())).toBe(0);
+      expect((await runCommand("succeed", exported())).exitCode).toBe(0);
       const { spans, logs, metrics } = sink;
 
       const root = spans.find((span) => span.name === COMMAND)!;
@@ -358,7 +412,7 @@ describe("a development command", () => {
     "that fails still exports, marked failed",
     async () => {
       const before = { spans: sink.spans.length, logs: sink.logs.length };
-      expect(await runCommand("fail", exported())).toBe(1);
+      expect((await runCommand("fail", exported())).exitCode).toBe(1);
       const spans = sink.spans.slice(before.spans);
       const root = spans.find((span) => span.name === COMMAND)!;
       expect(root.statusCode).toBe(2);
@@ -384,13 +438,15 @@ describe("a development command", () => {
       const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
       const parentId = "00f067aa0ba902b7";
       expect(
-        await runCommand(
-          "fail",
-          exported({
-            TRACEPARENT: `00-${traceId}-${parentId}-01`,
-            OTEL_SERVICE_NAME: "someone's-service",
-          }),
-        ),
+        (
+          await runCommand(
+            "fail",
+            exported({
+              TRACEPARENT: `00-${traceId}-${parentId}-01`,
+              OTEL_SERVICE_NAME: "someone's-service",
+            }),
+          )
+        ).exitCode,
       ).toBe(1);
       const root = sink.spans
         .slice(before)
@@ -410,16 +466,34 @@ describe("a development command configured for one signal", () => {
       const sink = new OtlpSink();
       try {
         expect(
-          await runCommand("fail", {
-            OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `${sink.url}/v1/logs`,
-            OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: "http/json",
-          }),
+          (
+            await runCommand("fail", {
+              OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: `${sink.url}/v1/logs`,
+              OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: "http/json",
+            })
+          ).exitCode,
         ).toBe(1);
         expect(sink.paths.length).toBeGreaterThan(0);
         expect(new Set(sink.paths)).toEqual(new Set(["/v1/logs"]));
       } finally {
         sink.stop();
       }
+    },
+    COMMAND_TIMEOUT_MS,
+  );
+});
+
+describe("a development command whose backend cannot be reached", () => {
+  test(
+    "warns of what it could not export, and exits as it would have",
+    async () => {
+      const { exitCode, stderr } = await runCommand("succeed", {
+        // Nothing listens on the discard port.
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+        OTEL_EXPORTER_OTLP_TIMEOUT: "1000",
+      });
+      expect(exitCode).toBe(0);
+      expect(stderr).toContain("telemetry: not everything was exported: ");
     },
     COMMAND_TIMEOUT_MS,
   );
@@ -432,11 +506,13 @@ describe("a development command with OTEL_SDK_DISABLED", () => {
       const sink = new OtlpSink();
       try {
         expect(
-          await runCommand("fail", {
-            OTEL_EXPORTER_OTLP_ENDPOINT: sink.url,
-            OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
-            OTEL_SDK_DISABLED: "true",
-          }),
+          (
+            await runCommand("fail", {
+              OTEL_EXPORTER_OTLP_ENDPOINT: sink.url,
+              OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+              OTEL_SDK_DISABLED: "true",
+            })
+          ).exitCode,
         ).toBe(1);
         expect(sink.paths).toEqual([]);
       } finally {

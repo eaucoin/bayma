@@ -8,16 +8,16 @@
     "tooling"
   ],
   "scripts": {
-    "build": "bun tooling/src/cli.ts build",
-    "provision": "bun tooling/src/cli.ts provision",
-    "payload": "bun tooling/src/cli.ts payload",
-    "release": "bun tooling/src/cli.ts release",
-    "pack": "bun tooling/src/cli.ts pack",
-    "test": "bun tooling/src/cli.ts test tests/unit tests/integration tests/tooling",
-    "test:e2e": "bun tooling/src/cli.ts test tests/e2e",
-    "typecheck": "bun tooling/src/cli.ts typecheck",
-    "format": "bun tooling/src/cli.ts format",
-    "format:check": "bun tooling/src/cli.ts format --check"
+    "build": "bun --env-file=otel.env tooling/src/cli.ts build",
+    "provision": "bun --env-file=otel.env tooling/src/cli.ts provision",
+    "payload": "bun --env-file=otel.env tooling/src/cli.ts payload",
+    "release": "bun --env-file=otel.env tooling/src/cli.ts release",
+    "pack": "bun --env-file=otel.env tooling/src/cli.ts pack",
+    "test": "bun --env-file=otel.env tooling/src/cli.ts test tests/unit tests/integration tests/tooling",
+    "test:e2e": "bun --env-file=otel.env tooling/src/cli.ts test tests/e2e",
+    "typecheck": "bun --env-file=otel.env tooling/src/cli.ts typecheck",
+    "format": "bun --env-file=otel.env tooling/src/cli.ts format",
+    "format:check": "bun --env-file=otel.env tooling/src/cli.ts format --check"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

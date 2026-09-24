@@ -26,7 +26,8 @@ function usage(): never {
   format [--check]       format the repository, or check that it is formatted
 
 Every command records OpenTelemetry traces, metrics, and logs when the
-environment configures an exporter; see tooling/src/telemetry/config.ts.`);
+environment, or the otel.env its bun run script loads, configures an
+exporter; see otel.env.example and tooling/src/telemetry/config.ts.`);
   process.exit(2);
 }
 

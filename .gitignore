@@ -5,3 +5,6 @@ dist
 *.tmp
 packages/runtime-rust/native/target/
 __pycache__/
+.env
+.env.*
+otel.env

@@ -16,21 +16,26 @@
 //                                        and OTEL_EXPORTER_OTLP_*_PROTOCOL
 //   OTEL_EXPORTER_OTLP_HEADERS           authentication, and the per-signal
 //                                        OTEL_EXPORTER_OTLP_*_HEADERS
-//   OTEL_TRACES_EXPORTER                 otlp, console, or none; likewise
-//   OTEL_METRICS_EXPORTER                OTEL_METRICS_EXPORTER and
-//   OTEL_LOGS_EXPORTER                   OTEL_LOGS_EXPORTER
+//   OTEL_TRACES_EXPORTER                 each signal's exporter: otlp,
+//   OTEL_METRICS_EXPORTER                console, or none
+//   OTEL_LOGS_EXPORTER
 //   OTEL_SERVICE_NAME                    bayma-development unless set
 //   OTEL_RESOURCE_ATTRIBUTES             more attributes for every signal
 //   OTEL_METRIC_EXPORT_INTERVAL          and the SDK's other variables
 //   OTEL_SDK_DISABLED=true               turns it all off
 //
-// and the rest of OpenTelemetry's exporter and SDK variables, all as the
-// specification describes, with two differences that keep an unconfigured
-// checkout quiet. Nothing is exported, and the SDK is not even loaded, until a
-// variable names somewhere to export to. And each signal is exported only
-// when an endpoint or an exporter is set for it, or for every signal: an
-// endpoint for logs alone exports logs alone. A variable set to the empty
-// string counts as unset, as CI sets one whose secret is missing.
+// and the rest of OpenTelemetry's exporter and SDK variables. Locally they
+// can live in otel.env, which git ignores and every `bun run` script loads
+// (with Bun's --env-file), beneath what the shell sets: otel.env.example
+// lists them, to copy there.
+//
+// All are as the specification describes, with two differences that keep
+// an unconfigured checkout quiet. Nothing is exported, and the SDK is not
+// even loaded, until a variable names somewhere to export to. And each
+// signal is exported only when an endpoint or an exporter is set for it, or
+// for every signal: an endpoint for logs alone exports logs alone. A
+// variable set to the empty string counts as unset, as otel.env.example's
+// are and as CI sets one whose secret is missing.
 
 export const SIGNALS = ["traces", "metrics", "logs"] as const;
 export type Signal = (typeof SIGNALS)[number];
