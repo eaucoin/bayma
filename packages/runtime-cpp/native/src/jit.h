@@ -24,7 +24,7 @@
 #pragma once
 
 #include "clang/Interpreter/IncrementalExecutor.h"
-#include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <atomic>
 #include <memory>
@@ -51,8 +51,9 @@ private:
   /// initializers read before they run.
   std::atomic<bool> Unresolved{false};
   std::mutex M;
-  /// The references the JIT links weakly that the cells made strong.
-  llvm::StringSet<> Weakened;
+  /// The references the JIT links weakly that the cells made strong: each
+  /// symbol, as the linker names it, to the name the cell's code gave it.
+  llvm::StringMap<std::string> Weakened;
   std::vector<std::string> Undefined;
 };
 

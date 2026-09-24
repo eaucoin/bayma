@@ -12,6 +12,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 
 #include <dlfcn.h>
@@ -122,7 +123,11 @@ struct CellJitHooks {
       if (auto *V = dyn_cast<GlobalVariable>(&G); V && V->isThreadLocal())
         continue;
       G.setLinkage(GlobalValue::ExternalWeakLinkage);
-      Cell.Weakened.insert(G.getName());
+      // The linker's name for it has the platform's prefix: Mach-O's `_`.
+      std::string Linked;
+      raw_string_ostream Name(Linked);
+      Mangler::getNameWithPrefix(Name, G.getName(), M.getDataLayout());
+      Cell.Weakened[Linked] = G.getName().str();
     }
   }
 
@@ -154,12 +159,15 @@ struct CellJitHooks {
   /// nothing defines.
   static Error noteUndefined(CellJit &Cell, jitlink::LinkGraph &G) {
     std::lock_guard<std::mutex> Lock(Cell.M);
-    for (jitlink::Symbol *External : G.external_symbols())
-      if (!External->getAddress() &&
-          Cell.Weakened.contains(*External->getName())) {
-        Cell.Undefined.push_back((*External->getName()).str());
-        Cell.Unresolved.store(true, std::memory_order_release);
-      }
+    for (jitlink::Symbol *External : G.external_symbols()) {
+      if (External->getAddress())
+        continue;
+      auto Weakened = Cell.Weakened.find(*External->getName());
+      if (Weakened == Cell.Weakened.end())
+        continue;
+      Cell.Undefined.push_back(Weakened->second);
+      Cell.Unresolved.store(true, std::memory_order_release);
+    }
     return Error::success();
   }
 };
