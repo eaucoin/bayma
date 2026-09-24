@@ -1,11 +1,17 @@
 #include "session.h"
 
+#include "jit.h"
+#include "libraries.h"
 #include "protocol.h"
+#include "rollback.h"
+#include "settings.h"
 #include "supervisor.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/GlobalDecl.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Interpreter/Interpreter.h"
@@ -14,6 +20,7 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaConsumer.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -23,6 +30,10 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
+
+// Ends the worker after a failure the session cannot survive; defined with
+// the rest of the C API cells call, below.
+extern "C" [[noreturn]] void bayma_abandon_interpreter(const char *reason);
 
 namespace bayma {
 
@@ -40,20 +51,25 @@ struct CellApiState {
 
 CellApiState CellApi;
 
-// Declarations every C++ session starts with.
+// Declarations every C++ session starts with, in any standard from C++17 and
+// with either standard library.
 //
 // An uncaught exception would reach std::terminate and abort without a word;
 // it ends the interpreter with a report of what was thrown instead.
 //
 // A cell's trailing expression becomes a call to bayma_capture_result, which
 // renders the value while the cell runs: string-likes quoted, whatever
-// std::format formats (C++23 formats ranges, maps, and tuples), whatever has
-// an operator<< streamed, enumerations as their value, and anything else by
-// type and address.
+// std::format formats where the standard library formats ranges (C++23
+// formats ranges, maps, and tuples), numbers, whatever has an operator<<
+// streamed, enumerations as their value, and anything else by type and
+// address.
 constexpr llvm::StringLiteral CxxPrelude = R"cpp(
+#if __cplusplus < 201703L
+#error "bayma's C++ sessions need C++17 or newer"
+#endif
+#include <charconv>
 #include <cstddef>
 #include <exception>
-#include <format>
 #include <memory>
 #include <ostream>
 #include <sstream>
@@ -61,6 +77,9 @@ constexpr llvm::StringLiteral CxxPrelude = R"cpp(
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#if __has_include(<format>)
+#include <format>
+#endif
 extern "C" const char *bayma_read_checkpoint(void);
 extern "C" int bayma_write_checkpoint(const char *json);
 extern "C" [[noreturn]] void bayma_abandon_interpreter(const char *reason);
@@ -79,32 +98,87 @@ namespace bayma_detail {
   }
   bayma_abandon_interpreter(reason.c_str());
 }
+template <class T, class = void> struct streamable : std::false_type {};
 template <class T>
-concept streamable = requires(std::ostream &out, const T &value) {
-  out << value;
-};
+struct streamable<T, std::void_t<decltype(std::declval<std::ostream &>()
+                                          << std::declval<const T &>())>>
+    : std::true_type {};
+#if defined(__cpp_lib_format_ranges)
+inline std::string quoted(std::string_view text) {
+  return std::format("{:?}", text);
+}
+inline std::string quoted(char c) { return std::format("{:?}", c); }
+#else
+// As std::format's debug format quotes them.
+inline void escape(std::string &out, char c, char quote) {
+  switch (c) {
+  case '\t': out += "\\t"; return;
+  case '\n': out += "\\n"; return;
+  case '\r': out += "\\r"; return;
+  case '\\': out += "\\\\"; return;
+  default:
+    if (c == quote) {
+      out += '\\';
+      out += c;
+    } else if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) {
+      const char digits[] = "0123456789abcdef";
+      out += "\\u{";
+      if (c >= 0x10)
+        out += digits[c >> 4];
+      out += digits[c & 0xf];
+      out += '}';
+    } else {
+      out += c;
+    }
+  }
+}
+inline std::string quoted(std::string_view text) {
+  std::string out = "\"";
+  for (char c : text)
+    escape(out, c, '"');
+  return out + '"';
+}
+inline std::string quoted(char c) {
+  std::string out = "'";
+  escape(out, c, '\'');
+  return out + '\'';
+}
+#endif
+template <class T> std::string number(T value) {
+  if constexpr (std::is_same_v<T, bool>) {
+    return value ? "true" : "false";
+  } else {
+    char text[64];
+    return std::string(text, std::to_chars(text, text + sizeof text, value).ptr);
+  }
+}
 template <class T>
 std::string render(const T &value, const char *type) {
   if constexpr (std::is_pointer_v<T> &&
-                std::convertible_to<const T &, std::string_view>) {
+                std::is_convertible_v<const T &, std::string_view>) {
     if (!value)
       return "nullptr";
   }
-  if constexpr (std::convertible_to<const T &, std::string_view>) {
-    return std::format("{:?}", std::string_view(value));
+  if constexpr (std::is_convertible_v<const T &, std::string_view>) {
+    return quoted(std::string_view(value));
   } else if constexpr (std::is_same_v<T, char>) {
-    return std::format("{:?}", value);
+    return quoted(value);
   } else if constexpr (std::is_enum_v<T>) {
-    return std::format("{}", std::to_underlying(value));
+    return number(static_cast<std::underlying_type_t<T>>(value));
+#if defined(__cpp_lib_format_ranges)
   } else if constexpr (std::formattable<T, char>) {
     return std::format("{}", value);
-  } else if constexpr (streamable<T>) {
+#endif
+  } else if constexpr (std::is_arithmetic_v<T>) {
+    return number(value);
+  } else if constexpr (streamable<T>::value) {
     std::ostringstream out;
     out << value;
     return std::move(out).str();
   } else {
-    return std::format("({}) @{}", type,
-                       static_cast<const void *>(std::addressof(value)));
+    std::ostringstream out;
+    out << '(' << type << ") @" << static_cast<const void *>(std::addressof(value));
+    return std::move(out).str();
   }
 }
 } // namespace bayma_detail
@@ -112,7 +186,8 @@ template <class T>
 void bayma_capture_result(T &&value, const char *type) noexcept {
   std::string text;
   try {
-    text = bayma_detail::render<std::remove_cvref_t<T>>(value, type);
+    text = bayma_detail::render<std::remove_cv_t<std::remove_reference_t<T>>>(
+        value, type);
   } catch (const std::exception &error) {
     text = std::string("(") + type + ") <" + error.what() + ">";
   }
@@ -137,12 +212,22 @@ int bayma_write_checkpoint(const char *json);
 /// #225868). The call here is ordinary C++ that Sema checks like any other,
 /// with the expression's cleanups kept, so its temporaries and their
 /// destructors are handled as usual.
+///
+/// It also notes the running cell's translation unit in `CellUnit`, for a
+/// failed cell's declarations to be forgotten; see rollback.h.
 class ValueCapture : public clang::SemaConsumer {
 public:
+  explicit ValueCapture(clang::TranslationUnitDecl *&CellUnit)
+      : CellUnit(CellUnit) {}
+
   void InitializeSema(clang::Sema &S) override { Sema = &S; }
   void ForgetSema() override { Sema = nullptr; }
 
   bool HandleTopLevelDecl(clang::DeclGroupRef Group) override {
+    // The context's current unit while the cell parses; what Clang declares
+    // implicitly belongs to its first.
+    if (!CellUnit && Sema)
+      CellUnit = Sema->getASTContext().getTranslationUnitDecl();
     if (!Sema || Sema->getDiagnostics().hasErrorOccurred())
       return true;
     for (clang::Decl *Declaration : Group)
@@ -212,17 +297,36 @@ private:
       Statement.setStmt(Full.get());
   }
 
+  clang::TranslationUnitDecl *&CellUnit;
   clang::Sema *Sema = nullptr;
   clang::Expr *Capture = nullptr;
+};
+
+/// Clang's diagnostics as text, which also tells the rollback when a cell
+/// reports an error.
+class DiagnosticPrinter : public clang::TextDiagnosticPrinter {
+public:
+  using clang::TextDiagnosticPrinter::TextDiagnosticPrinter;
+
+  void HandleDiagnostic(clang::DiagnosticsEngine::Level Level,
+                        const clang::Diagnostic &Info) override {
+    clang::TextDiagnosticPrinter::HandleDiagnostic(Level, Info);
+    if (Rollback && Level >= clang::DiagnosticsEngine::Error)
+      Rollback->failed();
+  }
+
+  CellRollback *Rollback = nullptr;
 };
 
 /// Clang's Interpreter with bayma's value capture in place of its own.
 class CapturingInterpreter : public clang::Interpreter {
 public:
-  CapturingInterpreter(std::unique_ptr<clang::CompilerInstance> Instance,
-                       llvm::Error &Err)
-      : Interpreter(std::move(Instance), Err, /*IEB=*/nullptr,
-                    std::make_unique<ValueCapture>()) {}
+  CapturingInterpreter(
+      std::unique_ptr<clang::CompilerInstance> Instance, llvm::Error &Err,
+      std::unique_ptr<clang::IncrementalExecutorBuilder> Executor,
+      clang::TranslationUnitDecl *&CellUnit)
+      : Interpreter(std::move(Instance), Err, std::move(Executor),
+                    std::make_unique<ValueCapture>(CellUnit)) {}
 };
 
 struct ExecSpec {
@@ -256,7 +360,8 @@ llvm::Expected<ExecSpec> readSpec(llvm::StringRef Path) {
   return Result;
 }
 
-std::vector<std::string> compilerArgs(const SessionOptions &Options) {
+std::vector<std::string> compilerArgs(const SessionOptions &Options,
+                                      const SessionSettings &Settings) {
   std::vector<std::string> Args;
   if (Options.Lang == Language::Cxx)
     Args = {"-xc++", "-std=gnu++23", "-stdlib=libc++",
@@ -272,14 +377,21 @@ std::vector<std::string> compilerArgs(const SessionOptions &Options) {
   Args.push_back("--sysroot=" + Options.Sysroot);
 #endif
   Args.insert(Args.end(), {"-iquote", Options.Cwd, "-fno-color-diagnostics"});
+  // The session's own settings come last, so they can override bayma's.
+  Args.insert(Args.end(), Settings.CompilerArgs.begin(),
+              Settings.CompilerArgs.end());
   return Args;
 }
 
 #ifdef __linux__
-/// On Linux cells use the payload's libc++. Its libraries name one another
-/// without a search path, so each is loaded by its full path, dependencies
-/// first.
-llvm::Error loadLibcxx(clang::Interpreter &Interp, llvm::StringRef Root) {
+/// On Linux cells run with the standard library they compile against: the
+/// payload's libc++, whose libraries name one another without a search path,
+/// so each is loaded by its full path, dependencies first; or the system's
+/// libstdc++, which the system's C runtime came with.
+llvm::Error loadStandardLibrary(clang::Interpreter &Interp,
+                                llvm::StringRef Root, StandardLibrary Stdlib) {
+  if (Stdlib == StandardLibrary::Libstdcxx)
+    return Interp.LoadDynamicLibrary("libstdc++.so.6");
   llvm::SmallString<256> Directory(Root);
   llvm::sys::path::append(Directory, "lib",
                           llvm::sys::getDefaultTargetTriple());
@@ -294,16 +406,26 @@ llvm::Error loadLibcxx(clang::Interpreter &Interp, llvm::StringRef Root) {
 }
 #endif
 
+/// Whether an input's failure was Clang's parser's, which discards what it
+/// declared itself. Its errors, and only its, say so; anything else failed
+/// to link or run.
+bool failedToParse(llvm::StringRef Reason) {
+  return Reason.starts_with("Parsing failed.");
+}
+
 } // namespace
 
 Session::Session(Language Lang, OutputCapture &Capture)
-    : Lang(Lang), Capture(Capture) {}
+    : Lang(Lang), Capture(Capture), Jit(std::make_shared<CellJit>()) {}
 
 Session::~Session() = default;
 
 llvm::Expected<std::unique_ptr<Session>>
 Session::create(const SessionOptions &Options, OutputCapture &Capture) {
-  std::vector<std::string> Args = compilerArgs(Options);
+  auto Settings = readSettings(Options.Cwd, Options.Lang);
+  if (!Settings)
+    return Settings.takeError();
+  std::vector<std::string> Args = compilerArgs(Options, *Settings);
   std::vector<const char *> Argv;
   for (const std::string &Arg : Args)
     Argv.push_back(Arg.c_str());
@@ -316,14 +438,15 @@ Session::create(const SessionOptions &Options, OutputCapture &Capture) {
   std::unique_ptr<Session> S(new Session(Options.Lang, Capture));
   if (Options.Lang == Language::Cxx) {
     llvm::Error Err = llvm::Error::success();
-    S->Interp =
-        std::make_unique<CapturingInterpreter>(std::move(*Compiler), Err);
+    S->Interp = std::make_unique<CapturingInterpreter>(
+        std::move(*Compiler), Err, executorBuilder(S->Jit), S->CellUnit);
     if (Err)
       return std::move(Err);
   } else {
     // C results are values or arrays of them, which Clang's own capture
     // handles.
-    auto Interp = clang::Interpreter::create(std::move(*Compiler));
+    auto Interp = clang::Interpreter::create(std::move(*Compiler),
+                                             executorBuilder(S->Jit));
     if (!Interp)
       return Interp.takeError();
     S->Interp = std::move(*Interp);
@@ -331,23 +454,76 @@ Session::create(const SessionOptions &Options, OutputCapture &Capture) {
 
   // Diagnostics become part of a cell's messages rather than host stderr.
   clang::CompilerInstance &Instance = *S->Interp->getCompilerInstance();
-  auto *Printer = new clang::TextDiagnosticPrinter(
-      S->DiagnosticStream, Instance.getDiagnosticOpts());
+  auto *Printer =
+      new DiagnosticPrinter(S->DiagnosticStream, Instance.getDiagnosticOpts());
   Instance.getDiagnostics().setClient(Printer, /*ShouldOwnClient=*/true);
   Printer->BeginSourceFile(Instance.getLangOpts(), &Instance.getPreprocessor());
 
 #ifdef __linux__
   if (Options.Lang == Language::Cxx)
-    if (llvm::Error Err = loadLibcxx(*S->Interp, Options.Root))
+    if (llvm::Error Err =
+            loadStandardLibrary(*S->Interp, Options.Root, Settings->Stdlib))
       return std::move(Err);
 #endif
+  if (llvm::Error Err = loadLibraries(*Settings, Options.Cwd))
+    return std::move(Err);
   llvm::StringRef Prelude =
       Options.Lang == Language::Cxx ? CxxPrelude : CPrelude;
   if (llvm::Error Err = S->Interp->ParseAndExecute(Prelude))
     return llvm::joinErrors(std::move(Err),
                             llvm::createStringError(S->takeDiagnostics()));
   S->takeDiagnostics();
+  S->Rollback = std::make_unique<CellRollback>(Instance.getPreprocessor(),
+                                               Options.Lang == Language::Cxx);
+  Printer->Rollback = S->Rollback.get();
   return S;
+}
+
+void Session::flushFailedCell() {
+  // What a cell that fails to parse leaves for the next one to compile: the
+  // template instantiations it asked for and the code Clang generated before
+  // the error. An empty input takes them, and is undone with them.
+  auto Empty = Interp->Parse("");
+  if (!Empty) {
+    llvm::consumeError(Empty.takeError());
+    return;
+  }
+  if (llvm::Error Err = Interp->Undo())
+    bayma_abandon_interpreter(("the failed cell could not be undone: " +
+                               llvm::toString(std::move(Err)))
+                                  .c_str());
+}
+
+void Session::linkCell() {
+  // Each cell is a translation unit of its own, the context's latest.
+  llvm::SmallVector<const clang::DeclContext *> Contexts{
+      Interp->getASTContext().getTranslationUnitDecl()};
+  while (!Contexts.empty()) {
+    for (const clang::Decl *D : Contexts.pop_back_val()->decls()) {
+      if (llvm::isa<clang::NamespaceDecl, clang::LinkageSpecDecl>(D)) {
+        Contexts.push_back(llvm::cast<clang::DeclContext>(D));
+        continue;
+      }
+      clang::GlobalDecl Symbol;
+      if (auto *F = llvm::dyn_cast<clang::FunctionDecl>(D);
+          F && F->isThisDeclarationADefinition() && !F->isInlined() &&
+          !F->isTemplated() &&
+          !llvm::isa<clang::CXXConstructorDecl, clang::CXXDestructorDecl>(F))
+        Symbol = F;
+      else if (auto *V = llvm::dyn_cast<clang::VarDecl>(D);
+               V && V->hasGlobalStorage() && !V->isInline() &&
+               !V->isTemplated() &&
+               V->isThisDeclarationADefinition() == clang::VarDecl::Definition)
+        Symbol = V;
+      else
+        continue;
+      // One symbol the cell defines links all of its code.
+      if (auto Address = Interp->getSymbolAddress(Symbol))
+        return;
+      else
+        llvm::consumeError(Address.takeError());
+    }
+  }
 }
 
 std::string Session::takeDiagnostics() {
@@ -394,16 +570,42 @@ void Session::execute(llvm::StringRef SpecPath) {
 
   recordCellStart(Prefix);
   Capture.begin(Prefix);
+  Rollback->begin();
+  Jit->begin();
+  CellUnit = nullptr;
   clang::Value Result;
   llvm::Error Failure = Interp->ParseAndExecute(Spec->Code, &Result);
+  bool Failed = static_cast<bool>(Failure);
+  std::string Reason = Failed ? llvm::toString(std::move(Failure)) : "";
+  if (!Failed)
+    linkCell();
+  // A cell whose code uses what nothing defines ran none of it; see jit.h.
+  if (std::vector<std::string> Undefined = Jit->undefined();
+      !Undefined.empty()) {
+    Reason =
+        "the cell uses what nothing defines: " + llvm::join(Undefined, ", ");
+    Failed = true;
+  }
+  // A failed cell leaves the session as it found it; see rollback.h. Clang
+  // withdraws a cell that fails to parse itself, and one that fails to link
+  // or run is undone here.
+  if (Failed) {
+    clang::TranslationUnitDecl *FailedUnit = CellUnit;
+    if (failedToParse(Reason))
+      flushFailedCell();
+    else if (llvm::Error Err = Interp->Undo())
+      bayma_abandon_interpreter(("the failed cell could not be undone: " +
+                                 llvm::toString(std::move(Err)))
+                                    .c_str());
+    Rollback->revert(FailedUnit);
+  }
   std::string Reported = takeDiagnostics();
   std::optional<std::string> Printed = takeResult(Result);
 
   // Everything the cell wrote reaches its envelopes before its outcome.
   std::fflush(nullptr);
   bool Drained = Capture.drain();
-  if (Failure) {
-    std::string Reason = llvm::toString(std::move(Failure));
+  if (Failed) {
     // "Parsing failed." adds nothing to the diagnostics that explain why.
     if (Reported.empty() || Reason != "Parsing failed.")
       Reported += Reason;
@@ -426,7 +628,7 @@ void Session::execute(llvm::StringRef SpecPath) {
   // A successful cell commits the checkpoint as it stands; a failed one
   // leaves the committed checkpoint as it was.
   if (Spec->Checkpointed) {
-    if (Failure || CheckpointRefused)
+    if (Failed || CheckpointRefused)
       writeProtocol(envelope(Prefix, "checkpoint-preserved"));
     else
       writeProtocol(envelope(Prefix, "checkpoint",

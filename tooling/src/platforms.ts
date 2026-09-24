@@ -124,10 +124,12 @@ export interface PlatformPins {
    */
   clangSysroot?: {
     /** What cells compile against and load: glibc's and Linux's C headers,
-     * and libatomic, which libc++ needs, with their copyrights. */
+     * libstdc++'s headers, and libatomic, which libc++ needs, with their
+     * copyrights. */
     cells: PinnedArchive[];
-    /** What the host is also built against: glibc, GCC 12's runtime and
-     * libstdc++ (the LLVM release's own), and zlib. */
+    /** What the host is also built against: glibc, GCC 12's runtime (the
+     * LLVM release's own), and zlib; the host is built against the cells'
+     * packages too. */
     build: PinnedArchive[];
   };
 }
@@ -200,24 +202,26 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
           "main/g/gcc-12/libatomic1_12.3.0-1ubuntu1~22.04.3_amd64.deb",
           "56573c81b5dd84817882400cfea49fe671f5e6cfdd0f88b5d3a894c08b150462",
         ),
-        // libatomic's copyright, which it shares with the rest of GCC 12.
+        // The copyright libatomic and libstdc++ share with the rest of
+        // GCC 12.
         ubuntuPackage(
           "main/g/gcc-12/gcc-12-base_12.3.0-1ubuntu1~22.04.3_amd64.deb",
           "7f9253b7e0976f0526fc21346c73ee006e185a7b2f2f865048ea78a2af55bc8d",
+        ),
+        // libstdc++'s headers, and the crtbegin.o by which Clang finds them.
+        ubuntuPackage(
+          "universe/g/gcc-12/libstdc++-12-dev_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+          "250f538cb3a5dfbbb767e16cb3d840a2b113de1582bec155ea97600740a6ed1e",
+        ),
+        ubuntuPackage(
+          "main/g/gcc-12/libgcc-12-dev_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+          "a9933d9949219f3a0598bf48390091f45c03c036fe736de38f33b7c60eddca0e",
         ),
       ],
       build: [
         ubuntuPackage(
           "main/g/glibc/libc6_2.35-0ubuntu3.15_amd64.deb",
           "79e35256227e16a607c154cdeb8d76ff12d20e31de286ea7fd9ad3b96fe0452d",
-        ),
-        ubuntuPackage(
-          "main/g/gcc-12/libgcc-12-dev_12.3.0-1ubuntu1~22.04.3_amd64.deb",
-          "a9933d9949219f3a0598bf48390091f45c03c036fe736de38f33b7c60eddca0e",
-        ),
-        ubuntuPackage(
-          "universe/g/gcc-12/libstdc++-12-dev_12.3.0-1ubuntu1~22.04.3_amd64.deb",
-          "250f538cb3a5dfbbb767e16cb3d840a2b113de1582bec155ea97600740a6ed1e",
         ),
         ubuntuPackage(
           "main/g/gcc-12/libgcc-s1_12.3.0-1ubuntu1~22.04.3_amd64.deb",

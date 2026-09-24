@@ -29,8 +29,8 @@ import {
 // this repository's sources against the pinned LLVM release's Clang
 // Interpreter, and what cells compile and run against. Clang's resource
 // headers everywhere; on Linux also libc++, glibc's and Linux's C headers at
-// the glibc floor, and libatomic, while macOS cells use the SDK and the
-// system's libc++.
+// the glibc floor, libstdc++'s headers for sessions that choose it, and
+// libatomic, while macOS cells use the SDK and the system's libc++.
 
 /** Where the host's sources live. */
 const NATIVE_DIR = join("packages", "runtime-cpp", "native");
@@ -278,11 +278,14 @@ function buildHost(
   }
 
   const host = join(buildDir, HOST);
-  const exports = readFileSync(
-    join(context.repoRoot, NATIVE_DIR, "exports.txt"),
-    "utf8",
-  )
-    .split("\n")
+  // What every platform's host exports, and on Linux the C runtime's
+  // emulated-TLS entry point, which the host answers for cells.
+  const exports = ["exports.txt", ...(IS_LINUX ? ["exports-linux.txt"] : [])]
+    .flatMap((list) =>
+      readFileSync(join(context.repoRoot, NATIVE_DIR, list), "utf8").split(
+        "\n",
+      ),
+    )
     .filter(Boolean);
   const clangLibraries = readdirSync(join(llvm, "lib"))
     .filter((name) => /^libclang[A-Z]\w*\.a$/.test(name))
@@ -388,6 +391,16 @@ function assembleRuntime(
       join(sysroot.cells, "usr", "include"),
       join(root, "sysroot", "usr", "include"),
     );
+    // Clang finds libstdc++'s headers through the GCC installation beside
+    // them, which it knows by its crtbegin.o.
+    const gcc = join("usr", "lib", "gcc", "x86_64-linux-gnu");
+    for (const version of readdirSync(join(sysroot.cells, gcc))) {
+      ensureDir(join(root, "sysroot", gcc, version));
+      copyFileSync(
+        join(sysroot.cells, gcc, version, "crtbegin.o"),
+        join(root, "sysroot", gcc, version, "crtbegin.o"),
+      );
+    }
   }
   ensureDir(join(root, "licenses"));
   for (const [name, path] of Object.entries(licenses))

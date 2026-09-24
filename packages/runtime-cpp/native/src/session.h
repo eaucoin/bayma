@@ -16,10 +16,14 @@
 
 namespace clang {
 class Interpreter;
+class TranslationUnitDecl;
 class Value;
 } // namespace clang
 
 namespace bayma {
+
+class CellJit;
+class CellRollback;
 
 enum class Language { C, Cxx };
 
@@ -48,6 +52,13 @@ public:
 private:
   Session(Language Lang, OutputCapture &Capture);
 
+  /// Takes what a cell that failed to parse left for the next one to compile.
+  void flushFailedCell();
+
+  /// Links the running cell's code now, rather than when something first
+  /// uses it, so what it lacks is its own error; see jit.h.
+  void linkCell();
+
   /// The running cell's result: C++ cells report theirs as they run.
   std::optional<std::string> takeResult(const clang::Value &Result);
   std::string takeDiagnostics();
@@ -56,7 +67,11 @@ private:
   OutputCapture &Capture;
   std::string Diagnostics;
   llvm::raw_string_ostream DiagnosticStream{Diagnostics};
+  std::shared_ptr<CellJit> Jit;
   std::unique_ptr<clang::Interpreter> Interp;
+  std::unique_ptr<CellRollback> Rollback;
+  /// The running C++ cell's translation unit, once it declares anything.
+  clang::TranslationUnitDecl *CellUnit = nullptr;
 };
 
 } // namespace bayma

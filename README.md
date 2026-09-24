@@ -24,7 +24,11 @@ bayma currently supports six REPL runtimes:
   terminal program
 - **C** and **C++** — built on Clang's incremental Interpreter, the library
   behind clang-repl, embedded rather than driven as a terminal program; C++ is
-  C++23 with libc++
+  C++23 with libc++. A `compile_flags.txt` in the session's working directory,
+  as clangd reads it, sets the compiler's arguments and loads libraries, whose
+  templates, types, and thread-local variables cells share as a linked program
+  would; on Linux it can choose GCC's libstdc++, which distributions build their
+  C++ libraries with
 
 Each of them is bundled: bayma runs pinned toolchains it brings itself, not
 whatever happens to be installed. The one exception is on macOS, where C and

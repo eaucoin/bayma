@@ -5,6 +5,8 @@ const SHARED = [
   "Clang's incremental Interpreter (clang-repl) compiles each exec and runs it in the session's process, so definitions, variables, and #includes persist across execs.",
   "A trailing expression without a semicolon is the exec's result.",
   "Quoted #include paths resolve from the session working directory.",
+  "A compile_flags.txt there, one argument per line as clangd reads it, sets the session's compiler arguments (such as -I, -isystem, -D, and -std=) and loads its libraries (-L and -l, or a library's path), each with the libraries it needs from those directories.",
+  "An exec that fails to compile or link is undone, but for the headers it included that parsed, which stay included; a header that failed is read again when next included.",
   "Checkpointed recovery preserves only JSON text written with bayma_write_checkpoint(json) and read with bayma_read_checkpoint().",
 ].join(" ");
 
@@ -14,11 +16,11 @@ const FAILURES =
 export const cppModelProfile: RuntimeModelProfile = {
   runtimeId: "cpp",
   heading: "C++",
-  description: `C++23 with libc++. ${SHARED} Results print their contents when std::format can format them (numbers, strings, standard containers, pairs, and tuples) or they have an operator<<. Clang's Interpreter can crash on a lambda written inside a top-level statement; bind the lambda to a variable first, or make the call inside a function. If an exec crashes the process, throws an uncaught exception, or exits, ${FAILURES}`,
+  description: `C++23 with libc++, or from C++17 on with -std=; on Linux, -stdlib=libstdc++ uses GCC's libstdc++, as a distribution's C++ libraries do. ${SHARED} Cells share what loaded libraries define, as a linked program would: template instantiations, type_info, and, on Linux, thread-local variables among them. Results print their contents when std::format can format them (numbers, strings, standard containers, pairs, and tuples, with libc++ in C++23), and otherwise when they are numbers, strings, or enumerations or have an operator<<. Clang's Interpreter can crash on a lambda written inside a top-level statement; bind the lambda to a variable first, or make the call inside a function. If an exec crashes the process, throws an uncaught exception, or exits, ${FAILURES}`,
 };
 
 export const cModelProfile: RuntimeModelProfile = {
   runtimeId: "c",
   heading: "C",
-  description: `C23. ${SHARED} If an exec crashes the process or exits, ${FAILURES}`,
+  description: `C23, or another standard with -std=. ${SHARED} If an exec crashes the process or exits, ${FAILURES}`,
 };
