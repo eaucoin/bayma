@@ -328,6 +328,9 @@ describe("a development command", () => {
       expect(root.resource["service.version"]).toBe(
         packageManifest(repoRoot).version,
       );
+      expect(root.resource["service.instance.id"]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
       expect(root.resource["vcs.ref.head.revision"]).toBe(
         spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot })
           .stdout.toString()
@@ -454,6 +457,11 @@ describe("a development command", () => {
       expect(root.traceId).toBe(traceId);
       expect(root.parentSpanId).toBe(parentId);
       expect(root.resource["service.name"]).toBe("someone's-service");
+      // Each run was an instance of its own.
+      const runs = sink.spans.filter((span) => span.name === COMMAND);
+      expect(
+        new Set(runs.map((span) => span.resource["service.instance.id"])).size,
+      ).toBe(runs.length);
     },
     COMMAND_TIMEOUT_MS,
   );

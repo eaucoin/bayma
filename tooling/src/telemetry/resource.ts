@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ATTR } from "./attributes.ts";
 
 // What every signal a development run exports says about where it came from:
-// the checkout, and the CI run when there is one. OTEL_SERVICE_NAME and
-// OTEL_RESOURCE_ATTRIBUTES override any of it.
+// the run itself, the checkout, and the CI run when there is one.
+// OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES override any of it.
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 export const DEFAULT_SERVICE_NAME = "bayma-development";
@@ -74,6 +75,9 @@ export function developmentResource(
   return {
     [ATTR.serviceName]: DEFAULT_SERVICE_NAME,
     [ATTR.serviceVersion]: version,
+    // Each process is an instance of its own: its counters start from zero,
+    // so runs that shared one would read as a single series that resets.
+    [ATTR.serviceInstanceId]: randomUUID(),
     ...checkout(),
     ...githubActions(env),
   };

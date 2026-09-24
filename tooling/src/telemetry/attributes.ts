@@ -11,6 +11,7 @@ export const ATTR = {
   errorType: "error.type",
   urlFull: "url.full",
   // Conventions in development.
+  serviceInstanceId: "service.instance.id",
   processCommandArgs: "process.command_args",
   processExecutableName: "process.executable.name",
   processExitCode: "process.exit.code",
