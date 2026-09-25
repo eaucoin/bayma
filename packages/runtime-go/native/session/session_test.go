@@ -119,11 +119,44 @@ func TestCheckpoints(t *testing.T) {
 func TestTheWorkingDirectorysModule(t *testing.T) {
 	project := t.TempDir()
 	os.MkdirAll(filepath.Join(project, "answer"), 0o755)
-	os.WriteFile(filepath.Join(project, "go.mod"), []byte("module helper\n\ngo 1.27\n"), 0o644)
+	os.WriteFile(filepath.Join(project, "go.mod"), []byte("module helper\n\ngo 1.26\n"), 0o644)
 	os.WriteFile(filepath.Join(project, "answer", "answer.go"), []byte("package answer\n\nfunc Value() int { return 42 }\n"), 0o644)
 	s := newSession(t, project)
 	if got := result(t, s, "import \"helper/answer\"\nanswer.Value()"); got != "42" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+// Go's own parser and type checker serve cells, called from any later cell,
+// however many cells bring them.
+func TestCellsTypeCheckGo(t *testing.T) {
+	s := newSession(t, t.TempDir())
+	for i := 0; i < 3; i++ {
+		result(t, s, fmt.Sprintf(`import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+)
+
+func check%d(src string) string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		return err.Error()
+	}
+	pkg, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{file}, nil)
+	if err != nil {
+		return err.Error()
+	}
+	return pkg.Scope().Lookup("y").Type().String()
+}`, i))
+		for j := 0; j <= i; j++ {
+			if got := result(t, s, fmt.Sprintf(`check%d("package p\nvar x any = 1\nvar y = x.(int)\n")`, j)); got != "int" {
+				t.Fatalf("check%d after cell %d: got %s", j, i, got)
+			}
+		}
 	}
 }
 

@@ -26,7 +26,13 @@ export const UV_VERSION = "0.12.9";
 export const LLVM_VERSION = "23.1.2";
 export const ZSTD_VERSION = "1.5.7";
 export const LEAN_VERSION = "4.34.0";
-export const GO_VERSION = "1.27.1";
+/**
+ * Go 1.27 breaks a session that type-checks in more than one cell: once a
+ * plugin's code has run go/types with an importer, a later plugin carrying the
+ * same packages leaves two copies of go/ast's types, and go/parser's own
+ * type switches stop matching. 1.26 has no such fault.
+ */
+export const GO_VERSION = "1.26.8";
 
 /** The LLVM release's licence texts, for the parts of it the payload ships. */
 export const LLVM_LICENSES: Record<string, PinnedArchive> = Object.fromEntries(
@@ -61,6 +67,15 @@ export const LLVM_LICENSES: Record<string, PinnedArchive> = Object.fromEntries(
     },
   ]),
 );
+
+/**
+ * The LLVM release's source, for libclang's: the C and C++ host builds it in
+ * from there, since the release ships libclang only as a library of its own.
+ */
+export const LLVM_SOURCE: PinnedArchive = {
+  url: `https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz`,
+  sha256: "c98bbef08a2b4c2613cd50e9aa9ae7b69b1fe6c16b2c40373bc0ab6116fdf78a",
+};
 
 /**
  * zstd, built from source into the C and C++ host: LLVM's libraries compress
@@ -197,7 +212,7 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
     go: {
       url: `https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz`,
       sha256:
-        "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
+        "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b",
     },
     llvm: {
       url: `https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.zst`,
@@ -307,7 +322,7 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
     go: {
       url: `https://dl.google.com/go/go${GO_VERSION}.darwin-arm64.tar.gz`,
       sha256:
-        "ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12",
+        "a012b25b571bd0138a03dcd25375ceba866fe5ca822f426d2c66a4de56fd3f4b",
     },
   },
 };
@@ -334,6 +349,7 @@ export const UV = { version: UV_VERSION, ...PLATFORM.uv } as const;
 export const CLANG = {
   llvmVersion: LLVM_VERSION,
   llvm: PLATFORM.llvm,
+  llvmSource: LLVM_SOURCE,
   licenses: LLVM_LICENSES,
   zstdVersion: ZSTD_VERSION,
   zstd: ZSTD_SOURCE,

@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
 
-// initModule writes the session module. A module in cwd is available to its
-// cells, at what the directory holds, with the versions it requires.
+// initModule writes the session module, at the Go the host was built with,
+// which is the go command's. A module in cwd is available to its cells, at
+// what the directory holds, with the versions it requires.
 func (s *Session) initModule(cwd string) error {
-	module := fmt.Sprintf("module %s\n\ngo 1.27.1\n", s.module)
+	module := fmt.Sprintf("module %s\n\ngo %s\n", s.module, strings.TrimPrefix(runtime.Version(), "go"))
 	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
 		out, err := goRun(cwd, "mod", "edit", "-json")
 		if err != nil {

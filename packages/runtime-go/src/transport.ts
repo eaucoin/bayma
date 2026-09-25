@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   cacheRoot,
   claimScratchDirectory,
@@ -40,6 +40,10 @@ export function goHostCommand(scratch: string): {
     args: [],
     env: {
       BAYMA_GO_SCRATCH_DIR: scratch,
+      // The host is built -trimpath, so it knows no GOROOT of its own; cells
+      // that read Go's own packages through go/build or go/importer find
+      // them here.
+      GOROOT: dirname(dirname(payloadValue("BAYMA_GO_BIN"))),
       GOPATH: join(root, "path"),
       GOCACHE: join(root, "build"),
       GOENV: "off",

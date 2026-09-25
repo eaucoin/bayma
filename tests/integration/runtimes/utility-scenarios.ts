@@ -352,7 +352,7 @@ const RUNTIME_SCENARIOS: Record<RuntimeId, RuntimeScenarioSpec> = {
       "<-answer",
     ].join("\n"),
     dependencyFileName: "go.mod",
-    dependencyFileContent: "module helper\n\ngo 1.27\n",
+    dependencyFileContent: "module helper\n\ngo 1.26\n",
     dependencyFiles: {
       "answer/answer.go": "package answer\n\nfunc Value() int { return 42 }\n",
     },

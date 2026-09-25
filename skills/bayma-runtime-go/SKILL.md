@@ -71,7 +71,7 @@ Workbench usefulness remains the primary selection criterion; these states matte
 
 Controller authority is exclusive. Do not steal or close another actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work.
 
-Everything the session declared persists across execs and client reconnects while the Go host remains up. An interrupt, or a panic in a goroutine a cell started, restarts the host; only the last committed checkpoint carries over. Durable exec resources are the authority on whether submitted work compiled and ran: `bayma:///session/{sessionId}/exec/{execId}` for status and code, and `/messages` for ordered output and errors.
+Everything the session declared persists across execs and client reconnects while the Go host remains up. An interrupt restarts the host; only the last committed checkpoint carries over. A panic in a goroutine a cell started ends the host and quarantines the session. Durable exec resources are the authority on whether submitted work compiled and ran: `bayma:///session/{sessionId}/exec/{execId}` for status and code, and `/messages` for ordered output and errors.
 
 ## Go Environment Truth
 
@@ -91,5 +91,5 @@ Modules come through the Go module proxy, and a module's version is fixed once t
 - Everything a cell declares, unexported names, fields, and methods included, stays live for later cells, while a name declared again replaces the old one.
 - A cell ending in a single expression returns its value, or every value of a call that returns several; end in a struct or slice to see several of your own.
 - The first session on a machine compiles Go's standard library for its cells, once, so it starts slowly.
-- Goroutines a cell starts keep running, but output written while no cell runs is dropped, and a panic in one restarts the session.
+- Goroutines a cell starts keep running, but output written while no cell runs is dropped, and a panic that escapes one ends the host and quarantines the session: recover inside the goroutines a cell starts.
 - When checkpointed recovery is active, bayma preserves only the JSON-compatible value written with `bayma_write_checkpoint(value)`, read back with `bayma_read_checkpoint(&value)`, and never replays earlier calls or their side effects.
