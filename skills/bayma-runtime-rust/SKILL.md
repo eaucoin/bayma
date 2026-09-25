@@ -5,7 +5,7 @@ description: Execute Rust code interactively in a persistent bayma EVcxR session
 
 # Rust Runtime
 
-Use bayma's Rust runtime when executable memory will improve the work. A session is an interactive workbench: items, imports, variables, dependencies, datasets, intermediate results, helpers, and evolving program state can remain available while you write, compile, execute, inspect results, and revise.
+Use bayma's Rust runtime when executable memory will help. A session is an interactive workbench: items, imports, variables, dependencies, datasets, intermediate results, helpers, and evolving program state can remain available while you write, compile, execute, inspect results, and revise.
 
 The goal is not merely to run Rust code. It is to avoid repeatedly reconstructing the same context and to support a coherent body of interactive work over time.
 
@@ -30,7 +30,7 @@ Create sessions with `runtime: "rust"`; the selected runtime remains fixed for t
 - Create a new session for clean-room validation, a different checkout, incompatible or misleading ownership state, or truly independent concurrent work.
 - Do not create a separate session merely because another crate or domain becomes involved. One session can accumulate several cooperating dependencies and values when that makes the ongoing work easier to continue.
 
-Use a short, stable title that names the body of work rather than the current prompt. Do not list and inspect every session before every small exec; revisit session choice when continuity is uncertain or the work meaningfully changes.
+Use a short, stable title that names the body of work rather than the current prompt. Do not list and inspect every session before every small exec; revisit session choice when continuity is uncertain or the task meaningfully changes.
 
 ## Work Interactively
 
@@ -56,7 +56,7 @@ Persistent memory does not make facts timeless. Refresh external observations wh
 - After a disconnect or uncertain tool result, inspect the durable session and exec records before resubmitting code.
 - Reacquire the known workbench after interruption when its context remains useful.
 - Inspect controller ownership, queue state, recovery, or quarantine details only when an actual coordination or lifecycle concern requires it.
-- Leave a useful workbench available for later continuation. Release control when another actor should use it. Close it only when it is disposable, invalid, or more confusing than reconstructing the work.
+- Leave a useful workbench available for later continuation. Release control when another actor should use it. Close it only when it is disposable, invalid, or more confusing than starting over.
 
 ## Session Lifecycle
 
@@ -79,7 +79,7 @@ Inspect the selected REPL instead of guessing about dependencies, paths, or comp
 
 - `std::env::current_dir()` and relevant environment variables;
 - small type, ownership, and final-expression probes;
-- `:dep` declarations for the exact dependencies the work requires;
+- `:dep` declarations for exactly the dependencies needed;
 - local crate source, generated models, examples, and runtime configuration.
 
 Use ordinary Rust and Cargo semantics within bayma's declared boundaries. Keep secrets in live session state when needed, never in repo files or checkpoints.
@@ -96,9 +96,9 @@ Use ordinary Rust and Cargo semantics within bayma's declared boundaries. Keep s
 - Recovery restores only the last committed checkpoint, never replays earlier calls or their side effects, and discards non-checkpointed live state when the execution child is replaced or the session is interrupted.
 - Threads and child processes must finish before the call returns because detached writers cannot retain causal output attribution and work that outlives its call is unsupported.
 
-## Reference Materials
+# Rust Toolbelt
 
-bayma's toolbelt gives Rust sessions a pinned set of crates, which a session declares directly. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned crates, declared directly, that Rust sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, types, and documentation behind the Rust package set are under:
 
@@ -176,7 +176,7 @@ You then have access to the tools the quickstart loads.
 
 These tools can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
 
-Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
 ## Repository Operations
 

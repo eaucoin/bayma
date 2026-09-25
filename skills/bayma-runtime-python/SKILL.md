@@ -5,7 +5,7 @@ description: Execute Python code interactively in a persistent bayma Python sess
 
 # Python Runtime
 
-Use bayma's Python runtime when executable memory will improve the work. A session is an interactive workbench: imports, clients, objects, datasets, transformations, intermediate results, helpers, and evolving program state can remain available while you write, execute, inspect results, and revise.
+Use bayma's Python runtime when executable memory will help. A session is an interactive workbench: imports, clients, objects, datasets, transformations, intermediate results, helpers, and evolving program state can remain available while you write, execute, inspect results, and revise.
 
 The goal is not merely to run Python code. It is to avoid repeatedly reconstructing the same context and to support a coherent body of interactive work over time.
 
@@ -30,7 +30,7 @@ Create sessions with `runtime: "python"`; the selected runtime remains fixed for
 - Create a new session for clean-room validation, a different checkout, incompatible or misleading state, or truly independent concurrent work.
 - Do not create a separate session merely because another Python package or domain becomes involved. One session can accumulate several cooperating objects when that makes the ongoing work easier to continue.
 
-Use a short, stable title that names the body of work rather than the current prompt. Do not list and inspect every session before every small exec; revisit session choice when continuity is uncertain or the work meaningfully changes.
+Use a short, stable title that names the body of work rather than the current prompt. Do not list and inspect every session before every small exec; revisit session choice when continuity is uncertain or the task meaningfully changes.
 
 ## Work Interactively
 
@@ -52,11 +52,11 @@ Persistent memory does not make facts timeless. Refresh external observations wh
 
 ## Continue Safely
 
-- If an exec is still running, continue it with `wait`; do not duplicate the work.
+- If an exec is still running, continue it with `wait`; do not duplicate it.
 - After a disconnect or uncertain tool result, inspect the durable session and exec records before resubmitting code.
 - Reacquire the known workbench after interruption when its context remains useful.
 - Inspect controller ownership, queue state, recovery, or quarantine details only when an actual coordination or lifecycle issue requires it.
-- Leave a useful workbench available for later continuation. Release control when another actor should use it. Close it only when it is disposable, invalid, or more confusing than reconstructing the work.
+- Leave a useful workbench available for later continuation. Release control when another actor should use it. Close it only when it is disposable, invalid, or more confusing than starting over.
 
 ## Session Lifecycle
 
@@ -93,9 +93,9 @@ Prefer direct Python APIs over shelling out when an equivalent API exists. The s
 - `sys.stdout` and `sys.stderr` are UTF-8 non-TTY proxies supporting `write`, `flush`, `writable`, `isatty`, `encoding`, `errors`, and a writable binary buffer, but they are not general terminal or file objects.
 - When checkpointed recovery is active, bayma restores only the pickle-compatible value written with `bayma_write_checkpoint(...)` across runtime replacement or server restart, makes it available through `bayma_read_checkpoint()`, and does not replay live globals or earlier side effects.
 
-## Reference Materials
+# Python Toolbelt
 
-bayma's toolbelt gives Python sessions a pinned set of packages, gathered into one `toolbelt` namespace. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Python sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, type information, and documentation behind the Python `toolbelt` namespace are under:
 
@@ -165,7 +165,7 @@ You then have access to the tools the quickstart loads.
 
 These tools can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
 
-Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
 ## Repository Operations
 

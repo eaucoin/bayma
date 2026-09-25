@@ -5,7 +5,7 @@ description: Execute JavaScript or TypeScript code interactively in a persistent
 
 # Bun Runtime
 
-Use bayma's Bun runtime when executable memory will improve the work. A session is an interactive workbench: imports, clients, browser handles, datasets, intermediate results, helpers, and evolving program state can remain available while you write, execute, inspect results, and revise.
+Use bayma's Bun runtime when executable memory will help. A session is an interactive workbench: imports, clients, browser handles, datasets, intermediate results, helpers, and evolving program state can remain available while you write, execute, inspect results, and revise.
 
 The goal is not merely to run Bun code. It is to avoid repeatedly reconstructing the same context and to support a coherent body of interactive work over time.
 
@@ -30,7 +30,7 @@ Create sessions with `runtime: "bun"`; the selected runtime remains fixed for th
 - Create a new session for clean-room validation, a different checkout or identity, incompatible or misleading state, or truly independent concurrent work.
 - Do not create a separate session merely because another package or platform skill becomes involved. One session can accumulate several cooperating clients when that makes the ongoing work easier to continue.
 
-Use a short, stable title that names the body of work rather than the current prompt. Do not list and inspect every session before every small exec; revisit session choice when continuity is uncertain or the work meaningfully changes.
+Use a short, stable title that names the body of work rather than the current prompt. Do not list and inspect every session before every small exec; revisit session choice when continuity is uncertain or the task meaningfully changes.
 
 ## Work Interactively
 
@@ -52,11 +52,11 @@ Persistent memory does not make facts timeless. Refresh remote observations when
 
 ## Continue Safely
 
-- If an exec is still running, continue it with `wait`; do not duplicate the work.
+- If an exec is still running, continue it with `wait`; do not duplicate it.
 - After a disconnect or uncertain tool result, inspect the durable session and exec records before resubmitting code.
 - Reacquire the known workbench after interruption when its context remains useful.
 - Inspect controller ownership, queue state, recovery, or quarantine details only when an actual coordination or lifecycle issue requires it.
-- Leave a useful workbench available for later continuation. Release control when another actor should use it. Close it only when it is disposable, invalid, or more confusing than reconstructing the work.
+- Leave a useful workbench available for later continuation. Release control when another actor should use it. Close it only when it is disposable, invalid, or more confusing than starting over.
 
 ## Session Lifecycle
 
@@ -91,9 +91,9 @@ If imports fail, the session may simply be pointed at the wrong package tree; th
 - A non-`undefined` final value is returned as result text and stored in `_`, while a thrown value is stored in `_error`; console and value rendering are bounded, so very large or unsafe-to-inspect values may be abbreviated.
 - When checkpointed recovery is active, bayma restores only `$checkpoint` across runtime replacement or server restart using its structured-clone codec and never replays earlier calls or their side effects.
 
-## Reference Materials
+# Bun Toolbelt
 
-bayma's toolbelt gives Bun sessions a pinned set of packages, gathered into one `toolbelt` namespace. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Bun sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, types, and documentation behind the Bun `toolbelt` namespace are under:
 
@@ -147,7 +147,7 @@ You then have access to the tools the quickstart loads.
 
 These tools can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
 
-Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
 ## Repository Operations
 
