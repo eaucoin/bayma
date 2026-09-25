@@ -91,7 +91,7 @@ Quoted `#include` paths resolve from the session working directory. Keep secrets
 - Cells share what loaded libraries define, as a linked program would: template instantiations, `type_info`, and, on Linux, thread-local variables among them.
 - A trailing expression without a semicolon is the exec's result. It prints its contents when `std::format` can format it (numbers, strings, standard containers, pairs, and tuples, with libc++ in C++23), and otherwise when it is a number, string, or enumeration or has an `operator<<`.
 - An exec that fails to compile or link is undone, but for the headers it included that parsed, which stay included; a header that failed is read again when next included.
-- Clang's Interpreter can crash on a lambda written inside a top-level statement; bind the lambda to a variable first, or make the call inside a function.
+- Clang's Interpreter cannot name a lambda written in a statement at a cell's top level, as a call's argument or in a block, `if`, or loop, and may crash the session on one; write the lambda as a top-level variable's initializer, or inside a function.
 - If an exec crashes the process, throws an uncaught exception, or exits, the exec ends with an error and the session continues in a fresh interpreter, keeping its checkpoint but losing its definitions and values; an interrupt does the same.
 - Output written by threads after an exec returns is discarded, so join threads before a cell returns.
 - When checkpointed recovery is active, bayma preserves only JSON text written with `bayma_write_checkpoint(json)` and read with `bayma_read_checkpoint()`, and never replays earlier calls or their side effects.
