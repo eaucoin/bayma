@@ -27,10 +27,11 @@ import {
 
 // The C and C++ payload, which both runtimes share: bayma-cpp-host, built from
 // this repository's sources against the pinned LLVM release's Clang
-// Interpreter, and what cells compile and run against. Clang's resource
-// headers everywhere; on Linux also libc++, glibc's and Linux's C headers at
-// the glibc floor, libstdc++'s headers for sessions that choose it, and
-// libatomic, while macOS cells use the SDK and the system's libc++.
+// Interpreter and libclang, and what cells compile and run against. Clang's
+// resource headers and libclang's everywhere; on Linux also libc++, glibc's
+// and Linux's C headers at the glibc floor, libstdc++'s headers for sessions
+// that choose it, and libatomic, while macOS cells use the SDK and the
+// system's libc++.
 
 /** Where the host's sources live. */
 const NATIVE_DIR = join("packages", "runtime-cpp", "native");
@@ -168,6 +169,86 @@ async function provisionZstd(context: ProvisionContext): Promise<string> {
   return directory;
 }
 
+/**
+ * libclang's sources, from the LLVM release's source: the host builds them
+ * in, so cells reach Clang's own tooling API in the Clang that compiles them.
+ */
+async function provisionLibclangSource(
+  context: ProvisionContext,
+): Promise<string> {
+  const directory = join(context.workDir, "clang", "libclang");
+  if (isProvisioned(context, directory, CLANG.llvmSource.sha256))
+    return directory;
+  resetDirectory(directory);
+  ensureDir(directory);
+  const archive = await fetchPinned(
+    CLANG.llvmSource,
+    context.downloadsDir,
+    `LLVM ${CLANG.llvmVersion} source`,
+  );
+  const member = `llvm-project-${CLANG.llvmVersion}.src/clang/tools/libclang`;
+  await runOrThrow([
+    "tar",
+    "-xJf",
+    archive,
+    "-C",
+    directory,
+    "--strip-components=4",
+    member,
+  ]);
+  markProvisioned(directory, CLANG.llvmSource.sha256);
+  return directory;
+}
+
+/**
+ * libclang's sources the host builds: all but its symbol-graph export, which
+ * includes a file LLVM's build generates and its release does not ship.
+ */
+const LIBCLANG_EXCLUDED = "CXExtractAPI.cpp";
+
+/** The functions libclang exports, less those of the sources left out. */
+function libclangExports(libclang: string): string[] {
+  // A definition starts its line; a call is indented in some body.
+  const excluded = new Set(
+    Array.from(
+      readFileSync(join(libclang, LIBCLANG_EXCLUDED), "utf8").matchAll(
+        /^\S.*?\b(clang_\w+)\(/gm,
+      ),
+      (match) => match[1],
+    ),
+  );
+  // The version script's comments name an example symbol.
+  const exported = readFileSync(join(libclang, "libclang.map"), "utf8")
+    .replace(/#.*$/gm, "")
+    .match(/\bclang_\w+(?=;)/g);
+  return [...new Set(exported)].filter((symbol) => !excluded.has(symbol));
+}
+
+/** LLVM's name for this machine's target. */
+const NATIVE_TARGET = process.arch === "arm64" ? "AArch64" : "X86";
+
+/**
+ * LLVM's lists of the targets it was built for, with this machine's alone,
+ * in a directory to search before the release's headers; returns it.
+ */
+function writeNativeTargetConfig(buildDir: string, llvm: string): string {
+  const directory = join(buildDir, "native-target");
+  const config = join("llvm", "Config");
+  ensureDir(join(directory, config));
+  for (const list of readdirSync(join(llvm, "include", config))) {
+    if (!list.endsWith(".def")) continue;
+    const lines = readFileSync(join(llvm, "include", config, list), "utf8")
+      .split("\n")
+      .filter(
+        (line) =>
+          !/^LLVM_\w+\(\w+\)$/.test(line) ||
+          line.includes(`(${NATIVE_TARGET})`),
+      );
+    writeFileSync(join(directory, config, list), lines.join("\n"));
+  }
+  return directory;
+}
+
 async function macosSdk(): Promise<string> {
   return (await runOrThrow(["xcrun", "--show-sdk-path"])).stdout.trim();
 }
@@ -208,6 +289,7 @@ async function buildHost(
   context: ProvisionContext,
   llvm: string,
   zstd: string,
+  libclang: string,
   sysroot: string | undefined,
 ): Promise<string> {
   const buildDir = join(context.workDir, "clang", "build");
@@ -277,16 +359,45 @@ async function buildHost(
     objects.push(object);
   }
 
+  // libclang, as LLVM builds it: its own warnings are LLVM's business. It
+  // initializes every target LLVM's configuration lists, and the host's Clang
+  // compiles for this machine's alone, so libclang is configured as an LLVM
+  // built for it would be.
+  const nativeConfig = writeNativeTargetConfig(buildDir, llvm);
+  for (const source of readdirSync(libclang).sort()) {
+    if (!source.endsWith(".cpp") || source === LIBCLANG_EXCLUDED) continue;
+    const object = join(buildDir, `libclang-${basename(source, ".cpp")}.o`);
+    await runOrThrow([
+      clangxx,
+      ...target,
+      "-I",
+      nativeConfig,
+      ...cxxflags,
+      "-O2",
+      "-I",
+      libclang,
+      "-c",
+      join(libclang, source),
+      "-o",
+      object,
+    ]);
+    objects.push(object);
+  }
+
   const host = join(buildDir, HOST);
   // What every platform's host exports, and on Linux the C runtime's
-  // emulated-TLS entry point, which the host answers for cells.
-  const exports = ["exports.txt", ...(IS_LINUX ? ["exports-linux.txt"] : [])]
-    .flatMap((list) =>
-      readFileSync(join(context.repoRoot, NATIVE_DIR, list), "utf8").split(
-        "\n",
-      ),
-    )
-    .filter(Boolean);
+  // emulated-TLS entry point, which the host answers for cells; and
+  // libclang's API, for cells to call.
+  const exports = [
+    ...["exports.txt", ...(IS_LINUX ? ["exports-linux.txt"] : [])]
+      .flatMap((list) =>
+        readFileSync(join(context.repoRoot, NATIVE_DIR, list), "utf8").split(
+          "\n",
+        ),
+      )
+      .filter(Boolean),
+    ...libclangExports(libclang),
+  ];
   const clangLibraries = readdirSync(join(llvm, "lib"))
     .filter((name) => /^libclang[A-Z]\w*\.a$/.test(name))
     .sort()
@@ -374,6 +485,8 @@ function assembleRuntime(
   chmodSync(join(root, "bin", HOST), 0o755);
   const resourceHeaders = join("lib", "clang", LLVM_MAJOR, "include");
   copyTree(join(llvm, resourceHeaders), join(root, resourceHeaders));
+  // libclang's headers, where cells' include path finds them.
+  copyTree(join(llvm, "include", "clang-c"), join(root, "include", "clang-c"));
   if (sysroot) {
     copyTree(join(llvm, "include", "c++"), join(root, "include", "c++"));
     copyTree(
@@ -461,6 +574,7 @@ export async function provisionClang(
     : [];
   const identity = [
     CLANG.llvm.sha256,
+    CLANG.llvmSource.sha256,
     CLANG.zstd.sha256,
     ...sysrootPins.map((pinned) => pinned.sha256),
     ...Object.values(CLANG.licenses).map((pinned) => pinned.sha256),
@@ -472,6 +586,7 @@ export async function provisionClang(
     const llvm = await provisionLlvm(context);
     const sysroot = await provisionSysroot(context);
     const zstd = await provisionZstd(context);
+    const libclang = await provisionLibclangSource(context);
     // The licences of everything the runtime ships or the host links.
     const licenses: Record<string, string> = {
       "zstd-LICENSE": join(zstd, "LICENSE"),
@@ -492,7 +607,7 @@ export async function provisionClang(
           pkg,
           "copyright",
         );
-    const host = await buildHost(context, llvm, zstd, sysroot?.build);
+    const host = await buildHost(context, llvm, zstd, libclang, sysroot?.build);
     await assertGlibcFloor(host, llvm);
     resetDirectory(root);
     assembleRuntime(root, host, llvm, sysroot, licenses);

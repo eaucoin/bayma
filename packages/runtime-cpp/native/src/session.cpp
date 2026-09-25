@@ -376,6 +376,8 @@ std::vector<std::string> compilerArgs(const SessionOptions &Options,
 #else
   Args.push_back("--sysroot=" + Options.Sysroot);
 #endif
+  // The payload's headers of the host's own libraries, libclang's among them.
+  Args.insert(Args.end(), {"-isystem", Options.Root + "/include"});
   Args.insert(Args.end(), {"-iquote", Options.Cwd, "-fno-color-diagnostics"});
   // The session's own settings come last, so they can override bayma's.
   Args.insert(Args.end(), Settings.CompilerArgs.begin(),
@@ -473,7 +475,7 @@ Session::create(const SessionOptions &Options, OutputCapture &Capture) {
     return llvm::joinErrors(std::move(Err),
                             llvm::createStringError(S->takeDiagnostics()));
   S->takeDiagnostics();
-  S->Rollback = std::make_unique<CellRollback>(Instance.getPreprocessor(),
+  S->Rollback = std::make_unique<CellRollback>(Instance.getSema(),
                                                Options.Lang == Language::Cxx);
   Printer->Rollback = S->Rollback.get();
   return S;
