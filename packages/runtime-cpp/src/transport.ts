@@ -30,6 +30,11 @@ export function createCppTransport(language: CppLanguage): RuntimeTransport {
         `--language=${language}`,
         ...(process.platform === "darwin" ? [`--sysroot=${macosSdk()}`] : []),
       ],
+      // As Apple's toolchain names the SDK to Clang, so the libclang cells
+      // call parses a project against it, as the project's build would.
+      ...(process.platform === "darwin"
+        ? { env: { SDKROOT: macosSdk() } }
+        : {}),
     }),
   });
 }
