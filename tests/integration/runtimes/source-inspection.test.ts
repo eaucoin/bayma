@@ -13,7 +13,7 @@ import {
 import type { RuntimeId } from "../../support/runtimes.ts";
 
 // Source and type inspection in C#, C, C++, Lean, and Go sessions, done the
-// way the bayma-toolbelt skill's Source And Type Inspection section says.
+// way each runtime skill's Source And Type Inspection section says.
 
 const EXEC_SETTLE_TIMEOUT_MS = 300_000;
 const toolbelt = join(process.env.BAYMA_PAYLOAD_DIR!, TOOLBELT_DIR);

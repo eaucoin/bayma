@@ -172,7 +172,7 @@ test.serial(
         JSON.parse(readFileSync(join(payload, "payload.json"), "utf8"))
           .platform,
       ).toBe(hostPlatformId());
-      // ...and linked its toolbelt where the bayma-toolbelt skill looks.
+      // ...and linked its toolbelt where the runtime skills look.
       expect(
         realpathSync(join(home, ".local", "share", "bayma", "toolbelt")),
       ).toBe(realpathSync(join(payload, "toolbelt")));

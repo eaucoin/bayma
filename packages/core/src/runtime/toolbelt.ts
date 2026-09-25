@@ -14,10 +14,10 @@ import { dataRoot, type PathEnvironment } from "../paths.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
 
 /**
- * The toolbelt: pinned Bun, Python, and Rust packages that the bayma-toolbelt
- * skill loads into sessions. It ships inside the payload, and one stable path
+ * The toolbelt: pinned Bun, Python, Rust, and C# packages that the runtime
+ * skills load into sessions. It ships inside the payload, and one stable path
  * under bayma's data root links to the newest installed payload's copy, so
- * the skill names a single path whatever versions a machine has installed.
+ * the skills name a single path whatever versions a machine has installed.
  */
 
 export const TOOLBELT_DIR = "toolbelt";

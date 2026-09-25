@@ -1,6 +1,6 @@
 ---
 name: bayma-runtime-dotnet-script
-description: Execute C# code interactively in a persistent bayma dotnet-script session; create and manage multiple sessions.
+description: Execute C# code interactively in a persistent bayma dotnet-script session; create and manage multiple sessions, and use its tools for code, repositories, and source and type inspection.
 ---
 
 # C# Runtime
@@ -91,3 +91,57 @@ Prefer direct .NET APIs over shelling out when an equivalent API exists. Keep se
 - Common namespaces including `System`, collections, IO, LINQ, reflection, text, JSON, and tasks are already in scope, and cwd-relative script references are supported.
 - For notebook-style multiline submissions, bayma may retry compilation after inserting semicolons at recognized statement boundaries, but ordinary C# meaning still governs ambiguous code.
 - When checkpointed recovery is active, bayma restores only JSON-serializable state written with `bayma_write_checkpoint(value)` across runtime replacement or server restart and makes it available through `bayma_read_checkpoint<T>()`, rather than reconstructing the complete Roslyn script state.
+
+## Reference Materials
+
+bayma's toolbelt gives C# sessions a pinned set of Roslyn assemblies, which a session references by path; they are ordinary assemblies, with no namespace of the toolbelt's own. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+
+The assemblies and XML documentation behind C# source and type inspection are under:
+
+```text
+<toolbelt>   = ~/.local/share/bayma/toolbelt
+<assemblies> = <toolbelt>/dotnet
+
+Microsoft.CodeAnalysis                     <assemblies>/Microsoft.CodeAnalysis.dll and .xml
+Microsoft.CodeAnalysis.CSharp              <assemblies>/Microsoft.CodeAnalysis.CSharp.dll and .xml
+Microsoft.CodeAnalysis.Workspaces          <assemblies>/Microsoft.CodeAnalysis.Workspaces.dll and .xml
+Microsoft.CodeAnalysis.CSharp.Workspaces   <assemblies>/Microsoft.CodeAnalysis.CSharp.Workspaces.dll and .xml
+Microsoft.CodeAnalysis.Workspaces.MSBuild  <assemblies>/Microsoft.CodeAnalysis.Workspaces.MSBuild.dll and .xml
+etc.
+```
+
+`<assemblies>/Toolbelt.csproj` and its `packages.lock.json` are the package set's authority. Its Roslyn is the one bayma's C# sessions already run cells on, so its compiler assemblies resolve to those the session has loaded.
+
+## Interactive Quickstart
+
+In a bayma C# session, reference the toolbelt's assemblies in the cell that first succeeds with them, since a cell that fails is rolled back with its references, and spell `<toolbelt>` out as an absolute path, since `#r` does not expand `~`:
+
+```csharp
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.CSharp.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.Workspaces.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.CSharp.Workspaces.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.Workspaces.MSBuild.dll"
+```
+
+You then have access to the tools the quickstart loads.
+
+These tools can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
+
+Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+
+## Repository Operations
+
+The toolbelt carries no Git library for C#. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `System.Diagnostics.Process`, which honors the repository's configuration and hooks.
+
+## Source And Type Inspection
+
+Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+
+Use Roslyn, the C# compiler's own API, for source and package API structure, semantics, and navigation. Load its assemblies as the quickstart does.
+
+Open a project or solution as its build sees it through `MSBuildWorkspace`, created over Roslyn's parts by name, since a script cannot let Roslyn discover them: `MSBuildWorkspace.Create(MefHostServices.Create(new[] { typeof(Workspace).Assembly, typeof(CSharpFormattingOptions).Assembly, typeof(MSBuildWorkspace).Assembly }))`, then `OpenProjectAsync()` or `OpenSolutionAsync()`. Work with `Solution`, `Project`, `Document`, `Compilation`, `SyntaxTree`, `SemanticModel`, `ISymbol`, `INamespaceSymbol`, `INamedTypeSymbol`, `IMethodSymbol`, `IPropertySymbol`, `IFieldSymbol`, `ITypeSymbol`, `IAssemblySymbol`, etc.; follow them through operations such as `project.GetCompilationAsync()`, `compilation.GetTypeByMetadataName()`, `compilation.GetSemanticModel()`, `model.GetDeclaredSymbol()`, `model.GetSymbolInfo()`, `model.GetTypeInfo()`, `symbol.GetMembers()`, `type.BaseType`, `type.AllInterfaces`, `symbol.GetDocumentationCommentXml()`, `symbol.DeclaringSyntaxReferences`, `compilation.GetDiagnostics()`, etc. A package's API is read through the same symbols, from the compilation's metadata references: `compilation.References`, `compilation.GetAssemblyOrModuleSymbol()`, `assembly.GlobalNamespace`, etc.
+
+Navigate with `SymbolFinder.FindReferencesAsync()`, `FindImplementationsAsync()`, `FindDerivedClassesAsync()`, `FindOverridesAsync()`, `FindCallersAsync()`, `FindSourceDeclarationsAsync()`, etc., over `workspace.CurrentSolution`. For objects live in the session, `System.Reflection` is the runtime truth: `GetType()`, `Type.GetMembers()`, `MethodInfo.GetParameters()`, `MemberInfo.GetCustomAttributes()`, etc.
+
+A `Solution` is an immutable snapshot of the workspace, and `MSBuildWorkspace` does not follow edits on disk: keep the workspace across calls, and open the project again after its files change.

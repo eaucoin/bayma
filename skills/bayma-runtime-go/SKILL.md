@@ -1,6 +1,6 @@
 ---
 name: bayma-runtime-go
-description: Execute Go code interactively in a persistent bayma Go session; create and manage multiple sessions.
+description: Execute Go code interactively in a persistent bayma Go session; create and manage multiple sessions, and use its tools for code, repositories, and source and type inspection.
 ---
 
 # Go Runtime
@@ -93,3 +93,51 @@ Modules come through the Go module proxy, and a module's version is fixed once t
 - The first session on a machine compiles Go's standard library for its cells, once, so it starts slowly.
 - Goroutines a cell starts keep running, but output written while no cell runs is dropped, and a panic that escapes one ends the host and quarantines the session: recover inside the goroutines a cell starts.
 - When checkpointed recovery is active, bayma preserves only the JSON-compatible value written with `bayma_write_checkpoint(value)`, read back with `bayma_read_checkpoint(&value)`, and never replays earlier calls or their side effects.
+
+## Reference Materials
+
+Go sessions need nothing from the toolbelt: their tools come with the runtime. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+
+Go's own parser, type checker, and documentation reader are its standard library's, shipped with the Go the session runs:
+
+```text
+<goroot> = $GOROOT in the session
+
+go/ast, go/build, go/doc, go/importer, go/parser, go/token, go/types  <goroot>/src/go/<package>/**
+```
+
+## Interactive Quickstart
+
+In a bayma Go session, import the packages; they come with the Go the session runs, and there is nothing else to load:
+
+```go
+import (
+	"go/ast"
+	"go/build"
+	"go/doc"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+)
+```
+
+You then have access to the tools the quickstart loads.
+
+These tools, with the language's own standard library, can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
+
+Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+
+## Repository Operations
+
+The toolbelt carries no Git library for Go. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `os/exec`, as `exec.Command("git", …)`, which honors the repository's configuration and hooks.
+
+## Source And Type Inspection
+
+Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+
+Use the standard library's `go/*` packages, Go's own parser, type checker, and documentation reader, which `go vet`, `gofmt`, and gopls are built on: they come with the Go the session runs, imported as the quickstart does. Find a package's files through `go/build` (`build.Import()`, `build.ImportDir()`, `Package.GoFiles`, etc.), parse them with `go/parser` (`parser.ParseFile()` with `parser.ParseComments`, etc.) into `go/ast` (`ast.File`, `ast.GenDecl`, `ast.FuncDecl`, `ast.TypeSpec`, `ast.Inspect()`, etc.), and type-check them with `go/types` over `importer.ForCompiler(fset, "source", nil)`, which reads every dependency from its module's source: `types.Config.Check()`, `types.Package`, `types.Scope`, `types.Object`, `types.TypeName`, `types.Func`, `types.Named`, `types.Signature`, `types.Struct`, `types.Interface`, `types.Info`, `types.Implements()`, `types.NewMethodSet()`, `types.TypeString()`, etc. Read documentation with `go/doc`: `doc.NewFromFiles()`, `doc.Package`, `doc.Type`, `doc.Func`, etc.
+
+Navigate through the `types.Info` a check fills: `Defs` maps each declaring identifier to its object, `Uses` each referring one, and `Types`, `Implicits`, and `Selections` the rest, so the uses of an object are the identifiers `Uses` maps to it, across every package checked with the same `token.FileSet` and importer.
+
+Keep the `token.FileSet`, the checked packages, and their `types.Info` together, across calls: positions and objects mean something only to the file set and the check that made them.

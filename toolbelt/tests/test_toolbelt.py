@@ -16,9 +16,9 @@ from unittest.mock import patch
 import bayma_toolbelt as subject
 import bayma_toolbelt_process
 
-# The skill that documents this toolbelt, beside it in the repository; its
-# examples must run against it.
-SKILL_DOC = Path(__file__).resolve().parents[2] / "skills/bayma-toolbelt/SKILL.md"
+# The skill that documents this toolbelt's Python side, beside it in the
+# repository; its examples must run against it.
+SKILL_DOC = Path(__file__).resolve().parents[2] / "skills/bayma-runtime-python/SKILL.md"
 
 
 def make_committed_repository(root: Path) -> Path:
@@ -124,7 +124,7 @@ class InterpreterContractTest(unittest.TestCase):
     def test_documented_python_quickstart_executes_verbatim(self) -> None:
         skill = SKILL_DOC.read_text(encoding="utf-8")
         matched = re.search(
-            r"### Python\n\nIn a bayma Python session:\n\n"
+            r"## Interactive Quickstart\n\nIn a bayma Python session:\n\n"
             r"```python\n(.*?)\n```",
             skill,
             flags=re.DOTALL,

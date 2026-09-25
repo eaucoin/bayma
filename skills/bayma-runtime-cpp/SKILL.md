@@ -1,6 +1,6 @@
 ---
 name: bayma-runtime-cpp
-description: Execute C++ code interactively in a persistent bayma clang-repl session; create and manage multiple sessions.
+description: Execute C++ code interactively in a persistent bayma clang-repl session; create and manage multiple sessions, and use its tools for code, repositories, and source and type inspection.
 ---
 
 # C++ Runtime
@@ -95,3 +95,50 @@ Quoted `#include` paths resolve from the session working directory. Keep secrets
 - If an exec crashes the process, throws an uncaught exception, or exits, the exec ends with an error and the session continues in a fresh interpreter, keeping its checkpoint but losing its definitions and values; an interrupt does the same.
 - Output written by threads after an exec returns is discarded, so join threads before a cell returns.
 - When checkpointed recovery is active, bayma preserves only JSON text written with `bayma_write_checkpoint(json)` and read with `bayma_read_checkpoint()`, and never replays earlier calls or their side effects.
+
+## Reference Materials
+
+C++ sessions need nothing from the toolbelt: their tools come with the runtime. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+
+libclang is part of bayma's C and C++ runtimes, built from the LLVM release's own source into the host that runs the session's cells; its API is documented in its headers:
+
+```text
+<clang> = the parent of the directory holding $BAYMA_CPP_HOST_BIN
+
+libclang  <clang>/include/clang-c/*.h (Index.h, CXCompilationDatabase.h, Documentation.h, etc.)
+```
+
+## Interactive Quickstart
+
+In a bayma C++ session, include libclang's headers; there is nothing else to load:
+
+```cpp
+#include <clang-c/Index.h>
+#include <clang-c/CXCompilationDatabase.h>
+```
+
+You then have access to the tools the quickstart loads.
+
+These tools, with the language's own standard library, can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
+
+Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+
+## Repository Operations
+
+The toolbelt carries no Git library for C++. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `posix_spawnp()`, or `popen()` when the command's output is what is wanted, which honors the repository's configuration and hooks.
+
+## Source And Type Inspection
+
+Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+
+Use libclang, Clang's stable C API for tooling, which bayma's C and C++ runtimes carry: the same Clang that compiles the session's cells, so a project parses exactly as it would build with it. Include its headers as the quickstart does.
+
+Parse a project's files with its own compile commands: open its `compile_commands.json` with `clang_CompilationDatabase_fromDirectory()`, take a file's command, by its absolute path, from `clang_CompilationDatabase_getCompileCommands()`, and parse from the command's directory with `clang_parseTranslationUnit2FullArgv()`, passing the command's arguments with `argv[0]` replaced by `getenv("BAYMA_CPP_HOST_BIN")`, the Clang this runtime is, so that Clang's resource headers and libc++ resolve as they do for cells. Without a compilation database, pass the arguments its build or `compile_flags.txt` would.
+
+Work with `CXIndex`, `CXTranslationUnit`, `CXCursor`, `CXType`, `CXFile`, `CXSourceLocation`, `CXSourceRange`, `CXComment`, `CXDiagnostic`, etc.; traverse through `clang_getTranslationUnitCursor()` and `clang_visitChildren()`, and inspect through `clang_getCursorKind()`, `clang_getCursorSpelling()`, `clang_getCursorType()`, `clang_getCanonicalType()`, `clang_getTypeSpelling()`, `clang_getCursorUSR()`, `clang_Cursor_getBriefCommentText()`, `clang_Cursor_getParsedComment()`, `clang_Cursor_getArgument()`, `clang_getCursorDefinition()`, `clang_getCursorReferenced()`, `clang_getCursorSemanticParent()`, `clang_Location_isInSystemHeader()`, etc. Navigate with `clang_findReferencesInFile()`, `clang_findIncludesInFile()`, `clang_getInclusions()`, and, over a whole translation unit, the indexer (`clang_IndexAction_create()` and `clang_indexTranslationUnit()` with `IndexerCallbacks`), whose USRs name one entity across every file and translation unit; read problems through `clang_getNumDiagnostics()` and `clang_formatDiagnostic()`.
+
+Beyond these cursors, types, and navigation, follow C++'s structure through `CXCursor_Namespace`, `CXCursor_ClassDecl`, `CXCursor_CXXBaseSpecifier`, `CXCursor_CXXMethod`, `CXCursor_FunctionTemplate`, `CXCursor_ClassTemplate`, etc., and operations such as `clang_getCursorDisplayName()`, `clang_getCXXAccessSpecifier()`, `clang_CXXMethod_isVirtual()`, `clang_CXXMethod_isPureVirtual()`, `clang_CXXMethod_isConst()`, `clang_CXXMethod_isStatic()`, `clang_getOverriddenCursors()`, `clang_getSpecializedCursorTemplate()`, `clang_getTemplateCursorKind()`, `clang_Type_getNumTemplateArguments()`, `clang_Type_getTemplateArgumentAsType()`, `clang_Type_getNamedType()`, etc.; USRs distinguish overloads and specializations, and connect a method to what it overrides.
+
+Keep the index and translation units in the session, and reparse with `clang_reparseTranslationUnit()` after files change. libclang reports file names as the compile command spells them, relative to its directory.
+
+Wrap libclang's handles in owning C++ values, a `CXString` copied into a `std::string` and a translation unit released by its owner, and keep those across calls.

@@ -1,6 +1,6 @@
 ---
 name: bayma-runtime-lean
-description: Execute Lean 4 commands interactively in a persistent bayma Lean session; create and manage multiple sessions.
+description: Execute Lean 4 commands interactively in a persistent bayma Lean session; create and manage multiple sessions, and use its tools for code, repositories, and source and type inspection.
 ---
 
 # Lean Runtime
@@ -92,3 +92,45 @@ A Lake project in the session working directory supplies its libraries, such as 
 - Warnings go to stderr and errors to the exec's error, each with its `line:column`; a command that fails leaves the commands after it to run, and the exec ends in error.
 - An interrupt restarts the session, since nothing stops Lean's elaborator from outside it.
 - When checkpointed recovery is active, bayma restores everything the session declared, with its open namespaces, options, and variables, and never replays earlier calls or their side effects.
+
+## Reference Materials
+
+Lean sessions need nothing from the toolbelt: their tools come with the runtime. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+
+Lean's metaprogramming API is Lean's own source, shipped with the Lean the session runs:
+
+```text
+<sysroot> = what Lean.findSysroot returns in the session
+
+Lean  <sysroot>/src/lean/Lean/** (Environment.lean, Meta/**, Server/**, etc.)
+Init  <sysroot>/src/lean/Init/**
+```
+
+## Interactive Quickstart
+
+In a bayma Lean session, import Lean in the session's first cell, where imports belong; there is nothing else to install:
+
+```lean
+import Lean
+open Lean Meta
+```
+
+You then have access to the tools the quickstart loads.
+
+These tools, with the language's own standard library, can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
+
+Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+
+## Repository Operations
+
+The toolbelt carries no Git library for Lean. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `IO.Process.output` or `IO.Process.spawn`, which honors the repository's configuration and hooks.
+
+## Source And Type Inspection
+
+Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+
+Use Lean's own metaprogramming API, which the language server, `#check`, and `#print` are built on, imported as the quickstart does. Work with `Environment`, `ConstantInfo`, `Expr`, `Name`, `DeclarationRanges`, `ModuleIdx`, etc.; follow them through `getEnv`, `env.find?`, `env.contains`, `env.constants`, `env.getModuleIdxFor?`, `env.header.moduleNames`, `ConstantInfo.type`, `ConstantInfo.value?`, `findDocString?`, `findDeclarationRanges?`, `getStructureFields`, `isInstance`, `collectAxioms`, etc., and read types in `MetaM` through `inferType`, `whnf`, `forallTelescope`, `isDefEq`, `ppExpr`, etc., run from a cell with `#eval show MetaM Unit from do …`. `#check`, `#print`, `#print axioms`, and `#synth` answer single questions directly.
+
+For references, read the `.ilean` files Lake writes beside each built module, under a project's `.lake/build/lib/lean/`, and the toolchain's own beside its `.olean`s, with `Lean.Server.Ilean.load`; follow `ilean.references` from each `RefIdent` to its `RefInfo`, whose `definition?` and `usages` locate the name's definition and uses, etc.
+
+What the session itself declares is in its environment but in no `.ilean`: find references among its cells through the environment, and across a project through its built modules, which `lake build` refreshes after its source changes.

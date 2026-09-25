@@ -13,7 +13,7 @@ import {
 import type { RuntimeId } from "../../support/runtimes.ts";
 
 // The toolbelt the payload carries, loaded in real sessions the way the
-// bayma-toolbelt skill's quickstarts load it.
+// runtime skills' quickstarts load it.
 
 const EXEC_SETTLE_TIMEOUT_MS = 300_000;
 const toolbelt = join(process.env.BAYMA_PAYLOAD_DIR!, TOOLBELT_DIR);

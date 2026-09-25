@@ -29,7 +29,7 @@ import {
 // payload.
 
 const SOURCE = "toolbelt";
-const SKILL = join("skills", "bayma-toolbelt", "SKILL.md");
+const SKILL = join("skills", "bayma-runtime-python", "SKILL.md");
 /**
  * What the payload does not carry: the tests that prove the toolbelt, and
  * what building and proving it leave behind.

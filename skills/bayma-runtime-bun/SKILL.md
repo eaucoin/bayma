@@ -1,6 +1,6 @@
 ---
 name: bayma-runtime-bun
-description: Execute JavaScript or TypeScript code interactively in a persistent bayma Bun session; create and manage multiple sessions.
+description: Execute JavaScript or TypeScript code interactively in a persistent bayma Bun session; create and manage multiple sessions, and use its tools for code, repositories, and source and type inspection.
 ---
 
 # Bun Runtime
@@ -90,3 +90,73 @@ If imports fail, the session may simply be pointed at the wrong package tree; th
 - Bun sessions run JavaScript or TypeScript with live bindings across calls and expose `Bun.*`, `fetch`, top-level `await`, dynamic imports, `require`, `module`, `__filename`, `__dirname`, and packages resolved from the session working directory.
 - A non-`undefined` final value is returned as result text and stored in `_`, while a thrown value is stored in `_error`; console and value rendering are bounded, so very large or unsafe-to-inspect values may be abbreviated.
 - When checkpointed recovery is active, bayma restores only `$checkpoint` across runtime replacement or server restart using its structured-clone codec and never replays earlier calls or their side effects.
+
+## Reference Materials
+
+bayma's toolbelt gives Bun sessions a pinned set of packages, gathered into one `toolbelt` namespace. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This section shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+
+The source, types, and documentation behind the Bun `toolbelt` namespace are under:
+
+```text
+<toolbelt> = ~/.local/share/bayma/toolbelt
+<packages> = <toolbelt>/node_modules
+
+toolbelt.simpleGit        <packages>/simple-git/** (bound to the enclosing repository)
+toolbelt.astGrep.napi     <packages>/@ast-grep/napi/**
+toolbelt.astGrep.python   <packages>/@ast-grep/lang-python/**
+toolbelt.manypkg          <packages>/@manypkg/get-packages/**
+toolbelt.ripgrep          <packages>/@vscode/ripgrep/**
+toolbelt.diff             <packages>/diff/**
+toolbelt.editorconfig     <packages>/editorconfig/**
+toolbelt.execa            <packages>/execa/**
+toolbelt.xml              <packages>/fast-xml-parser/**
+toolbelt.globby           <packages>/globby/**
+toolbelt.isBinaryFile     <packages>/isbinaryfile/**
+toolbelt.jsonc            <packages>/jsonc-parser/**
+toolbelt.lruCache         <packages>/lru-cache/**
+toolbelt.markdown         <packages>/mdast-util-from-markdown/**
+toolbelt.pMap             <packages>/p-map/**
+toolbelt.remeda           <packages>/remeda/**
+toolbelt.toml             <packages>/smol-toml/**
+toolbelt.tsMorph          <packages>/ts-morph/**
+toolbelt.vitest           <packages>/vitest/**
+toolbelt.writeFileAtomic  <packages>/write-file-atomic/**
+toolbelt.yaml             <packages>/yaml/**
+```
+
+The Bun helper that assembles this namespace is `<toolbelt>/toolbelt.ts`.
+
+Package-backed `toolbelt.*` surfaces expose ordinary modules and clients. `toolbelt.vitest.run` starts Vitest in Node from the project's own install, since Vitest cannot start under Bun, and returns its JSON report; `toolbelt.simpleGit` is bound to the enclosing repository.
+
+## Interactive Quickstart
+
+In a bayma Bun session:
+
+```ts
+const toolbeltRoot = `${process.env.XDG_DATA_HOME || `${process.env.HOME}/.local/share`}/bayma/toolbelt`;
+Object.assign(
+  globalThis,
+  await (await import(`${toolbeltRoot}/toolbelt.ts`)).openToolbelt(),
+);
+undefined;
+```
+
+`repoRoot` is the Git repository containing the session's working directory, or `null` outside one, in which case `toolbelt.simpleGit` is absent.
+
+You then have access to the tools the quickstart loads.
+
+These tools can be used together in the same REPL to adeptly discover, inspect, parse, search, create, patch, rewrite, copy, move, rename, change permissions, safely remove, and otherwise work with whatever you would like.
+
+Avoid Bash, terminal commands, and spawned processes when an available package API models the work more directly, clearly, and reliably in the REPL.
+
+## Repository Operations
+
+Use the ordinary Git libraries below for repository inspection and staging. Commits, merges, and pushes should run a repository's own Git hooks; the libraries differ in whether they do, so the choice below keeps those operations on real Git.
+
+Use the repository-bound `toolbelt.simpleGit` client for inspection, staging, commits, merges, and pushes. simple-git drives the `git` executable, so every operation honors the repository's configuration and hooks.
+
+## Source And Type Inspection
+
+Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+
+Use ts-morph through `toolbelt.tsMorph` to ground package and repository API understanding in source and type declarations. Work with exports such as `toolbelt.tsMorph.Project`, `toolbelt.tsMorph.SourceFile`, `toolbelt.tsMorph.ClassDeclaration`, `toolbelt.tsMorph.FunctionDeclaration`, `toolbelt.tsMorph.InterfaceDeclaration`, `toolbelt.tsMorph.TypeAliasDeclaration`, `toolbelt.tsMorph.EnumDeclaration`, `toolbelt.tsMorph.VariableDeclaration`, `toolbelt.tsMorph.ModuleDeclaration`, etc.; follow the declaration, symbol, and type objects returned by those APIs through operations such as `sourceFile.getExportedDeclarations()`, `declaration.getSymbol()`, `declaration.getType()`, `type.getCallSignatures()`, `signature.getReturnType()`, `declaration.findReferences()`, etc.
