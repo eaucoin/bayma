@@ -86,10 +86,10 @@ directory the client launched from.
 
 The toolbelt is baked into bayma's setup: bayma installs it with its runtimes,
 at `~/.local/share/bayma/toolbelt`, from the same archive and at the same
-pinned versions. It gives every session pinned Bun, Python, and Rust packages
-for discovering, searching, parsing, editing, and testing code, and the
-`bayma-toolbelt` skill teaches an agent to load them into a session and work
-with them.
+pinned versions. It gives every session pinned Bun, Python, Rust, and C#
+packages for discovering, searching, parsing, editing, and testing code, and
+the `bayma-toolbelt` skill teaches an agent to load them into a session and
+work with them.
 
 ## Platforms
 

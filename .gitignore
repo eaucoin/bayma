@@ -4,6 +4,7 @@ dist
 *.log
 *.tmp
 packages/runtime-rust/native/target/
+toolbelt/dotnet/obj/
 __pycache__/
 .env
 .env.*

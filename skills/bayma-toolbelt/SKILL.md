@@ -5,7 +5,7 @@ description: Mandatory essential tools for working on this project.
 
 # bayma-toolbelt
 
-Each quickstart below loads a pinned set of packages into a bayma session: Bun and Python gather theirs into one `toolbelt` namespace, and Rust declares its crates directly. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This skill shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+Each quickstart below loads a pinned set of packages into a bayma session: Bun and Python gather theirs into one `toolbelt` namespace, and Rust declares its crates directly. C# references the toolbelt's Roslyn assemblies by path, and C, C++, Lean, and Go inspect source with what their runtimes already carry. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. This skill shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 ## Reference Materials
 
@@ -124,6 +124,55 @@ etc.
 Declare the exact packages needed with ordinary EVcxR `:dep` directives using the versions and feature sets in `<manifest>`, then use each crate's native types, traits, functions, and documentation directly. `<manifest>` is the package-set authority and deliberately exports no replacement API; the packages are never re-exported behind a toolbelt namespace.
 
 bayma supplies the exact Rust 1.97.1 compiler and Cargo. A crate's source appears under `<packages>` the first time any bayma session declares it, and later sessions reuse it along with bayma's compile cache. Each Rust session begins with `:lockfile ~/.local/share/bayma/toolbelt/Cargo.lock`, so Cargo keeps every version `Cargo.lock` records, yanked releases included, and the session builds the graph this package set is tested against. Without it Cargo resolves each `:dep` fresh, and transitive dependencies drift to releases the lock does not record.
+
+### C#
+
+The assemblies and XML documentation behind C# source and type inspection are under:
+
+```text
+<toolbelt>   = ~/.local/share/bayma/toolbelt
+<assemblies> = <toolbelt>/dotnet
+
+Microsoft.CodeAnalysis                     <assemblies>/Microsoft.CodeAnalysis.dll and .xml
+Microsoft.CodeAnalysis.CSharp              <assemblies>/Microsoft.CodeAnalysis.CSharp.dll and .xml
+Microsoft.CodeAnalysis.Workspaces          <assemblies>/Microsoft.CodeAnalysis.Workspaces.dll and .xml
+Microsoft.CodeAnalysis.CSharp.Workspaces   <assemblies>/Microsoft.CodeAnalysis.CSharp.Workspaces.dll and .xml
+Microsoft.CodeAnalysis.Workspaces.MSBuild  <assemblies>/Microsoft.CodeAnalysis.Workspaces.MSBuild.dll and .xml
+etc.
+```
+
+`<assemblies>/Toolbelt.csproj` and its `packages.lock.json` are the package set's authority. Its Roslyn is the one bayma's C# sessions already run cells on, so its compiler assemblies resolve to those the session has loaded.
+
+### C and C++
+
+libclang is part of bayma's C and C++ runtimes, built from the LLVM release's own source into the host that runs the session's cells; its API is documented in its headers:
+
+```text
+<clang> = the parent of the directory holding $BAYMA_C_HOST_BIN or $BAYMA_CPP_HOST_BIN
+
+libclang  <clang>/include/clang-c/*.h (Index.h, CXCompilationDatabase.h, Documentation.h, etc.)
+```
+
+### Lean
+
+Lean's metaprogramming API is Lean's own source, shipped with the Lean the session runs:
+
+```text
+<sysroot> = what Lean.findSysroot returns in the session
+
+Lean  <sysroot>/src/lean/Lean/** (Environment.lean, Meta/**, Server/**, etc.)
+Init  <sysroot>/src/lean/Init/**
+```
+
+### Go
+
+Go's own parser, type checker, and documentation reader are its standard library's, shipped with the Go the session runs:
+
+```text
+<goroot> = $GOROOT in the session
+
+go/ast, go/build, go/doc, go/importer, go/parser, go/token, go/types  <goroot>/src/go/<package>/**
+```
 
 ## Interactive Quickstart
 
@@ -277,4 +326,56 @@ Use `ra_ap_hir` for semantic package and API structure over a configured rust-an
 
 Use `ra_ap_ide::AnalysisHost` and its immutable `Analysis` snapshots for repository navigation and IDE-grade queries. Work with `ra_ap_ide::AnalysisHost`, `Analysis`, `FileId`, `FilePosition`, `FileRange`, `NavigationTarget`, `RangeInfo`, `HoverResult`, `CompletionItem`, `Diagnostic`, `Assist`, `SourceChange`, `TextEdit`, etc.; query through `parse()`, `file_structure()`, `crates_for()`, `goto_definition()`, `goto_declaration()`, `goto_implementation()`, `goto_type_definition()`, `find_all_refs()`, `hover()`, `signature_help()`, `call_hierarchy()`, `completions()`, `full_diagnostics()`, `rename()`, `assists_with_fixes()`, `structural_search_replace()`, `expand_macro()`, etc. Use `ra_ap_base_db` and `ra_ap_cfg` only to supply explicit files, source roots, crate graphs, editions, environments, and cfg options to the retained native `AnalysisHost`; they are project-input plumbing rather than additional source-inspection frameworks. Retain owned hosts, snapshots, paths, and results across EVcxR calls rather than references into earlier bindings.
 
-Package-backed `toolbelt.*` surfaces expose ordinary modules and clients. Bun's `toolbelt.vitest.run` starts Vitest in Node from the project's own install, since Vitest cannot start under Bun, and returns its JSON report; `toolbelt.simpleGit` is bound to the enclosing repository. Python additionally exposes a genuine Dulwich `Repo` bound to the enclosing repository, and bounded helpers for atomic writes, package-root discovery, isolated pytest and Ruff execution, project-owned uv execution, and focused in-process `unittest` execution. Rust exposes ordinary pinned crates directly.
+### C#
+
+Use Roslyn, the C# compiler's own API, for source and package API structure, semantics, and navigation. Reference its assemblies from the toolbelt, in the cell that first succeeds with them:
+
+```csharp
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.CSharp.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.Workspaces.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.CSharp.Workspaces.dll"
+#r "<toolbelt>/dotnet/Microsoft.CodeAnalysis.Workspaces.MSBuild.dll"
+```
+
+Open a project or solution as its build sees it through `MSBuildWorkspace`, created over Roslyn's parts by name, since a script cannot let Roslyn discover them: `MSBuildWorkspace.Create(MefHostServices.Create(new[] { typeof(Workspace).Assembly, typeof(CSharpFormattingOptions).Assembly, typeof(MSBuildWorkspace).Assembly }))`, then `OpenProjectAsync()` or `OpenSolutionAsync()`. Work with `Solution`, `Project`, `Document`, `Compilation`, `SyntaxTree`, `SemanticModel`, `ISymbol`, `INamespaceSymbol`, `INamedTypeSymbol`, `IMethodSymbol`, `IPropertySymbol`, `IFieldSymbol`, `ITypeSymbol`, `IAssemblySymbol`, etc.; follow them through operations such as `project.GetCompilationAsync()`, `compilation.GetTypeByMetadataName()`, `compilation.GetSemanticModel()`, `model.GetDeclaredSymbol()`, `model.GetSymbolInfo()`, `model.GetTypeInfo()`, `symbol.GetMembers()`, `type.BaseType`, `type.AllInterfaces`, `symbol.GetDocumentationCommentXml()`, `symbol.DeclaringSyntaxReferences`, `compilation.GetDiagnostics()`, etc. A package's API is read through the same symbols, from the compilation's metadata references: `compilation.References`, `compilation.GetAssemblyOrModuleSymbol()`, `assembly.GlobalNamespace`, etc.
+
+Navigate with `SymbolFinder.FindReferencesAsync()`, `FindImplementationsAsync()`, `FindDerivedClassesAsync()`, `FindOverridesAsync()`, `FindCallersAsync()`, `FindSourceDeclarationsAsync()`, etc., over `workspace.CurrentSolution`. For objects live in the session, `System.Reflection` is the runtime truth: `GetType()`, `Type.GetMembers()`, `MethodInfo.GetParameters()`, `MemberInfo.GetCustomAttributes()`, etc.
+
+A `Solution` is an immutable snapshot of the workspace, and `MSBuildWorkspace` does not follow edits on disk: keep the workspace across calls, and open the project again after its files change.
+
+### C
+
+Use libclang, Clang's stable C API for tooling, which bayma's C and C++ runtimes carry: the same Clang that compiles the session's cells, so a project parses exactly as it would build with it. Include `<clang-c/Index.h>` and `<clang-c/CXCompilationDatabase.h>`; there is nothing to load.
+
+Parse a project's files with its own compile commands: open its `compile_commands.json` with `clang_CompilationDatabase_fromDirectory()`, take a file's command, by its absolute path, from `clang_CompilationDatabase_getCompileCommands()`, and parse from the command's directory with `clang_parseTranslationUnit2FullArgv()`, passing the command's arguments with `argv[0]` replaced by `getenv("BAYMA_C_HOST_BIN")`, the Clang this runtime is, so that Clang's own headers resolve as they do for cells. Without a compilation database, pass the arguments its build or `compile_flags.txt` would.
+
+Work with `CXIndex`, `CXTranslationUnit`, `CXCursor`, `CXType`, `CXFile`, `CXSourceLocation`, `CXSourceRange`, `CXComment`, `CXDiagnostic`, etc.; traverse through `clang_getTranslationUnitCursor()` and `clang_visitChildren()`, and inspect through `clang_getCursorKind()`, `clang_getCursorSpelling()`, `clang_getCursorType()`, `clang_getCanonicalType()`, `clang_getTypeSpelling()`, `clang_getCursorUSR()`, `clang_Cursor_getBriefCommentText()`, `clang_Cursor_getParsedComment()`, `clang_Cursor_getArgument()`, `clang_getCursorDefinition()`, `clang_getCursorReferenced()`, `clang_getCursorSemanticParent()`, `clang_Location_isInSystemHeader()`, etc. Navigate with `clang_findReferencesInFile()`, `clang_findIncludesInFile()`, `clang_getInclusions()`, and, over a whole translation unit, the indexer (`clang_IndexAction_create()` and `clang_indexTranslationUnit()` with `IndexerCallbacks`), whose USRs name one entity across every file and translation unit; read problems through `clang_getNumDiagnostics()` and `clang_formatDiagnostic()`.
+
+Keep the index and translation units in the session, and reparse with `clang_reparseTranslationUnit()` after files change. libclang reports file names as the compile command spells them, relative to its directory; copy what a `CXString` holds before `clang_disposeString()` releases it.
+
+### C++
+
+Use libclang as in C, from a C++ session: include `<clang-c/Index.h>` and `<clang-c/CXCompilationDatabase.h>`, and parse with a compile command's arguments and `argv[0]` replaced by `getenv("BAYMA_CPP_HOST_BIN")`, so that Clang's resource headers and libc++ resolve as they do for cells.
+
+Beyond the C cursors, types, and navigation, follow C++'s structure through `CXCursor_Namespace`, `CXCursor_ClassDecl`, `CXCursor_CXXBaseSpecifier`, `CXCursor_CXXMethod`, `CXCursor_FunctionTemplate`, `CXCursor_ClassTemplate`, etc., and operations such as `clang_getCursorDisplayName()`, `clang_getCXXAccessSpecifier()`, `clang_CXXMethod_isVirtual()`, `clang_CXXMethod_isPureVirtual()`, `clang_CXXMethod_isConst()`, `clang_CXXMethod_isStatic()`, `clang_getOverriddenCursors()`, `clang_getSpecializedCursorTemplate()`, `clang_getTemplateCursorKind()`, `clang_Type_getNumTemplateArguments()`, `clang_Type_getTemplateArgumentAsType()`, `clang_Type_getNamedType()`, etc.; USRs distinguish overloads and specializations, and connect a method to what it overrides.
+
+Wrap libclang's handles in owning C++ values, a `CXString` copied into a `std::string` and a translation unit released by its owner, and keep those across calls.
+
+### Lean
+
+Use Lean's own metaprogramming API, which the language server, `#check`, and `#print` are built on: `import Lean` in the session's first cell loads it, and there is nothing else to install. Work with `Environment`, `ConstantInfo`, `Expr`, `Name`, `DeclarationRanges`, `ModuleIdx`, etc.; follow them through `getEnv`, `env.find?`, `env.contains`, `env.constants`, `env.getModuleIdxFor?`, `env.header.moduleNames`, `ConstantInfo.type`, `ConstantInfo.value?`, `findDocString?`, `findDeclarationRanges?`, `getStructureFields`, `isInstance`, `collectAxioms`, etc., and read types in `MetaM` through `inferType`, `whnf`, `forallTelescope`, `isDefEq`, `ppExpr`, etc., run from a cell with `#eval show MetaM Unit from do …`. `#check`, `#print`, `#print axioms`, and `#synth` answer single questions directly.
+
+For references, read the `.ilean` files Lake writes beside each built module, under a project's `.lake/build/lib/lean/`, and the toolchain's own beside its `.olean`s, with `Lean.Server.Ilean.load`; follow `ilean.references` from each `RefIdent` to its `RefInfo`, whose `definition?` and `usages` locate the name's definition and uses, etc.
+
+What the session itself declares is in its environment but in no `.ilean`: find references among its cells through the environment, and across a project through its built modules, which `lake build` refreshes after its source changes.
+
+### Go
+
+Use the standard library's `go/*` packages, Go's own parser, type checker, and documentation reader, which `go vet`, `gofmt`, and gopls are built on: they come with the Go the session runs, so importing them is all there is to load. Find a package's files through `go/build` (`build.Import()`, `build.ImportDir()`, `Package.GoFiles`, etc.), parse them with `go/parser` (`parser.ParseFile()` with `parser.ParseComments`, etc.) into `go/ast` (`ast.File`, `ast.GenDecl`, `ast.FuncDecl`, `ast.TypeSpec`, `ast.Inspect()`, etc.), and type-check them with `go/types` over `importer.ForCompiler(fset, "source", nil)`, which reads every dependency from its module's source: `types.Config.Check()`, `types.Package`, `types.Scope`, `types.Object`, `types.TypeName`, `types.Func`, `types.Named`, `types.Signature`, `types.Struct`, `types.Interface`, `types.Info`, `types.Implements()`, `types.NewMethodSet()`, `types.TypeString()`, etc. Read documentation with `go/doc`: `doc.NewFromFiles()`, `doc.Package`, `doc.Type`, `doc.Func`, etc.
+
+Navigate through the `types.Info` a check fills: `Defs` maps each declaring identifier to its object, `Uses` each referring one, and `Types`, `Implicits`, and `Selections` the rest, so the uses of an object are the identifiers `Uses` maps to it, across every package checked with the same `token.FileSet` and importer.
+
+Keep the `token.FileSet`, the checked packages, and their `types.Info` together, across calls: positions and objects mean something only to the file set and the check that made them.
+
+Package-backed `toolbelt.*` surfaces expose ordinary modules and clients. Bun's `toolbelt.vitest.run` starts Vitest in Node from the project's own install, since Vitest cannot start under Bun, and returns its JSON report; `toolbelt.simpleGit` is bound to the enclosing repository. Python additionally exposes a genuine Dulwich `Repo` bound to the enclosing repository, and bounded helpers for atomic writes, package-root discovery, isolated pytest and Ruff execution, project-owned uv execution, and focused in-process `unittest` execution. Rust exposes ordinary pinned crates directly, and C# ordinary pinned assemblies.

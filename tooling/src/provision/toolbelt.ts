@@ -24,8 +24,9 @@ import {
 } from "./payload.ts";
 
 // The toolbelt: the repository's `toolbelt/` package with its Bun, Python,
-// and Rust dependencies installed from their lockfiles against the payload's
-// own runtimes, proven by its tests, and stripped of them for the payload.
+// Rust, and C# dependencies installed from their lockfiles against the
+// payload's own runtimes, proven by its tests, and stripped of them for the
+// payload.
 
 const SOURCE = "toolbelt";
 const SKILL = join("skills", "bayma-toolbelt", "SKILL.md");
@@ -38,6 +39,11 @@ const NOT_SHIPPED = [
   "toolbelt.test.ts",
   "toolbelt.stress.test.ts",
   join("rust", "tests"),
+  // The C# project restores and builds nothing of its own to ship.
+  join("dotnet", "obj"),
+  join("dotnet", "Toolbelt.dll"),
+  join("dotnet", "Toolbelt.pdb"),
+  join("dotnet", "Toolbelt.deps.json"),
   "build",
   "bayma_toolbelt.egg-info",
   ".ruff_cache",
@@ -93,6 +99,30 @@ function removeUnshipped(toolbelt: string): void {
   }
 }
 
+/**
+ * The C# toolbelt: Roslyn's Workspaces assemblies, restored from the lockfile
+ * with the payload's own SDK into the toolbelt's dotnet/ directory.
+ */
+async function buildDotnet(
+  toolbelt: string,
+  dotnetRoot: string,
+  workDir: string,
+): Promise<void> {
+  const project = join(toolbelt, "dotnet");
+  const dotnet = join(dotnetRoot, "dotnet");
+  const env = {
+    DOTNET_ROOT: dotnetRoot,
+    DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+    DOTNET_NOLOGO: "1",
+    NUGET_PACKAGES: join(workDir, "nuget"),
+  };
+  await runOrThrow([dotnet, "restore", "--locked-mode"], { cwd: project, env });
+  await runOrThrow(
+    [dotnet, "build", "--no-restore", "-c", "Release", "-o", project],
+    { cwd: project, env },
+  );
+}
+
 export async function provisionToolbelt(
   context: ProvisionContext,
   runtimes: Record<RuntimeId, RuntimePayload>,
@@ -103,6 +133,10 @@ export async function provisionToolbelt(
   const cargo = runtimeFile(runtimes.rust, "BAYMA_CARGO_BIN");
   const rustc = runtimeFile(runtimes.rust, "BAYMA_RUSTC_BIN");
   const seed = runtimeFile(runtimes.rust, "BAYMA_RUST_CARGO_SEED_DIR");
+  const dotnetRoot = runtimeFile(
+    runtimes["dotnet-script"],
+    "BAYMA_DOTNET_ROOT",
+  );
   const source = join(context.repoRoot, SOURCE);
   // The stage mirrors the payload: the toolbelt beside a `python` that is the
   // payload's interpreter, and the skill where the toolbelt's tests read it.
@@ -113,6 +147,7 @@ export async function provisionToolbelt(
     runtimes.bun.pins.sha256,
     runtimes.python.pins.sha256,
     runtimes.rust.pins.toolbeltLockSha256,
+    runtimes["dotnet-script"].pins.sdkSha256,
     sha256File(join(context.repoRoot, SKILL)),
     ...walkFiles(source).map(sha256File),
   ].join(":");
@@ -150,6 +185,7 @@ export async function provisionToolbelt(
     { cwd: toolbelt, env: uvEnv },
   );
   await syncPython();
+  await buildDotnet(toolbelt, dotnetRoot, context.workDir);
 
   // The toolbelt's own suites, against exactly what the payload will carry.
   // Rust resolves offline from a copy of the seed, which proves the seed

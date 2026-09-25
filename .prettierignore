@@ -3,3 +3,4 @@ packages/runtime-rust/native/target/
 dist/
 .work/
 bun.lock
+toolbelt/dotnet/packages.lock.json
