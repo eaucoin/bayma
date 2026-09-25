@@ -4,3 +4,6 @@ dist/
 .work/
 bun.lock
 toolbelt/dotnet/packages.lock.json
+skills/bayma-platform-ooxml/lib/
+skills/bayma-platform-ooxml/obj/
+skills/bayma-platform-ooxml/packages.lock.json
