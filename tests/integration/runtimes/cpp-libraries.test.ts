@@ -192,6 +192,125 @@ test("a failed cell's enumerations are undone with it, enumerators and all", asy
   });
 }, 240_000);
 
+test("what Sema instantiated for a failed cell, the cells after it can use", async () => {
+  await withProject(async (project) => {
+    await withMcpStdio(async (client) => {
+      const session = await createSession(client, "cpp", project);
+      await run(
+        client,
+        session,
+        [
+          "#include <vector>",
+          "template <class T> T twice(T value) { return value * 2; }",
+          "template <class T> auto halved(T value) { return value / 2; }",
+          "template <class T> constexpr T tripled(T value) { return value * 3; }",
+          "template <class T> struct Counter {",
+          "  static T start;",
+          "  T add(T value) { return start + value; }",
+          "};",
+          "template <class T> T Counter<T>::start = T(11);",
+          "template <class T> T zero = T();",
+          "struct Base {",
+          "  virtual int sides() = 0;",
+          "  virtual ~Base() = default;",
+          "};",
+          "template <class T> struct Shape : Base {",
+          "  int sides() override { return 3; }",
+          "};",
+        ].join("\n"),
+      );
+      // A cell that fails to compile after asking for each instantiation,
+      // from the session's templates, a standard header's, and a header it
+      // includes itself.
+      const failed = await run(
+        client,
+        session,
+        [
+          "#include <optional>",
+          "std::vector<double> samples;",
+          "samples.push_back(1.5);",
+          "int used = twice(3) + halved(8) + Counter<int>::start +",
+          "           Counter<int>().add(1) + zero<int> +",
+          "           std::optional<int>(4).value_or(0);",
+          "Shape<int> shape;",
+          "sampels.size();",
+        ].join("\n"),
+      );
+      expect(failed.status).toBe("error");
+      const again = await run(
+        client,
+        session,
+        [
+          "#include <optional>",
+          "std::vector<double> samples;",
+          "samples.push_back(1.5);",
+          "Base *shape = new Shape<int>();",
+          "int(samples.size()) + twice(3) + halved(8) + Counter<int>::start +",
+          "    Counter<int>().add(1) + zero<int> +",
+          "    std::optional<int>(4).value_or(0) + shape->sides()",
+        ].join("\n"),
+      );
+      expect(again.error_text).toBe("");
+      expect(again.result_text).toBe("41");
+
+      // A cell whose uses come after its error: what Sema instantiates then,
+      // as it must at once to deduce a type or evaluate a constant, the code
+      // generator drops.
+      const failedFirst = await run(
+        client,
+        session,
+        [
+          "this_name_does_not_exist;",
+          "std::vector<float> floats;",
+          "floats.push_back(2.5f);",
+          "long used = twice(5L) + halved(8L) + tripled(2L) +",
+          "            Counter<long>::start + Counter<long>().add(1) +",
+          "            zero<long>;",
+          "Shape<long> late;",
+        ].join("\n"),
+      );
+      expect(failedFirst.status).toBe("error");
+      const later = await run(
+        client,
+        session,
+        [
+          "std::vector<float> floats;",
+          "floats.push_back(2.5f);",
+          "Base *late = new Shape<long>();",
+          "long(floats.size()) + twice(5L) + halved(8L) + tripled(2L) +",
+          "    Counter<long>::start + Counter<long>().add(1) + zero<long> +",
+          "    late->sides()",
+        ].join("\n"),
+      );
+      expect(later.error_text).toBe("");
+      expect(later.result_text).toBe("47");
+
+      // A cell a fatal error stops, which Sema still instantiates for.
+      const stopped = await run(
+        client,
+        session,
+        [
+          "unsigned asked = twice(4u) + Counter<unsigned>::start;",
+          "Shape<unsigned> stoppedShape;",
+          '#include "missing.h"',
+        ].join("\n"),
+      );
+      expect(stopped.error_text).toContain("'missing.h' file not found");
+      const after = await run(
+        client,
+        session,
+        [
+          "Base *stoppedShape = new Shape<unsigned>();",
+          "twice(4u) + Counter<unsigned>::start + stoppedShape->sides()",
+        ].join("\n"),
+      );
+      expect(after.error_text).toBe("");
+      expect(after.result_text).toBe("22");
+      await client.callTool("session.close", { session_id: session });
+    });
+  });
+}, 240_000);
+
 test("compile_flags.txt sets a session's include directories, definitions, and standard", async () => {
   await withProject(async (project) => {
     writeTree(project, {

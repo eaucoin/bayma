@@ -1,7 +1,9 @@
 #include "rollback.h"
 
+#include "clang/AST/ASTConsumer.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclContextInternals.h"
+#include "clang/AST/DeclGroup.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/MacroInfo.h"
@@ -183,6 +185,14 @@ void CellRollback::failed() {
     Recorded->Unit = S.getASTContext().getTranslationUnitDecl();
 }
 
+void CellRollback::instantiated(clang::FunctionDecl &Function) {
+  Recorded->Functions.push_back(&Function);
+}
+
+void CellRollback::instantiated(clang::VarDecl &Variable) {
+  Recorded->Variables.push_back(&Variable);
+}
+
 void CellRollback::revert(clang::TranslationUnitDecl *Unit) {
   if (!Unit)
     Unit = Recorded->Unit;
@@ -213,6 +223,17 @@ void CellRollback::revert(clang::TranslationUnitDecl *Unit) {
     if (!S.getLangOpts().CPlusPlus)
       forgetEnumerators(S, *Unit);
   }
+  // What Sema made the code generator dropped, once the cell reported an
+  // error; given to it now, it is generated for the cells that use it. Taken
+  // first: what is given is recorded again, as any cell's is.
+  Changes Made = std::exchange(*Recorded, Changes());
+  clang::ASTConsumer &Consumer = S.getASTConsumer();
+  for (clang::FunctionDecl *Function : Made.Functions)
+    if (!Function->isInvalidDecl())
+      Consumer.HandleTopLevelDecl(clang::DeclGroupRef(Function));
+  for (clang::VarDecl *Variable : Made.Variables)
+    if (!Variable->isInvalidDecl())
+      Consumer.HandleCXXStaticMemberVarInstantiation(Variable);
   begin();
 }
 

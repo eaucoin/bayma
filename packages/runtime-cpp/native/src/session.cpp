@@ -213,21 +213,35 @@ int bayma_write_checkpoint(const char *json);
 /// with the expression's cleanups kept, so its temporaries and their
 /// destructors are handled as usual.
 ///
-/// It also notes the running cell's translation unit in `CellUnit`, for a
-/// failed cell's declarations to be forgotten; see rollback.h.
+/// It also notes the running cell's translation unit in `CellUnit`, and the
+/// template instantiations Sema makes for it in `Rollback`, for what a
+/// failed cell declared to be forgotten and what Sema made for it to be kept;
+/// see rollback.h.
 class ValueCapture : public clang::SemaConsumer {
 public:
-  explicit ValueCapture(clang::TranslationUnitDecl *&CellUnit)
-      : CellUnit(CellUnit) {}
+  ValueCapture(clang::TranslationUnitDecl *&CellUnit,
+               std::unique_ptr<CellRollback> &Rollback)
+      : CellUnit(CellUnit), Rollback(Rollback) {}
 
   void InitializeSema(clang::Sema &S) override { Sema = &S; }
   void ForgetSema() override { Sema = nullptr; }
+
+  void HandleCXXStaticMemberVarInstantiation(clang::VarDecl *D) override {
+    if (Rollback)
+      Rollback->instantiated(*D);
+  }
 
   bool HandleTopLevelDecl(clang::DeclGroupRef Group) override {
     // The context's current unit while the cell parses; what Clang declares
     // implicitly belongs to its first.
     if (!CellUnit && Sema)
       CellUnit = Sema->getASTContext().getTranslationUnitDecl();
+    // A function Sema instantiated arrives as a declaration of its own.
+    if (Rollback)
+      for (clang::Decl *Declaration : Group)
+        if (auto *Function = llvm::dyn_cast<clang::FunctionDecl>(Declaration);
+            Function && Function->isTemplateInstantiation())
+          Rollback->instantiated(*Function);
     if (!Sema || Sema->getDiagnostics().hasErrorOccurred())
       return true;
     for (clang::Decl *Declaration : Group)
@@ -298,6 +312,7 @@ private:
   }
 
   clang::TranslationUnitDecl *&CellUnit;
+  std::unique_ptr<CellRollback> &Rollback;
   clang::Sema *Sema = nullptr;
   clang::Expr *Capture = nullptr;
 };
@@ -324,9 +339,10 @@ public:
   CapturingInterpreter(
       std::unique_ptr<clang::CompilerInstance> Instance, llvm::Error &Err,
       std::unique_ptr<clang::IncrementalExecutorBuilder> Executor,
-      clang::TranslationUnitDecl *&CellUnit)
+      clang::TranslationUnitDecl *&CellUnit,
+      std::unique_ptr<CellRollback> &Rollback)
       : Interpreter(std::move(Instance), Err, std::move(Executor),
-                    std::make_unique<ValueCapture>(CellUnit)) {}
+                    std::make_unique<ValueCapture>(CellUnit, Rollback)) {}
 };
 
 struct ExecSpec {
@@ -441,7 +457,8 @@ Session::create(const SessionOptions &Options, OutputCapture &Capture) {
   if (Options.Lang == Language::Cxx) {
     llvm::Error Err = llvm::Error::success();
     S->Interp = std::make_unique<CapturingInterpreter>(
-        std::move(*Compiler), Err, executorBuilder(S->Jit), S->CellUnit);
+        std::move(*Compiler), Err, executorBuilder(S->Jit), S->CellUnit,
+        S->Rollback);
     if (Err)
       return std::move(Err);
   } else {
@@ -483,8 +500,8 @@ Session::create(const SessionOptions &Options, OutputCapture &Capture) {
 
 void Session::flushFailedCell() {
   // What a cell that fails to parse leaves for the next one to compile: the
-  // template instantiations it asked for and the code Clang generated before
-  // the error. An empty input takes them, and is undone with them.
+  // code Clang generated before the error. An empty input takes it, and is
+  // undone with it.
   auto Empty = Interp->Parse("");
   if (!Empty) {
     llvm::consumeError(Empty.takeError());

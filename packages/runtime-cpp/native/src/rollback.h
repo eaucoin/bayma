@@ -16,15 +16,22 @@
 // - A header that parsed is still undone with the cell, though including it
 //   again cannot declare its classes anew: an earlier declaration still holds
 //   the definition the undone one gave it, so they would be redefined.
+// - Sema instantiates a template's function or variable once, when a cell
+//   first uses it, and marks it done. Once a cell reports an error, Clang's
+//   code generator drops what Sema makes, but the mark stays: every later
+//   cell that uses one, a `std::vector<double>`'s allocation say, gets a
+//   declaration nothing defines.
 //
 // So while a cell runs, what it changes is recorded, with the file each
 // change comes from, and so are the files being parsed whenever an error is
-// reported. When the cell fails, what its own code and any header that
-// failed to parse changed is reverted: their macros, their headers' being
-// included, and their declarations, in every namespace, with what they
-// redeclared found again. What headers that parsed declared is kept, as if
-// a cell that succeeded had included them. A header that failed is read
-// again, from its file, when a cell next includes it, so a fix is seen.
+// reported, and what Sema instantiates for it. When the cell fails, what its
+// own code and any header that failed to parse changed is reverted: their
+// macros, their headers' being included, and their declarations, in every
+// namespace, with what they redeclared found again. What Sema made for it is
+// given to the code generator again, for the cells that use it. What headers
+// that parsed declared is kept, as if a cell that succeeded had included
+// them. A header that failed is read again, from its file, when a cell next
+// includes it, so a fix is seen.
 // C keeps nothing: Clang forgets a failed C cell's declarations, headers'
 // among them, but for its enumerators, forgotten here; and C has no
 // namespaces or classes for them to linger in, so all a C cell changed is
@@ -41,11 +48,13 @@
 #include <vector>
 
 namespace clang {
+class FunctionDecl;
 class IdentifierInfo;
 class MacroInfo;
 class Preprocessor;
 class Sema;
 class TranslationUnitDecl;
+class VarDecl;
 } // namespace clang
 
 namespace bayma {
@@ -61,6 +70,12 @@ public:
 
   /// An error was reported: the files being parsed failed.
   void failed();
+
+  /// Sema instantiated a template's function for the cell.
+  void instantiated(clang::FunctionDecl &Function);
+
+  /// Sema instantiated a template's variable for the cell.
+  void instantiated(clang::VarDecl &Variable);
 
   /// The cell failed: what its own code and the headers that failed in it
   /// changed is reverted. `Unit` is its translation unit, when the consumer
@@ -89,6 +104,9 @@ public:
     std::vector<Macro> Macros;
     /// The headers the cell entered that were not yet `#pragma once`.
     std::vector<std::pair<clang::FileID, clang::FileEntryRef>> Entered;
+    /// The functions and variables Sema instantiated for the cell.
+    std::vector<clang::FunctionDecl *> Functions;
+    std::vector<clang::VarDecl *> Variables;
   };
 
 private:
