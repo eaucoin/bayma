@@ -7,6 +7,7 @@
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Sema/Sema.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -100,7 +101,7 @@ clang::NamedDecl *declaredBefore(const clang::NamedDecl &D,
 
 /// Reverts the names `Declared`, a context of `Failed`'s, declared in the
 /// files reverted, and in the namespaces it reopened; and finds again those
-/// declared at the top level in the files kept, which Clang forgot.
+/// the files kept declared at the top level, which Clang forgot.
 void revertDeclarations(clang::DeclContext &Declared,
                         const clang::TranslationUnitDecl &Failed,
                         llvm::function_ref<bool(clang::FileID)> Reverted,
@@ -121,23 +122,48 @@ void revertDeclarations(clang::DeclContext &Declared,
             Found.remove(Named);
           if (clang::NamedDecl *Earlier = declaredBefore(*Named, Failed))
             Found.addOrReplaceDecl(Earlier);
-        } else if (!Listed && &Declared == &Failed) {
+        } else if (!Listed &&
+                   Named->getDeclContext()->getRedeclContext() ==
+                       static_cast<const clang::DeclContext *>(&Failed)) {
           Found.addOrReplaceDecl(Named);
         }
         if (Found.isNull())
           Names->erase(Name);
       }
+    // An unscoped enumeration's enumerators are named in the context around
+    // it, as what an `extern "C"` block declares is.
+    auto *Enum = llvm::dyn_cast<clang::EnumDecl>(D);
     if (llvm::isa<clang::NamespaceDecl, clang::LinkageSpecDecl,
-                  clang::ExportDecl>(D))
+                  clang::ExportDecl>(D) ||
+        (Enum && !Enum->isScoped()))
       revertDeclarations(*llvm::cast<clang::DeclContext>(D), Failed, Reverted,
                          Sources);
   }
 }
 
+/// C finds a name through Sema's chain of the declarations visible by it,
+/// from which Clang takes a failed cell's top-level declarations, but not the
+/// enumerators of its enumerations, its structures' among them: they are taken
+/// here.
+void forgetEnumerators(clang::Sema &S, const clang::DeclContext &Declared) {
+  for (clang::Decl *D : Declared.decls()) {
+    if (auto *Enum = llvm::dyn_cast<clang::EnumDecl>(D))
+      for (clang::EnumConstantDecl *Enumerator : Enum->enumerators()) {
+        clang::DeclarationName Name = Enumerator->getDeclName();
+        if (llvm::is_contained(
+                llvm::make_range(S.IdResolver.begin(Name), S.IdResolver.end()),
+                Enumerator))
+          S.IdResolver.RemoveDecl(Enumerator);
+      }
+    if (auto *Record = llvm::dyn_cast<clang::RecordDecl>(D))
+      forgetEnumerators(S, *Record);
+  }
+}
+
 } // namespace
 
-CellRollback::CellRollback(clang::Preprocessor &PP, bool KeepParsedHeaders)
-    : PP(PP), KeepParsedHeaders(KeepParsedHeaders),
+CellRollback::CellRollback(clang::Sema &S, bool KeepParsedHeaders)
+    : S(S), PP(S.getPreprocessor()), KeepParsedHeaders(KeepParsedHeaders),
       Recorded(std::make_shared<Changes>()),
       Stale(std::make_shared<StaleHeaders>()) {
   PP.addPPCallbacks(std::make_unique<Recorder>(PP, Recorded, Stale));
@@ -153,9 +179,13 @@ bool CellRollback::reverted(clang::FileID File) const {
 
 void CellRollback::failed() {
   Recorded->Failed.insert(Recorded->Open.begin(), Recorded->Open.end());
+  if (!Recorded->Unit)
+    Recorded->Unit = S.getASTContext().getTranslationUnitDecl();
 }
 
 void CellRollback::revert(clang::TranslationUnitDecl *Unit) {
+  if (!Unit)
+    Unit = Recorded->Unit;
   clang::SourceManager &Sources = PP.getSourceManager();
   // Latest first, so a macro changed more than once returns to what it was
   // before the first change reverted.
@@ -176,10 +206,13 @@ void CellRollback::revert(clang::TranslationUnitDecl *Unit) {
       PP.getHeaderSearchInfo().getFileInfo(Header).isPragmaOnce = false;
       Stale->insert(&Header.getFileEntry());
     }
-  if (Unit)
+  if (Unit) {
     revertDeclarations(
         *Unit, *Unit, [this](clang::FileID File) { return reverted(File); },
         Sources);
+    if (!S.getLangOpts().CPlusPlus)
+      forgetEnumerators(S, *Unit);
+  }
   begin();
 }
 

@@ -147,6 +147,51 @@ test("a cell that cannot link is undone, and the session goes on", async () => {
   });
 }, 240_000);
 
+test("a failed cell's enumerations are undone with it, enumerators and all", async () => {
+  await withProject(async (project) => {
+    writeTree(project, {
+      "colors.h": [
+        "#ifndef COLORS_H",
+        "#define COLORS_H",
+        "enum color { RED, GREEN, BLUE };",
+        "#endif",
+      ].join("\n"),
+    });
+    await withMcpStdio(async (client) => {
+      // C undoes all a failed cell did, its headers' enumerations among
+      // them, so including them again declares them anew.
+      const c = await createSession(client, "c", project);
+      const failedC = await run(
+        client,
+        c,
+        '#include "colors.h"\nint broken = nope;',
+      );
+      expect(failedC.status).toBe("error");
+      const again = await run(client, c, '#include "colors.h"\nGREEN');
+      expect(again.error_text).toBe("");
+      expect(again.result_text).toBe("1");
+
+      // C++ keeps a header that parsed, and undoes the cell's own enumeration.
+      const cpp = await createSession(client, "cpp", project);
+      const failedCpp = await run(
+        client,
+        cpp,
+        '#include "colors.h"\nenum shade { LIGHT, DARK };\nint broken = nope;',
+      );
+      expect(failedCpp.status).toBe("error");
+      const kept = await run(
+        client,
+        cpp,
+        "enum shade { LIGHT, DARK };\nint(BLUE) + DARK",
+      );
+      expect(kept.error_text).toBe("");
+      expect(kept.result_text).toBe("3");
+      for (const session of [c, cpp])
+        await client.callTool("session.close", { session_id: session });
+    });
+  });
+}, 240_000);
+
 test("compile_flags.txt sets a session's include directories, definitions, and standard", async () => {
   await withProject(async (project) => {
     writeTree(project, {

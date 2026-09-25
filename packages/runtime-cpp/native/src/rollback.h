@@ -25,9 +25,10 @@
 // redeclared found again. What headers that parsed declared is kept, as if
 // a cell that succeeded had included them. A header that failed is read
 // again, from its file, when a cell next includes it, so a fix is seen.
-// C keeps nothing: Clang forgets a
-// failed C cell's declarations, headers' among them, and C has no namespaces
-// or classes for them to linger in, so all a C cell changed is reverted.
+// C keeps nothing: Clang forgets a failed C cell's declarations, headers'
+// among them, but for its enumerators, forgotten here; and C has no
+// namespaces or classes for them to linger in, so all a C cell changed is
+// reverted.
 
 #pragma once
 
@@ -43,6 +44,7 @@ namespace clang {
 class IdentifierInfo;
 class MacroInfo;
 class Preprocessor;
+class Sema;
 class TranslationUnitDecl;
 } // namespace clang
 
@@ -50,9 +52,9 @@ namespace bayma {
 
 class CellRollback {
 public:
-  /// Records what `PP` changes from now on. `KeepParsedHeaders` keeps what
-  /// the headers that parsed in a failed cell declared: C++'s way.
-  CellRollback(clang::Preprocessor &PP, bool KeepParsedHeaders);
+  /// Records what `S`'s preprocessor changes from now on. `KeepParsedHeaders`
+  /// keeps what the headers that parsed in a failed cell declared: C++'s way.
+  CellRollback(clang::Sema &S, bool KeepParsedHeaders);
 
   /// A cell starts: what earlier cells changed stays.
   void begin();
@@ -61,8 +63,10 @@ public:
   void failed();
 
   /// The cell failed: what its own code and the headers that failed in it
-  /// changed is reverted. `Unit` is its translation unit, when it declared
-  /// anything.
+  /// changed is reverted. `Unit` is its translation unit, when the consumer
+  /// saw it declare anything; Clang withholds from the consumer what a cell
+  /// that fails to parse declared, and then the unit is the one current when
+  /// its first error was reported.
   void revert(clang::TranslationUnitDecl *Unit);
 
   /// What a cell changed, and where.
@@ -79,6 +83,8 @@ public:
     std::vector<clang::FileID> Open;
     /// The files that were being parsed when an error was reported.
     llvm::DenseSet<clang::FileID> Failed;
+    /// The translation unit current when the first error was reported.
+    clang::TranslationUnitDecl *Unit = nullptr;
     /// Each change to a macro, in order.
     std::vector<Macro> Macros;
     /// The headers the cell entered that were not yet `#pragma once`.
@@ -89,6 +95,7 @@ private:
   /// Whether the cell's changes from `File` are reverted.
   bool reverted(clang::FileID File) const;
 
+  clang::Sema &S;
   clang::Preprocessor &PP;
   bool KeepParsedHeaders;
   std::shared_ptr<Changes> Recorded;
