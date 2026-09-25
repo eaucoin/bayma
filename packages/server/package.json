@@ -1,6 +1,6 @@
 {
   "name": "@bayma-repl/bayma",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "A durable engine for REPL sessions in Bun, Python, C#, Rust, C, C++, Lean, and Go, served to agents over MCP",
   "license": "MIT",
   "repository": {
