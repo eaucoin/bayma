@@ -167,31 +167,9 @@ These tools can be used together in the same REPL to adeptly discover, inspect, 
 
 An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
-## Repository Operations
-
-Use the ordinary Git libraries below for repository inspection and staging. Commits, merges, and pushes should run a repository's own Git hooks; the libraries differ in whether they do, so the choice below keeps those operations on real Git.
-
-Prefer the ordinary Dulwich package through `toolbelt.dulwich` and the repository-bound genuine `dulwich.repo.Repo` at `toolbelt.dulwich_repo` for ordinary repository work. Typical uses include inspection, object traversal, status, index access, staging, etc.
-
-```python
-status = toolbelt.dulwich.porcelain.status(toolbelt.dulwich_repo)
-head = toolbelt.dulwich_repo[toolbelt.dulwich_repo.head()]
-recent_commits = [
-    entry.commit
-    for entry in toolbelt.dulwich_repo.get_walker(max_entries=10)
-]
-index = toolbelt.dulwich_repo.open_index()
-toolbelt.dulwich.porcelain.add(
-    toolbelt.dulwich_repo,
-    paths=["path/to/changed-file.py"],
-)
-```
-
-Commit, merge, and push with the `git` executable, for example through `run_bounded_command` in `<toolbelt>/bayma_toolbelt_process.py`. Avoid `toolbelt.dulwich.porcelain.commit()` and `toolbelt.dulwich.porcelain.push()` in a repository with hooks: the pinned Dulwich commit path does not honor a configured `core.hooksPath`, and its push path does not execute the pre-push hook.
-
 ## Source And Type Inspection
 
-Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+Source and type inspection is useful for two things: understanding a repository or codebase, and understanding packages and their APIs, whether a project's dependencies, the toolbelt's, or any other installed package. For Python, the tools below do both within the session, so parsed modules, symbols, and types stay live in the REPL across cells, ready to be queried, compared, and built on, rather than reconstructed from a shell command's output each time.
 
 Use Griffe through `toolbelt.griffe` for static package and API structure, Jedi through `toolbelt.jedi` for semantic code intelligence, and `inspect` plus `importlib` when live runtime truth is required. Work with Griffe exports such as `toolbelt.griffe.GriffeLoader`, `toolbelt.griffe.Module`, `toolbelt.griffe.Class`, `toolbelt.griffe.Function`, `toolbelt.griffe.Attribute`, `toolbelt.griffe.Alias`, `toolbelt.griffe.ObjectKind`, `toolbelt.griffe.Docstring`, etc.; load modules through `toolbelt.griffe.load()` or `loader.load()`, inspect `module.members`, `object.all_members`, `class.inherited_members`, `function.parameters`, `function.returns`, `object.annotation`, `object.docstring`, `object.source`, `object.filepath`, `object.lineno`, `object.endlineno`, etc., and resolve aliases through `loader.resolve_aliases()`.
 

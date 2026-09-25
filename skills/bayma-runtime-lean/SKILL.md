@@ -121,13 +121,9 @@ These tools, with the language's own standard library, can be used together in t
 
 An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
-## Repository Operations
-
-The toolbelt carries no Git library for Lean. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `IO.Process.output` or `IO.Process.spawn`, which honors the repository's configuration and hooks.
-
 ## Source And Type Inspection
 
-Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+Source and type inspection is useful for two things: understanding a repository or codebase, and understanding libraries and their APIs, whether a project's dependencies such as Mathlib, Lean's own library, or any other built library. For Lean, the tools below do both within the session, so environments, declarations, and their types stay live in the REPL across cells, ready to be queried, compared, and built on, rather than reconstructed from a shell command's output each time.
 
 Use Lean's own metaprogramming API, which the language server, `#check`, and `#print` are built on, imported as the quickstart does. Work with `Environment`, `ConstantInfo`, `Expr`, `Name`, `DeclarationRanges`, `ModuleIdx`, etc.; follow them through `getEnv`, `env.find?`, `env.contains`, `env.constants`, `env.getModuleIdxFor?`, `env.header.moduleNames`, `ConstantInfo.type`, `ConstantInfo.value?`, `findDocString?`, `findDeclarationRanges?`, `getStructureFields`, `isInstance`, `collectAxioms`, etc., and read types in `MetaM` through `inferType`, `whnf`, `forallTelescope`, `isDefEq`, `ppExpr`, etc., run from a cell with `#eval show MetaM Unit from do …`. `#check`, `#print`, `#print axioms`, and `#synth` answer single questions directly.
 

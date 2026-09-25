@@ -122,13 +122,9 @@ These tools, with the language's own standard library, can be used together in t
 
 An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
-## Repository Operations
-
-The toolbelt carries no Git library for C. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `posix_spawnp()`, or `popen()` when the command's output is what is wanted, which honors the repository's configuration and hooks.
-
 ## Source And Type Inspection
 
-Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+Source and type inspection is useful for two things: understanding a repository or codebase, and understanding libraries and their APIs, whether a project's dependencies, the system's headers, or any other library. For C, the tools below do both within the session, so translation units, cursors, and types stay live in the REPL across cells, ready to be queried, compared, and built on, rather than reconstructed from a shell command's output each time.
 
 Use libclang, Clang's stable C API for tooling, which bayma's C and C++ runtimes carry: the same Clang that compiles the session's cells, so a project parses exactly as it would build with it. Include its headers as the quickstart does.
 

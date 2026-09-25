@@ -282,17 +282,6 @@ class ToolbeltTest(unittest.TestCase):
             hasattr(self.toolbelt.dulwich.porcelain.status(repository), "staged")
         )
 
-    def test_skill_examples_keep_hook_bearing_mutations_off_dulwich(self) -> None:
-        skill = SKILL_DOC.read_text(encoding="utf-8")
-        python_examples = "\n".join(
-            re.findall(r"```python\n(.*?)\n```", skill, flags=re.DOTALL)
-        )
-
-        self.assertIn("toolbelt.dulwich.porcelain.status(", python_examples)
-        self.assertIn("toolbelt.dulwich.porcelain.add(", python_examples)
-        self.assertNotIn("toolbelt.dulwich.porcelain.commit(", python_examples)
-        self.assertNotIn("toolbelt.dulwich.porcelain.push(", python_examples)
-
     def test_exposes_the_toolbelt_executables(self) -> None:
         for executable in (
             self.toolbelt.basedpyright,

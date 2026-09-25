@@ -178,15 +178,9 @@ These tools can be used together in the same REPL to adeptly discover, inspect, 
 
 An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
-## Repository Operations
-
-Use the ordinary Git libraries below for repository inspection and staging. Commits, merges, and pushes should run a repository's own Git hooks; the libraries differ in whether they do, so the choice below keeps those operations on real Git.
-
-Use ordinary `gix` APIs for local repository inspection, such as `gix::discover(&working_directory)`. Commit, merge, and push with the `git` executable through `std::process::Command`; gix does not run a repository's hooks.
-
 ## Source And Type Inspection
 
-Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+Source and type inspection is useful for two things: understanding a repository or codebase, and understanding crates and their APIs, whether a project's dependencies, the toolbelt's, or any other crate. For Rust, the tools below do both within the session, so loaded crates, items, and types stay live in the REPL across cells, ready to be queried, compared, and built on, rather than reconstructed from a shell command's output each time.
 
 For rust-analyzer work, use a fresh bayma Rust session rooted at the code being inspected and keep it as the dedicated source-and-type inspection workbench. Run the quickstart's `:lockfile` command first; then, before adding any unrelated dependencies, declare the exact rust-analyzer integration cohort together in one call:
 

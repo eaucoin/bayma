@@ -128,13 +128,9 @@ These tools, with the language's own standard library, can be used together in t
 
 An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
-## Repository Operations
-
-The toolbelt carries no Git library for Go. Commits, merges, and pushes should run a repository's own Git hooks, so run repository operations, inspection and staging among them, on real Git: the `git` executable, started through `os/exec`, as `exec.Command("git", …)`, which honors the repository's configuration and hooks.
-
 ## Source And Type Inspection
 
-Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+Source and type inspection is useful for two things: understanding a repository or codebase, and understanding modules and their APIs, whether a project's dependencies, the standard library, or any other module. For Go, the tools below do both within the session, so checked packages, objects, and types stay live in the REPL across cells, ready to be queried, compared, and built on, rather than reconstructed from a shell command's output each time.
 
 Use the standard library's `go/*` packages, Go's own parser, type checker, and documentation reader, which `go vet`, `gofmt`, and gopls are built on: they come with the Go the session runs, imported as the quickstart does. Find a package's files through `go/build` (`build.Import()`, `build.ImportDir()`, `Package.GoFiles`, etc.), parse them with `go/parser` (`parser.ParseFile()` with `parser.ParseComments`, etc.) into `go/ast` (`ast.File`, `ast.GenDecl`, `ast.FuncDecl`, `ast.TypeSpec`, `ast.Inspect()`, etc.), and type-check them with `go/types` over `importer.ForCompiler(fset, "source", nil)`, which reads every dependency from its module's source: `types.Config.Check()`, `types.Package`, `types.Scope`, `types.Object`, `types.TypeName`, `types.Func`, `types.Named`, `types.Signature`, `types.Struct`, `types.Interface`, `types.Info`, `types.Implements()`, `types.NewMethodSet()`, `types.TypeString()`, etc. Read documentation with `go/doc`: `doc.NewFromFiles()`, `doc.Package`, `doc.Type`, `doc.Func`, etc.
 

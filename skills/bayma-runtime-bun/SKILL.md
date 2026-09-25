@@ -149,14 +149,8 @@ These tools can be used together in the same REPL to adeptly discover, inspect, 
 
 An available package API can often do the same thing more directly, clearly, and reliably in the REPL than Bash, terminal commands, or spawned processes.
 
-## Repository Operations
-
-Use the ordinary Git libraries below for repository inspection and staging. Commits, merges, and pushes should run a repository's own Git hooks; the libraries differ in whether they do, so the choice below keeps those operations on real Git.
-
-Use the repository-bound `toolbelt.simpleGit` client for inspection, staging, commits, merges, and pushes. simple-git drives the `git` executable, so every operation honors the repository's configuration and hooks.
-
 ## Source And Type Inspection
 
-Source and type inspection serves two main purposes: understanding a codebase's source and APIs directly, and discovering how to accomplish work through the toolbelt without falling back to Bash, terminal commands, or spawned processes. The latter is especially important: for most discovering, inspecting, parsing, searching, creating, patching, rewriting, copying, moving, renaming, and so forth, there exists a programmatic toolbelt package or library that models the task more directly, clearly, reliably, and composably. Use the language-appropriate tools and frameworks below in the bayma session for both purposes—to inspect the code you are working on and to understand and use the available package APIs effectively.
+Source and type inspection is useful for two things: understanding a repository or codebase, and understanding packages and their APIs, whether a project's dependencies, the toolbelt's, or any other installed package. For Bun, the tools below do both within the session, so parsed source files, declarations, and types stay live in the REPL across cells, ready to be queried, compared, and built on, rather than reconstructed from a shell command's output each time.
 
 Use ts-morph through `toolbelt.tsMorph` to ground package and repository API understanding in source and type declarations. Work with exports such as `toolbelt.tsMorph.Project`, `toolbelt.tsMorph.SourceFile`, `toolbelt.tsMorph.ClassDeclaration`, `toolbelt.tsMorph.FunctionDeclaration`, `toolbelt.tsMorph.InterfaceDeclaration`, `toolbelt.tsMorph.TypeAliasDeclaration`, `toolbelt.tsMorph.EnumDeclaration`, `toolbelt.tsMorph.VariableDeclaration`, `toolbelt.tsMorph.ModuleDeclaration`, etc.; follow the declaration, symbol, and type objects returned by those APIs through operations such as `sourceFile.getExportedDeclarations()`, `declaration.getSymbol()`, `declaration.getType()`, `type.getCallSignatures()`, `signature.getReturnType()`, `declaration.findReferences()`, etc.
