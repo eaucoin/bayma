@@ -7,3 +7,6 @@ toolbelt/dotnet/packages.lock.json
 skills/bayma-platform-ooxml/lib/
 skills/bayma-platform-ooxml/obj/
 skills/bayma-platform-ooxml/packages.lock.json
+skills/bayma-platform-cppu/libreoffice/
+skills/bayma-platform-cppu/libreoffice.partial/
+skills/bayma-platform-cppu/profile/
