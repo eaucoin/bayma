@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { walkFiles } from "../shared/files.ts";
 
 // Development telemetry stays in development: what bayma publishes, the Node
-// bundles and the payload, carries no OpenTelemetry. Each command that
+// bundle and the payload, carries no OpenTelemetry. Each command that
 // produces one proves it of what it produced.
 
 const SCOPE = "@opentelemetry/";

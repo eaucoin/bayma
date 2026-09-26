@@ -8,28 +8,33 @@ interfaces.
 
 ## Get Started
 
-On Linux (x64) or macOS (Apple Silicon), add bayma to your agent setup as an
-MCP server, for Claude Code or for Codex:
+On Linux (x64), with Docker, pull bayma's image, which holds everything
+bundled with bayma: its runtimes, their toolbelt, and what it takes to keep
+REPL sessions on disk.
 
 ```sh
-claude mcp add bayma -- npx -y @bayma-repl/bayma mcp-stdio
-codex mcp add bayma -- npx -y @bayma-repl/bayma mcp-stdio
+docker pull ghcr.io/eaucoin/bayma
 ```
 
-Codex gives an MCP server 10 seconds to start, and bayma's first launch takes
-longer, so before starting Codex, give bayma a minute in `~/.codex/config.toml`:
+Then add bayma to your agent setup as an MCP server, for Claude Code or for
+Codex:
 
-```toml
-[mcp_servers.bayma]
-command = "npx"
-args = ["-y", "@bayma-repl/bayma", "mcp-stdio"]
-startup_timeout_sec = 60
+```sh
+BAYMA='exec docker run -i --rm --user "$(id -u):$(id -g)" -e HOME -v "$HOME:$HOME" -w "$PWD" --cap-add CHECKPOINT_RESTORE --cap-add SYS_PTRACE --security-opt seccomp=unconfined ghcr.io/eaucoin/bayma'
+claude mcp add bayma -- sh -c "$BAYMA"
+codex mcp add bayma -- sh -c "$BAYMA"
 ```
 
-For any other MCP client, use `{"command": "npx", "args": ["-y", "@bayma-repl/bayma", "mcp-stdio"]}`.
-`npx @bayma-repl/bayma doctor` checks that each runtime works, and REPL
-sessions are kept under `~/.local/state/bayma`, one directory per project
-directory the client launched from.
+For any other MCP client, use `{"command": "sh", "args": ["-c", "<$BAYMA>"]}`.
+bayma runs as you, with your home directory at its own path, and the last
+three flags let it snapshot REPL sessions within its own container.
+`docker run --rm ghcr.io/eaucoin/bayma doctor` checks that each runtime works.
+
+REPL sessions are kept under `~/.local/state/bayma`, one directory per project
+directory the client launched from. When bayma stops, it snapshots each idle
+REPL session, its whole process and everything it holds, and a later bayma
+restores it where it left off; after a reboot, a REPL session comes back from
+its own checkpoints instead.
 
 Then you can use bayma. Each runtime has a skill, `bayma-runtime-*`, on how to
 work in that runtime with bayma. Within a REPL session, an agent executes code
@@ -63,6 +68,6 @@ makes it easier to add new runtimes and platforms.
 
 ## Development
 
-See `package.json` for the development scripts, `.github/workflows/` for the
-GitHub Actions workflows, and `.agents/skills/development-observability/` for
-development observability.
+See `package.json` for the development scripts, `Dockerfile` for the image,
+`.github/workflows/` for the GitHub Actions workflows, and
+`.agents/skills/development-observability/` for development observability.

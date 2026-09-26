@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { cacheRoot, payloadValue, ProcessTransport } from "@bayma/core";
-import { ensureRuntimeAssetInDirectory } from "@bayma/core";
+import { ensureRuntimeAsset } from "@bayma/core";
 import type { RuntimeTransport } from "@bayma/core";
 import type { RuntimeCheckpointCodec } from "@bayma/core";
 import {
@@ -33,11 +33,11 @@ function csharpReferenceLiteral(filename: string): string {
   return JSON.stringify(filename.replaceAll("\\", "/"));
 }
 
-function dotnetHarnessContent(): string {
+function dotnetHarnessContent(libraryDir: string): string {
   return `#nullable enable
-#r ${csharpReferenceLiteral("Microsoft.CodeAnalysis.dll")}
-#r ${csharpReferenceLiteral("Microsoft.CodeAnalysis.Scripting.dll")}
-#r ${csharpReferenceLiteral("Microsoft.CodeAnalysis.CSharp.Scripting.dll")}
+#r ${csharpReferenceLiteral(join(libraryDir, "Microsoft.CodeAnalysis.dll"))}
+#r ${csharpReferenceLiteral(join(libraryDir, "Microsoft.CodeAnalysis.Scripting.dll"))}
+#r ${csharpReferenceLiteral(join(libraryDir, "Microsoft.CodeAnalysis.CSharp.Scripting.dll"))}
 #r "System.Text.Json"
 using System;
 using System.Collections;
@@ -963,13 +963,13 @@ while ((line = System.Console.ReadLine()) != null)
 `;
 }
 
-// The harness references the tool's own assemblies by relative path, so it
-// is materialised beside them.
+// The harness references the tool's own assemblies where the payload holds
+// them, and lives among bayma's cached assets: the payload is read-only.
 function dotnetHarnessPath(libraryDir: string): string {
-  return ensureRuntimeAssetInDirectory(
-    libraryDir,
+  return ensureRuntimeAsset(
+    "dotnet-script",
     "bayma-dotnet-harness.csx",
-    dotnetHarnessContent().trimStart(),
+    dotnetHarnessContent(libraryDir).trimStart(),
   );
 }
 
@@ -1005,7 +1005,7 @@ export function createDotnetScriptTransport(): RuntimeTransport {
 
 export { DOTNET_PROMPT };
 
-/** The tool's own assemblies, which the harness references by relative path. */
+/** The tool's own assemblies, which the harness references. */
 function dotnetScriptLibraryDir(): string {
   const configured = process.env.BAYMA_DOTNET_SCRIPT_LIB_DIR;
   if (configured) return configured;

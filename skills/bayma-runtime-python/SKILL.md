@@ -91,11 +91,11 @@ Prefer direct Python APIs over shelling out when an equivalent API exists. The s
 - A final expression is rendered and saved in `_`, exceptions are saved in `_error`, and top-level `await` is accepted.
 - A top-level asynchronous submission runs through a fresh `asyncio.run` invocation, so tasks created there must finish during that call rather than being treated as persistent background work.
 - `sys.stdout` and `sys.stderr` are UTF-8 non-TTY proxies supporting `write`, `flush`, `writable`, `isatty`, `encoding`, `errors`, and a writable binary buffer, but they are not general terminal or file objects.
-- When checkpointed recovery is active, bayma restores only the pickle-compatible value written with `bayma_write_checkpoint(...)` across runtime replacement or server restart, makes it available through `bayma_read_checkpoint()`, and does not replay live globals or earlier side effects.
+- When checkpointed recovery is active, bayma restores only the pickle-compatible value written with `bayma_write_checkpoint(...)` across runtime replacement, and across a server restart that does not restore the session whole, makes it available through `bayma_read_checkpoint()`, and does not replay live globals or earlier side effects.
 
 # Python Toolbelt
 
-bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Python sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Python sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image as it starts. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, type information, and documentation behind the Python `toolbelt` namespace are under:
 

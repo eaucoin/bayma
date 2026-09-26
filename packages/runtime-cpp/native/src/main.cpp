@@ -1,6 +1,6 @@
 // bayma-cpp-host: the protocol process behind bayma's C and C++ runtimes.
 //
-//   bayma-cpp-host --language=c|c++ [--sysroot=PATH]
+//   bayma-cpp-host --language=c|c++
 //
 // It prints a prompt, then serves `:exec <spec>` lines until its input closes.
 
@@ -66,8 +66,6 @@ int main(int Argc, const char **Argv) {
     llvm::StringRef Arg(Argv[Index]);
     if (Arg.consume_front("--language="))
       Language = Arg.str();
-    else if (Arg.consume_front("--sysroot="))
-      Options.Sysroot = Arg.str();
     else {
       llvm::errs() << "bayma-cpp-host: unknown argument " << Arg << "\n";
       return 2;
@@ -87,10 +85,8 @@ int main(int Argc, const char **Argv) {
   Options.Root =
       llvm::sys::path::parent_path(llvm::sys::path::parent_path(Executable))
           .str();
-  // On Linux the payload carries the system headers cells compile against;
-  // on macOS they are the SDK's, which bayma names.
-  if (Options.Sysroot.empty())
-    Options.Sysroot = Options.Root + "/sysroot";
+  // The payload carries the system headers cells compile against.
+  Options.Sysroot = Options.Root + "/sysroot";
   llvm::SmallString<256> Cwd;
   llvm::sys::fs::current_path(Cwd);
   Options.Cwd = Cwd.str().str();

@@ -5,3 +5,4 @@ bayma_report_result
 __clang_Interpreter_SetValueNoAlloc
 __clang_Interpreter_SetValueWithAlloc
 _ZnwmPv26__clang_Interpreter_NewTag
+__emutls_get_address

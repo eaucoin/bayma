@@ -1,9 +1,8 @@
 import { join, resolve } from "node:path";
-import { hostPlatformId } from "@bayma/core";
 import { build } from "./build.ts";
+import { buildImage } from "./image.ts";
 import { assemblePayload } from "./payload.ts";
 import { provision, readProvisionRecord } from "./provision/index.ts";
-import { pack, writePayloadRelease } from "./publish.ts";
 import { run } from "./shared/process.ts";
 import { bunJUnitReport, runTests } from "./shared/tests.ts";
 import { inCommand, startTelemetry, stopTelemetry } from "./telemetry/index.ts";
@@ -15,12 +14,10 @@ const workDir = join(repoRoot, ".work");
 function usage(): never {
   console.error(`usage: bun tooling/src/cli.ts <command>
 
-  build                  bundle the server and the installer for Node into dist
+  build                  bundle the server for Node into dist
   provision              download and verify every pinned toolchain into .work
-  payload                assemble dist/payload and its release tarball
-  release [--assets DIR] [--base-url URL] [--host-only]
-                         write dist/payloads.json from the payload tarballs in DIR
-  pack                   stage the package and npm pack it into dist
+  payload                assemble dist/payload
+  image                  build and tag the image from dist and the Dockerfile
   test [ARGS...]         bun test with ARGS
   typecheck              type-check every TypeScript project
   format [--check]       format the repository, or check that it is formatted
@@ -29,14 +26,6 @@ Every command records OpenTelemetry traces, metrics, and logs when the
 environment, or the otel.env its bun run script loads, configures an
 exporter; see otel.env.example and tooling/src/telemetry/config.ts.`);
   process.exit(2);
-}
-
-function option(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index === -1) return undefined;
-  const value = args[index + 1];
-  if (value === undefined || value.startsWith("--")) usage();
-  return value;
 }
 
 function requireProvision() {
@@ -59,7 +48,7 @@ async function runEach(commands: string[][]): Promise<number> {
 const COMMANDS: Record<string, (args: string[]) => Promise<number>> = {
   async build() {
     const result = await build(repoRoot, distDir);
-    console.log(`built ${result.bundle} and ${result.installer}`);
+    console.log(`built ${result.bundle}`);
     return 0;
   },
   async provision() {
@@ -70,26 +59,11 @@ const COMMANDS: Record<string, (args: string[]) => Promise<number>> = {
     return 0;
   },
   async payload() {
-    const result = await assemblePayload(repoRoot, requireProvision(), distDir);
-    console.log(`${result.tarball}\n${result.sha256}  ${result.bytes} bytes`);
+    console.log(assemblePayload(repoRoot, requireProvision(), distDir));
     return 0;
   },
-  async release(args) {
-    const assets = option(args, "--assets") ?? join(distDir);
-    const release = writePayloadRelease(repoRoot, assets, distDir, {
-      baseUrl: option(args, "--base-url"),
-      ...(args.includes("--host-only")
-        ? { platforms: [hostPlatformId()] }
-        : {}),
-    });
-    console.log(
-      `${release.version}: ${Object.keys(release.payloads).join(", ")}`,
-    );
-    return 0;
-  },
-  async pack() {
-    const result = await pack(repoRoot, distDir);
-    console.log(`${result.tarball}\n${result.files.length} files`);
+  async image() {
+    for (const tag of await buildImage(repoRoot, distDir)) console.log(tag);
     return 0;
   },
   async test(args) {

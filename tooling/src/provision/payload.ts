@@ -7,7 +7,7 @@ import { recordProvisionLookup } from "../telemetry/index.ts";
  * A provisioned runtime: a directory that is copied verbatim into the payload,
  * plus the environment that points the runtime binary at it. Every path in
  * `envPaths` and `pathEnvPrepend` is relative to `root`; the payload manifest
- * carries them, and an install resolves them at launch.
+ * carries them, and bayma resolves them at launch.
  */
 export interface RuntimePayload {
   runtimeId: RuntimeId;

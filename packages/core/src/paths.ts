@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 /**
  * Where bayma keeps things on a machine. Both roots follow the XDG base
- * directory convention on Linux and macOS alike, as developer tools do.
+ * directory convention, as developer tools do.
  *
  * - state: session catalogs, execution history, checkpoints. One directory
  *   per launch directory, so a client started from a project sees that

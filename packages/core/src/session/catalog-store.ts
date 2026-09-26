@@ -12,6 +12,7 @@ import { basename, join } from "node:path";
 import * as z from "zod";
 import { assertSafePersistedId, SAFE_PERSISTED_ID_PATTERN } from "../ids.ts";
 import { RUNTIME_IDS, type RuntimeId } from "../runtime/id.ts";
+import type { ProcessSnapshot } from "../runtime/process-snapshots.ts";
 import {
   DURABILITY_MODES,
   SESSION_STATUSES,
@@ -37,12 +38,34 @@ export interface SessionCatalogEntry {
   closed: boolean;
   cols: number;
   rows: number;
+  /** The session's process tree, dumped when its server stopped. */
+  processSnapshot?: ProcessSnapshot;
 }
 
-export const SESSION_CATALOG_SCHEMA_VERSION = 2 as const;
+export const SESSION_CATALOG_SCHEMA_VERSION = 3 as const;
+// Version 2 is version 3 without process snapshots.
+const PREVIOUS_SCHEMA_VERSION = 2;
 export type SessionCatalogWrite = Omit<SessionCatalogEntry, "schemaVersion"> & {
   schemaVersion?: typeof SESSION_CATALOG_SCHEMA_VERSION;
 };
+
+const ProcessSnapshotSchema: z.ZodType<ProcessSnapshot> = z
+  .strictObject({
+    pid: z.number().int().positive(),
+    maxPid: z.number().int().positive(),
+    stdio: z.tuple([z.string().min(1), z.string().min(1), z.string().min(1)]),
+    stdioFds: z.tuple([
+      z.number().int().nonnegative(),
+      z.number().int().nonnegative(),
+      z.number().int().nonnegative(),
+    ]),
+    bootId: z.string().min(1),
+    baymaVersion: z.string().min(1),
+    createdAtMs: z.number().finite().nonnegative(),
+  })
+  .refine((snapshot) => snapshot.maxPid >= snapshot.pid, {
+    message: "a process snapshot's highest PID precedes its root's",
+  });
 
 const SessionCatalogEntrySchema: z.ZodType<SessionCatalogEntry> = z
   .strictObject({
@@ -63,6 +86,7 @@ const SessionCatalogEntrySchema: z.ZodType<SessionCatalogEntry> = z
     closed: z.boolean(),
     cols: z.number().int().positive().max(65_535),
     rows: z.number().int().positive().max(65_535),
+    processSnapshot: ProcessSnapshotSchema.optional(),
   })
   .superRefine((entry, context) => {
     if (entry.closed !== (entry.status === "closed")) {
@@ -100,6 +124,15 @@ const SessionCatalogEntrySchema: z.ZodType<SessionCatalogEntry> = z
       context.addIssue({
         code: "custom",
         message: "ephemeral catalog entries may not claim a checkpoint",
+      });
+    }
+    if (
+      entry.durabilityMode === "ephemeral" &&
+      entry.processSnapshot !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "ephemeral catalog entries may not claim a process snapshot",
       });
     }
     if (entry.updatedAtMs < entry.createdAtMs) {
@@ -243,12 +276,15 @@ function allocateCatalogFailureId(
 }
 
 function parseCatalogEntry(value: unknown): SessionCatalogEntry {
+  // Entries written before the schema was versioned, and version 2's, read
+  // as the current version.
   const normalized =
     value &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    !("schemaVersion" in value)
-      ? { schemaVersion: SESSION_CATALOG_SCHEMA_VERSION, ...value }
+    (!("schemaVersion" in value) ||
+      value.schemaVersion === PREVIOUS_SCHEMA_VERSION)
+      ? { ...value, schemaVersion: SESSION_CATALOG_SCHEMA_VERSION }
       : value;
   return SessionCatalogEntrySchema.parse(normalized);
 }

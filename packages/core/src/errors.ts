@@ -39,3 +39,8 @@ export function aggregateFailure(
 export function failureDetail(error: unknown): string {
   return error instanceof Error ? error.stack || error.message : String(error);
 }
+
+/** A failure's message alone, for a sentence that names it. */
+export function failureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

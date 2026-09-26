@@ -64,10 +64,21 @@ export async function serveMcpStdio(
   };
   let connected = false;
   let closeObserved = false;
+  let exiting = false;
+  // The server ends when its client closes stdio, or when it is told to stop:
+  // `docker stop` sends SIGTERM. Either way it shuts down once, which is when
+  // it snapshots its sessions.
+  const exit = () => {
+    if (exiting) return;
+    exiting = true;
+    shutdownAndExit(engine.shutdown);
+  };
   application.server.server.onclose = () => {
     closeObserved = true;
-    if (connected) shutdownAndExit(engine.shutdown);
+    if (connected) exit();
   };
+  process.on("SIGINT", exit);
+  process.on("SIGTERM", exit);
 
   try {
     await application.server.connect(transport);
@@ -88,6 +99,6 @@ export async function serveMcpStdio(
     throw error;
   }
   connected = true;
-  if (closeObserved) shutdownAndExit(engine.shutdown);
+  if (closeObserved) exit();
   return new Promise<never>(() => undefined);
 }

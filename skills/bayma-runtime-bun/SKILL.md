@@ -89,11 +89,11 @@ If imports fail, the session may simply be pointed at the wrong package tree; th
 - Interactive standard input is unavailable, so provide input through source literals, files, environment variables, or another noninteractive interface.
 - Bun sessions run JavaScript or TypeScript with live bindings across calls and expose `Bun.*`, `fetch`, top-level `await`, dynamic imports, `require`, `module`, `__filename`, `__dirname`, and packages resolved from the session working directory.
 - A non-`undefined` final value is returned as result text and stored in `_`, while a thrown value is stored in `_error`; console and value rendering are bounded, so very large or unsafe-to-inspect values may be abbreviated.
-- When checkpointed recovery is active, bayma restores only `$checkpoint` across runtime replacement or server restart using its structured-clone codec and never replays earlier calls or their side effects.
+- When checkpointed recovery is active, bayma restores only `$checkpoint` across runtime replacement, and across a server restart that does not restore the session whole, using its structured-clone codec and never replays earlier calls or their side effects.
 
 # Bun Toolbelt
 
-bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Bun sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Bun sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image as it starts. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, types, and documentation behind the Bun `toolbelt` namespace are under:
 

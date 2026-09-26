@@ -256,8 +256,12 @@ def _nothing_answered() -> str:
             "A Docker Engine runs here, but only root and the docker group may use "
             "it: add yourself, with sudo usermod -aG docker $USER, and sign in again"
         )
-    if sys.platform == "darwin":
-        return "No Docker Engine runs here: start one, such as Docker Desktop"
+    if Path("/.dockerenv").exists():
+        return (
+            "No Docker Engine answers inside bayma's container: give it the "
+            "host's, adding -v /var/run/docker.sock:/var/run/docker.sock "
+            '--group-add "$(stat -c %g /var/run/docker.sock)" to its docker run'
+        )
     if Path("/etc/debian_version").exists():
         return (
             "No Docker Engine runs here: install one, with sudo apt-get install -y "

@@ -87,8 +87,8 @@ Quoted `#include` paths resolve from the session working directory. Keep secrets
 ## REPL Runtime Notes
 
 - Interactive standard input is unavailable, so provide input through source literals, files, environment variables, or another noninteractive interface.
-- Clang's incremental Interpreter (clang-repl) compiles each exec and runs it in the session's process. Sessions are C++23 with libc++, or from C++17 on with `-std=`; on Linux, `-stdlib=libstdc++` uses GCC's libstdc++, as a distribution's C++ libraries do.
-- Cells share what loaded libraries define, as a linked program would: template instantiations, `type_info`, and, on Linux, thread-local variables among them.
+- Clang's incremental Interpreter (clang-repl) compiles each exec and runs it in the session's process. Sessions are C++23 with libc++, or from C++17 on with `-std=`; `-stdlib=libstdc++` uses GCC's libstdc++, as a distribution's C++ libraries do.
+- Cells share what loaded libraries define, as a linked program would: template instantiations, `type_info`, and thread-local variables among them.
 - A trailing expression without a semicolon is the exec's result. It prints its contents when `std::format` can format it (numbers, strings, standard containers, pairs, and tuples, with libc++ in C++23), and otherwise when it is a number, string, or enumeration or has an `operator<<`.
 - An exec that fails to compile or link is undone, but for the headers it included that parsed, which stay included; a header that failed is read again when next included.
 - Clang's Interpreter cannot name a lambda written in a statement at a cell's top level, as a call's argument or in a block, `if`, or loop, and may crash the session on one; write the lambda as a top-level variable's initializer, or inside a function.

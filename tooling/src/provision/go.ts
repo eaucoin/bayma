@@ -15,9 +15,8 @@ import {
 import { provisionZig, zigTarget } from "./zig.ts";
 
 // The Go payload: Go's release as it is, bayma-go-host built from this
-// repository's sources with it, and, on Linux, the pinned zig as the C
-// compiler every cell's plugin is built with, as the host was. macOS builds
-// with the Command Line Tools' clang.
+// repository's sources with it, and the pinned zig as the C compiler every
+// cell's plugin is built with, as the host was.
 
 const NATIVE_DIR = join("packages", "runtime-go", "native");
 const HOST = "bayma-go-host";
@@ -29,7 +28,7 @@ export async function provisionGo(
   const native = join(context.repoRoot, NATIVE_DIR);
   const identity = [
     GO.sha256,
-    ZIG?.sha256 ?? "no-zig",
+    ZIG.sha256,
     ...walkFiles(native).map(sha256File),
   ].join(":");
   if (!isProvisioned(context, root, identity)) {
@@ -48,11 +47,9 @@ export async function provisionGo(
     if (!version.startsWith(`go version go${GO.version} `)) {
       throw new Error(`pinned Go reports ${version.trim()}`);
     }
-    if (ZIG) {
-      copyTree(await provisionZig(context, ZIG), join(root, "zig"));
-      rmSync(join(root, "zig", ".provisioned"), { force: true });
-      writeCompilerWrapper(join(root, "bin", "cc"));
-    }
+    copyTree(await provisionZig(context, ZIG), join(root, "zig"));
+    rmSync(join(root, "zig", ".provisioned"), { force: true });
+    writeCompilerWrapper(join(root, "bin", "cc"));
     await buildHost(context, root, native);
     markProvisioned(root, identity);
   }
@@ -63,14 +60,14 @@ export async function provisionGo(
     envPaths: {
       BAYMA_GO_HOST_BIN: `bin/${HOST}`,
       BAYMA_GO_BIN: "go/bin/go",
-      ...(ZIG ? { BAYMA_GO_CC: "bin/cc" } : {}),
+      BAYMA_GO_CC: "bin/cc",
     },
     pathEnvPrepend: { PATH: ["go/bin"] },
     pins: {
       version: GO.version,
       sha256: GO.sha256,
       url: GO.url,
-      ...(ZIG ? { cc: `zig-${ZIG.zigVersion}` } : {}),
+      cc: `zig-${ZIG.zigVersion}`,
     },
   };
 }
@@ -110,7 +107,7 @@ async function buildHost(
     GOTOOLCHAIN: "local",
     GOFLAGS: "-trimpath -modcacherw",
     CGO_ENABLED: "1",
-    CC: ZIG ? join(root, "bin", "cc") : "cc",
+    CC: join(root, "bin", "cc"),
     ZIG_GLOBAL_CACHE_DIR: join(work, "zig-cache"),
     ZIG_LOCAL_CACHE_DIR: join(work, "zig-cache"),
   };

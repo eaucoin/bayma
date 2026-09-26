@@ -1,7 +1,14 @@
 import { Buffer } from "node:buffer";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { TextDecoder } from "node:util";
-import { aggregateFailure, failureDetail } from "../errors.ts";
+import { aggregateFailure, failureDetail, failureMessage } from "../errors.ts";
 import type { RuntimeId } from "../runtime/id.ts";
+import {
+  processSnapshotter,
+  type ProcessSnapshot,
+  type ProcessSnapshotter,
+} from "../runtime/process-snapshots.ts";
 import type { RuntimeBinding, RuntimeRegistry } from "../runtime/registry.ts";
 import type {
   RuntimeAdapter,
@@ -10,6 +17,7 @@ import type {
 import { assertRuntimeCheckpointCompatible } from "../runtime/adapter.ts";
 import type {
   RuntimeTransport,
+  StartSessionInput,
   TransportChunkListener,
   TransportSessionHandle,
 } from "../runtime/transport.ts";
@@ -77,6 +85,8 @@ export interface SessionRecord {
   updatedAtMs: number;
   controllerActorId?: string;
   observerActorIds: Set<string>;
+  /** The session's process tree, dumped when a server stopped, to restore. */
+  processSnapshot?: ProcessSnapshot;
 }
 
 interface ActiveExec {
@@ -147,6 +157,8 @@ export interface SessionCreatePolicy {
 export interface SessionManagerOptions extends RetentionPolicy {
   defaultCols: number;
   defaultRows: number;
+  /** The environment's snapshotter unless given; null for none. */
+  processSnapshotter?: ProcessSnapshotter | null;
   resolveCreatePolicy?: (request: {
     actorId: string;
     runtimeId: RuntimeId;
@@ -175,9 +187,16 @@ export function validateSessionManagerOptions(
 }
 
 const PTY_DELTA_MAX_BYTES = 64 * 1024;
+// How long a runtime restored from a process snapshot has to answer a probe.
+const PROBE_TIMEOUT_MS = 30_000;
 
 function execFailed(record: ExecRecord): boolean {
   return record.status === "error";
+}
+
+/** Note what the server's operator should know of, in its log. */
+function report(message: string): void {
+  process.stderr.write(`bayma: ${message}\n`);
 }
 
 export class SessionManager {
@@ -253,11 +272,15 @@ export class SessionManager {
       });
     }
 
-    for (const metadata of catalog.entries) {
-      if (metadata.closed) {
-        this.removePersistedSession(metadata.sessionId);
+    for (const stored of catalog.entries) {
+      if (stored.closed) {
+        this.removePersistedSession(stored.sessionId);
         continue;
       }
+      const metadata = {
+        ...stored,
+        processSnapshot: this.restorableSnapshot(stored),
+      };
       let history: ExecRecord[] = [];
       let historyFailure: string | undefined;
       try {
@@ -279,7 +302,9 @@ export class SessionManager {
             quarantineReason: historyFailure,
             closed: false,
           }
-        : checkpointRead.failure
+        : // A session with a process snapshot needs its checkpoint only if
+          // the snapshot does not restore, and finds it unreadable then.
+          checkpointRead.failure && !metadata.processSnapshot
           ? {
               ...metadata,
               checkpointRevision: undefined,
@@ -308,6 +333,11 @@ export class SessionManager {
         createdAtMs: normalized.createdAtMs,
         updatedAtMs: normalized.updatedAtMs,
         observerActorIds: new Set(),
+        // A quarantined session comes back from nothing.
+        processSnapshot:
+          normalized.status === "quarantined"
+            ? undefined
+            : normalized.processSnapshot,
       };
       const recovery = this.buildRecoveryState(record, checkpoint);
       const entry: SessionEntry = {
@@ -325,6 +355,88 @@ export class SessionManager {
       }
       this.sessions.set(record.sessionId, entry);
     }
+    this.sweepSessionDirectories();
+    this.reservePidsForSnapshots();
+  }
+
+  /** The directory a session keeps its scratch files in, as long as it lives. */
+  private scratchDir(sessionId: string): string {
+    return join(this.catalogStore.rootDir, "scratch", sessionId);
+  }
+
+  /** The directory a session's process snapshot is dumped into. */
+  private snapshotDir(sessionId: string): string {
+    return join(this.catalogStore.rootDir, "snapshots", sessionId);
+  }
+
+  /** An entry's process snapshot, if this server can restore it. */
+  private restorableSnapshot(
+    entry: SessionCatalogEntry,
+  ): ProcessSnapshot | undefined {
+    const snapshot = entry.processSnapshot;
+    if (!snapshot) return undefined;
+    const snapshots = this.registry.get(entry.runtimeId).transport.snapshots;
+    const reason = snapshots
+      ? snapshots.unrestorableReason(snapshot)
+      : "this server cannot restore process snapshots";
+    if (!reason) return snapshot;
+    report(
+      `session ${entry.sessionId}'s process snapshot cannot be restored: ${reason}`,
+    );
+    return undefined;
+  }
+
+  /**
+   * Remove the scratch directories no session owns any more, and the snapshot
+   * directories of no stored snapshot.
+   */
+  private sweepSessionDirectories(): void {
+    const owners = {
+      scratch: (session: SessionEntry | undefined) => session !== undefined,
+      snapshots: (session: SessionEntry | undefined) =>
+        session?.record.processSnapshot !== undefined,
+    };
+    for (const [parent, owns] of Object.entries(owners)) {
+      const root = join(this.catalogStore.rootDir, parent);
+      let entries: string[];
+      try {
+        entries = readdirSync(root);
+      } catch {
+        continue;
+      }
+      for (const sessionId of entries) {
+        if (!owns(this.sessions.get(sessionId)))
+          rmSync(join(root, sessionId), { recursive: true, force: true });
+      }
+    }
+  }
+
+  /**
+   * A snapshot restores its tree at the PIDs it had, so before this server
+   * starts anything, its PID counter moves past every stored snapshot's:
+   * nothing started from now on can take a PID one of them needs.
+   */
+  private reservePidsForSnapshots(): void {
+    const highest = Math.max(
+      0,
+      ...[...this.sessions.values()].map(
+        (session) => session.record.processSnapshot?.maxPid ?? 0,
+      ),
+    );
+    if (highest === 0) return;
+    try {
+      this.snapshotter()?.advancePidsPast(highest);
+    } catch (error) {
+      // A restore that then finds a PID taken fails, and its session comes
+      // back from its checkpoint instead.
+      report(`process snapshots may not restore: ${failureMessage(error)}`);
+    }
+  }
+
+  private snapshotter(): ProcessSnapshotter | null {
+    return this.options.processSnapshotter !== undefined
+      ? this.options.processSnapshotter
+      : processSnapshotter();
   }
 
   /** The runtimes this engine hosts, in canonical order. */
@@ -835,7 +947,7 @@ export class SessionManager {
       session.record.controllerActorId = undefined;
       session.record.observerActorIds.clear();
       const hadRuntime = session.runtime !== undefined;
-      if (hadRuntime) {
+      if (hadRuntime && !(await this.snapshotRuntime(session))) {
         try {
           await this.stopRuntime(session, "server_restart");
         } catch (error) {
@@ -861,15 +973,20 @@ export class SessionManager {
             }
           }
           if (session.record.status !== "quarantined") {
-            if (checkpointFailure) {
+            // A session comes back from its process snapshot, or from its
+            // checkpoint if it cannot; one that never committed a checkpoint
+            // comes back as it began.
+            const lost =
+              !checkpoint && session.record.checkpointRevision !== undefined
+                ? "checkpoint is missing"
+                : undefined;
+            const failure = checkpointFailure ?? lost;
+            if (failure && !session.record.processSnapshot) {
               session.record.status = "quarantined";
-              session.record.quarantineReason = checkpointFailure;
-            } else if (checkpoint) {
+              session.record.quarantineReason = failure;
+            } else {
               session.record.status = "suspended";
               session.record.quarantineReason = undefined;
-            } else {
-              session.record.status = "quarantined";
-              session.record.quarantineReason = "checkpoint is missing";
             }
           }
           this.touchSession(session);
@@ -1081,7 +1198,7 @@ export class SessionManager {
         cwd,
         role,
       }) ?? {
-        durabilityMode: "ephemeral",
+        durabilityMode: "checkpointed",
       }
     );
   }
@@ -1171,6 +1288,7 @@ export class SessionManager {
       closed: session.record.status === "closed",
       cols: session.runtime?.handle.cols ?? session.cols,
       rows: session.runtime?.handle.rows ?? session.rows,
+      processSnapshot: session.record.processSnapshot,
     };
     // Durable history is the source for orphan reconciliation. Persist it first so a
     // catalog-write crash can only leave recoverable, already-terminal history behind.
@@ -1201,6 +1319,17 @@ export class SessionManager {
         closed: false,
       };
     }
+    // A session comes back from its process snapshot, or from its checkpoint
+    // if it cannot; one that never committed a checkpoint comes back as it
+    // began.
+    if (entry.processSnapshot) {
+      return {
+        ...alignedEntry,
+        status: "suspended",
+        quarantineReason: undefined,
+        closed: false,
+      };
+    }
     if (checkpoint) {
       try {
         assertRuntimeCheckpointCompatible(
@@ -1217,10 +1346,12 @@ export class SessionManager {
         };
       }
     }
+    // A checkpoint the catalog records, and the store does not hold, is lost.
+    const lost = !checkpoint && entry.checkpointRevision !== undefined;
     return {
       ...alignedEntry,
-      status: checkpoint ? "suspended" : "quarantined",
-      quarantineReason: checkpoint ? undefined : "checkpoint is missing",
+      status: lost ? "quarantined" : "suspended",
+      quarantineReason: lost ? "checkpoint is missing" : undefined,
       closed: false,
     };
   }
@@ -1232,23 +1363,37 @@ export class SessionManager {
     return {
       canRecover:
         record.durabilityMode === "checkpointed" &&
-        record.status !== "quarantined" &&
-        checkpoint !== null,
+        record.status !== "quarantined",
       hasCheckpoint: checkpoint !== null,
       lastError: record.quarantineReason,
     };
   }
 
-  private requireCompatibleCheckpoint(sessionId: string): SessionCheckpoint {
+  /**
+   * The session's checkpoint, or null if it has never committed one; one it
+   * cannot read, or its runtime cannot restore, is an error.
+   */
+  private compatibleCheckpoint(sessionId: string): SessionCheckpoint | null {
+    const session = this.requireSession(sessionId);
     const inspected = this.checkpointStore.inspect(sessionId);
+    if (inspected.failure) throw new Error(inspected.failure);
     if (!inspected.checkpoint) {
-      throw new Error(inspected.failure ?? "checkpoint is missing");
+      // One the session committed, and the store does not hold, is lost.
+      if (session.record.checkpointRevision !== undefined)
+        throw new Error("checkpoint is missing");
+      return null;
     }
     assertRuntimeCheckpointCompatible(
-      this.adapter(this.requireSession(sessionId)),
+      this.adapter(session),
       inspected.checkpoint,
     );
     return inspected.checkpoint;
+  }
+
+  private requireCompatibleCheckpoint(sessionId: string): SessionCheckpoint {
+    const checkpoint = this.compatibleCheckpoint(sessionId);
+    if (!checkpoint) throw new Error("checkpoint is missing");
+    return checkpoint;
   }
 
   private async ensureRuntime(session: SessionEntry): Promise<void> {
@@ -1264,7 +1409,8 @@ export class SessionManager {
       );
     }
     try {
-      this.requireCompatibleCheckpoint(session.record.sessionId);
+      const snapshot = session.record.processSnapshot;
+      if (!snapshot) this.compatibleCheckpoint(session.record.sessionId);
       session.record.status = "recovering";
       this.touchSession(session);
       session.recovery.lastAttemptAtMs = session.record.updatedAtMs;
@@ -1279,8 +1425,21 @@ export class SessionManager {
         sessionId: session.record.sessionId,
         status: "recovering",
       });
-      await this.spawnRuntime(session, "recovery");
-      await this.hydrateFromCheckpoint(session);
+      const snapshotFailure =
+        snapshot && (await this.restoreRuntime(session, snapshot));
+      if (!snapshot || snapshotFailure) {
+        try {
+          this.compatibleCheckpoint(session.record.sessionId);
+        } catch (error) {
+          throw snapshotFailure
+            ? new Error(
+                `the session came back from neither its process snapshot (${snapshotFailure}) nor its checkpoint (${failureMessage(error)})`,
+              )
+            : error;
+        }
+        await this.spawnRuntime(session, "recovery");
+        await this.hydrateFromCheckpoint(session);
+      }
       session.record.status = "live_idle";
       session.record.quarantineReason = undefined;
       session.recovery.lastError = undefined;
@@ -1314,13 +1473,7 @@ export class SessionManager {
     const transport = this.transport(session);
     let runtime: LiveRuntimeSession | undefined;
     try {
-      const handle = await transport.startSession({
-        sessionId: session.record.sessionId,
-        title: session.record.title,
-        cwd: session.record.cwd,
-        cols: session.cols,
-        rows: session.rows,
-      });
+      const handle = await transport.startSession(this.startInput(session));
       const startedRuntime: LiveRuntimeSession = {
         handle,
         queue: queued,
@@ -1386,6 +1539,158 @@ export class SessionManager {
         reason,
       });
     }
+  }
+
+  private startInput(session: SessionEntry): StartSessionInput {
+    const scratchDir = this.scratchDir(session.record.sessionId);
+    mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
+    return {
+      sessionId: session.record.sessionId,
+      title: session.record.title,
+      cwd: session.record.cwd,
+      cols: session.cols,
+      rows: session.rows,
+      scratchDir,
+    };
+  }
+
+  /**
+   * Dump an idle checkpointed session's runtime as the server stops, for the
+   * session to come back whole. Returns whether it did; a runtime it did not
+   * dump is stopped as ever, and its session comes back from its checkpoint.
+   */
+  private async snapshotRuntime(session: SessionEntry): Promise<boolean> {
+    const runtime = session.runtime;
+    const snapshots = runtime && this.transport(session).snapshots;
+    if (
+      !runtime ||
+      !snapshots ||
+      session.record.durabilityMode !== "checkpointed" ||
+      session.record.status !== "live_idle" ||
+      runtime.activeExec ||
+      runtime.queue.length > 0
+    ) {
+      return false;
+    }
+    const { sessionId } = session.record;
+    // The dump ends the runtime, which is no failure of it.
+    runtime.unsubscribe();
+    try {
+      session.record.processSnapshot = await snapshots.snapshot(
+        runtime.handle,
+        this.snapshotDir(sessionId),
+      );
+    } catch (error) {
+      report(
+        `session ${sessionId} will come back from its checkpoint, not a process snapshot: ${failureMessage(error)}`,
+      );
+      return false;
+    }
+    session.runtime = undefined;
+    return true;
+  }
+
+  /**
+   * Bring a session's runtime back whole from its process snapshot, and check
+   * that it answers. Returns why it could not, or undefined if it did. The
+   * snapshot is spent either way: a session it could not restore comes back
+   * from its checkpoint.
+   */
+  private async restoreRuntime(
+    session: SessionEntry,
+    snapshot: ProcessSnapshot,
+  ): Promise<string | undefined> {
+    const { sessionId } = session.record;
+    const directory = this.snapshotDir(sessionId);
+    const transport = this.transport(session);
+    try {
+      const snapshots = transport.snapshots;
+      if (!snapshots) {
+        throw new Error("this server cannot restore process snapshots");
+      }
+      const unrestorable = snapshots.unrestorableReason(snapshot);
+      if (unrestorable) throw new Error(unrestorable);
+      const handle = await snapshots.restore(
+        this.startInput(session),
+        snapshot,
+        directory,
+      );
+      const restored: LiveRuntimeSession = {
+        handle,
+        queue: [],
+        unsubscribe: () => undefined,
+      };
+      session.runtime = restored;
+      session.record.runtimeGeneration += 1;
+      restored.unsubscribe = await transport.subscribe(
+        handle,
+        (chunk) => this.onBrokerChunk(session, chunk),
+        (error) => this.onRuntimeExit(session, handle, error),
+      );
+      await this.probeRuntime(session);
+      session.recovery = this.buildRecoveryState(
+        session.record,
+        this.checkpointStore.read(sessionId),
+      );
+      return undefined;
+    } catch (error) {
+      const failure = failureMessage(error);
+      report(
+        `session ${sessionId}'s process snapshot did not restore: ${failure}`,
+      );
+      // A restored runtime that failed its probe quarantined its session on
+      // the way out; its checkpoint is what decides now.
+      await this.stopRuntime(session);
+      session.record.status = "recovering";
+      session.record.quarantineReason = undefined;
+      return failure;
+    } finally {
+      session.record.processSnapshot = undefined;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  /** Run the runtime's doctor probe in a live session, which must answer it. */
+  private async probeRuntime(session: SessionEntry): Promise<void> {
+    const runtime = session.runtime;
+    if (!runtime || session.record.status === "quarantined") {
+      throw new Error(
+        session.record.quarantineReason ??
+          `runtime ${session.record.sessionId} exited before its probe`,
+      );
+    }
+    const { doctor } = this.adapter(session);
+    const record: ExecRecord = {
+      execId: `internal_probe_${session.record.runtimeGeneration}`,
+      code: doctor.probeCode,
+      status: "queued",
+      submittedAtMs: Date.now(),
+      messages: [],
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.runExec(session, record, {
+          emitActors: false,
+          commitCheckpoint: false,
+          checkpoint: this.checkpointStore.snapshot(session.record.sessionId),
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `runtime did not answer within ${PROBE_TIMEOUT_MS} ms`,
+                ),
+              ),
+            PROBE_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    doctor.assertSuccess(record);
   }
 
   private async stopRuntime(
@@ -1483,6 +1788,8 @@ export class SessionManager {
     }
     this.historyStore.remove(sessionId);
     this.checkpointStore.remove(sessionId);
+    rmSync(this.scratchDir(sessionId), { recursive: true, force: true });
+    rmSync(this.snapshotDir(sessionId), { recursive: true, force: true });
   }
 
   private finalizeSessionRemoval(
@@ -1528,10 +1835,12 @@ export class SessionManager {
     return this.toSummary(session);
   }
 
+  /**
+   * Bring a fresh runtime to the session's checkpointed state: its bootstrap
+   * run with its checkpoint, if it has either.
+   */
   private async hydrateFromCheckpoint(session: SessionEntry): Promise<void> {
-    const checkpoint = this.requireCompatibleCheckpoint(
-      session.record.sessionId,
-    );
+    const checkpoint = this.compatibleCheckpoint(session.record.sessionId);
     if (!session.record.bootstrapCode) {
       session.recovery = this.buildRecoveryState(session.record, checkpoint);
       return;
@@ -1563,20 +1872,16 @@ export class SessionManager {
     options: { allowFresh?: boolean } = {},
   ): Promise<void> {
     try {
-      const checkpoint =
-        session.record.durabilityMode === "checkpointed"
-          ? this.requireCompatibleCheckpoint(session.record.sessionId)
-          : null;
-      await this.spawnRuntime(session, "recycle");
-      if (session.record.durabilityMode === "checkpointed" && checkpoint) {
-        await this.hydrateFromCheckpoint(session);
-      } else if (!options.allowFresh) {
+      const checkpointed = session.record.durabilityMode === "checkpointed";
+      if (checkpointed) this.compatibleCheckpoint(session.record.sessionId);
+      else if (!options.allowFresh) {
         throw new Error(
           "soft interrupt failed and no committed checkpoint is available for recycle",
         );
-      } else {
-        session.recovery = this.buildRecoveryState(session.record, checkpoint);
       }
+      await this.spawnRuntime(session, "recycle");
+      if (checkpointed) await this.hydrateFromCheckpoint(session);
+      else session.recovery = this.buildRecoveryState(session.record, null);
       session.record.status = "live_idle";
       session.record.quarantineReason = undefined;
       session.recovery.lastError = undefined;

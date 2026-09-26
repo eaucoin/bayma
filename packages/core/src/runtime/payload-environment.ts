@@ -48,7 +48,7 @@ const REQUIRED_ENV_PATHS: Record<RuntimeId, readonly string[]> = {
   c: ["BAYMA_C_HOST_BIN"],
   cpp: ["BAYMA_CPP_HOST_BIN"],
   lean: ["BAYMA_LEAN_HOST_BIN", "BAYMA_LAKE_BIN"],
-  go: ["BAYMA_GO_HOST_BIN", "BAYMA_GO_BIN"],
+  go: ["BAYMA_GO_HOST_BIN", "BAYMA_GO_BIN", "BAYMA_GO_CC"],
 };
 
 /** Host variables that would redirect a runtime away from its payload. */

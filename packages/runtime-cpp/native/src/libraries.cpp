@@ -17,11 +17,7 @@ namespace bayma {
 
 namespace {
 
-#ifdef __APPLE__
-constexpr llvm::StringLiteral SharedLibrarySuffix = ".dylib";
-#else
 constexpr llvm::StringLiteral SharedLibrarySuffix = ".so";
-#endif
 
 std::string absolute(llvm::StringRef Path, llvm::StringRef Cwd) {
   llvm::SmallString<256> Absolute(Path);

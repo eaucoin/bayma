@@ -237,9 +237,8 @@ class PythonToolbeltStressTest(unittest.TestCase):
                 rust_timeout=100,
                 yield_on_timeout=True,
             )
-            # Platforms batch and order events differently (macOS may first
-            # report the watched directory itself), so collect until the
-            # file's own event arrives.
+            # Events can arrive batched, and about the watched directory
+            # itself first, so collect until the file's own event arrives.
             expected = (self.toolbelt.watchfiles.Change.added, str(root / "created.py"))
             observed = set()
             deadline = time.monotonic() + 5

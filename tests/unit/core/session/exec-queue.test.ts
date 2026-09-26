@@ -27,7 +27,13 @@ test("the single-flight exec queue is FIFO", async () => {
       },
       () => undefined,
     );
-    const session = await manager.create("conn_a", "title", dir, "controller");
+    const session = await manager.createWithPolicy(
+      "conn_a",
+      "title",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
 
     await manager.submitExec(session.sessionId, "conn_a", "1 + 1");
     await manager.submitExec(session.sessionId, "conn_a", "2 + 2");

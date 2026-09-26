@@ -1,13 +1,22 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
-  ensurePayload,
   hostPlatformId,
   payloadDir,
+  preparePayload,
   readPayloadManifest,
   resolvePayloadEnvironment,
   RUNTIME_IDS,
+  TOOLBELT_DIR,
+  TOOLBELT_VERSION_FILE,
+  toolbeltPath,
   type PayloadManifest,
 } from "@bayma/core";
 import { withTempDir } from "../../../support/temp.ts";
@@ -92,6 +101,7 @@ function writePayload(
         envPaths: {
           BAYMA_GO_HOST_BIN: "bin/bayma-go-host",
           BAYMA_GO_BIN: "go/bin/go",
+          BAYMA_GO_CC: "bin/cc",
         },
         pathEnvPrepend: { PATH: ["go/bin"] },
         pins: {},
@@ -134,8 +144,8 @@ test("the manifest describes exactly the runtimes bayma hosts", async () => {
 
 test("the resolved environment points every runtime at the payload", async () => {
   await withTempDir(async (dir) => {
-    // realpath: the resolver reports physical paths, and macOS reaches its
-    // temporary directories through a symlink.
+    // realpath: the resolver reports physical paths, and a temporary
+    // directory may be reached through a symlink.
     const root = realpathSync(writePayload(dir));
     const env = resolvePayloadEnvironment(root, {
       PATH: "/usr/bin",
@@ -228,76 +238,46 @@ test("an incomplete manifest is refused", async () => {
   });
 });
 
-test("BAYMA_PAYLOAD_DIR is used as given, and must hold a payload", async () => {
-  await withTempDir(async (dir) => {
-    const root = writePayload(dir);
-    expect(payloadDir("9.9.9", { BAYMA_PAYLOAD_DIR: root })).toBe(root);
+test("the payload is the one BAYMA_PAYLOAD_DIR names, and there is none without it", () => {
+  expect(payloadDir({ BAYMA_PAYLOAD_DIR: "/opt/bayma/payload" })).toBe(
+    "/opt/bayma/payload",
+  );
+  expect(() => payloadDir({ HOME: "/home/someone" })).toThrow(
+    "BAYMA_PAYLOAD_DIR is not set",
+  );
+});
+
+test("preparing the payload installs its toolbelt", async () => {
+  await withTempDir((dir) => {
+    const root = writePayload(join(dir, "payload"));
+    mkdirSync(join(root, TOOLBELT_DIR));
+    const env = {
+      BAYMA_PAYLOAD_DIR: root,
+      XDG_DATA_HOME: join(dir, "data"),
+    };
+    const reports: string[] = [];
+
+    expect(preparePayload(env, (message) => reports.push(message))).toBe(root);
+
     expect(
-      await ensurePayload({
-        version: "9.9.9",
-        env: { BAYMA_PAYLOAD_DIR: root },
-      }),
-    ).toBe(root);
-    await expect(
-      ensurePayload({
-        version: "9.9.9",
-        env: { BAYMA_PAYLOAD_DIR: join(dir, "empty") },
-      }),
-    ).rejects.toThrow("holds no payload.json");
+      readFileSync(join(toolbeltPath(env), TOOLBELT_VERSION_FILE), "utf8"),
+    ).toBe("9.9.9\n");
+    expect(reports).toEqual([
+      `bayma: installed the 9.9.9 toolbelt at ${toolbeltPath(env)}`,
+    ]);
   });
 });
 
-test("a payload that does not match its pinned digest is refused", async () => {
-  await withTempDir(async (dir) => {
-    const served = join(dir, "payload.tar.gz");
-    writeFileSync(served, "not the payload the package pinned");
-    const server = Bun.serve({
-      port: 0,
-      fetch: () => new Response(Bun.file(served)),
-    });
-    try {
-      await expect(
-        ensurePayload({
-          version: "9.9.9",
-          env: { XDG_CACHE_HOME: join(dir, "cache") },
-          report: () => undefined,
-          release: {
-            version: "9.9.9",
-            payloads: {
-              [hostPlatformId()]: {
-                url: `http://127.0.0.1:${server.port}/payload.tar.gz`,
-                sha256: "0".repeat(64),
-                bytes: 34,
-              },
-            },
-          },
-        }),
-      ).rejects.toThrow("does not match its pinned identity");
-    } finally {
-      server.stop(true);
-    }
-  });
-});
+test("a BAYMA_PAYLOAD_DIR that holds no payload is refused", async () => {
+  await withTempDir((dir) => {
+    const env = {
+      BAYMA_PAYLOAD_DIR: join(dir, "empty"),
+      XDG_DATA_HOME: join(dir, "data"),
+    };
 
-test("a platform the release does not carry is refused by name", async () => {
-  await withTempDir(async (dir) => {
-    await expect(
-      ensurePayload({
-        version: "9.9.9",
-        platform: "darwin-arm64",
-        env: { XDG_CACHE_HOME: join(dir, "cache") },
-        report: () => undefined,
-        release: {
-          version: "9.9.9",
-          payloads: {
-            "linux-x64": {
-              url: "https://example.invalid",
-              sha256: "",
-              bytes: 0,
-            },
-          },
-        },
-      }),
-    ).rejects.toThrow("publishes no payload for darwin-arm64");
+    expect(() => preparePayload(env)).toThrow(
+      `BAYMA_PAYLOAD_DIR holds no payload.json: ${join(dir, "empty")}`,
+    );
+    expect(existsSync(toolbeltPath(env))).toBe(false);
   });
 });

@@ -11,11 +11,11 @@ import {
 } from "./payload.ts";
 
 // The pinned zig, unpacked once for every provisioner that compiles or links
-// against the glibc floor. Linux only: macOS builds with Apple's clang.
+// against the glibc floor.
 
 export async function provisionZig(
   context: ProvisionContext,
-  pin: NonNullable<PlatformPins["zig"]>,
+  pin: PlatformPins["zig"],
 ): Promise<string> {
   const directory = join(context.workDir, "zig");
   if (isProvisioned(context, directory, pin.sha256)) return directory;

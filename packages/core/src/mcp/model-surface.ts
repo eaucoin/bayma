@@ -23,7 +23,7 @@ export function createModelSurface(
     instructions: [
       `Bayma executes code in long-lived ${readableList(profiles.map(({ heading }) => heading))} sessions.`,
       "Create a session with session.create, selecting exactly one runtime. The selected runtime is fixed for the lifetime of the session.",
-      "Sessions preserve live language state across exec calls while their runtime remains up. Bayma manages persistence and restart recovery internally.",
+      "Sessions preserve live language state across exec calls while their runtime remains up, and across a server restart where Bayma restores the session whole, with its network connections closed. Bayma manages persistence and restart recovery internally.",
       "Use exec to evaluate source code in the session's selected runtime. The code argument contains raw source text; do not include Markdown code fences.",
       "Use yield_time_ms on exec to wait for an inline first snapshot. It defaults to 10000 ms.",
       `Use max_output_tokens to control the approximate content-token budget. It defaults to ${snapshotTokenLimit} tokens.`,

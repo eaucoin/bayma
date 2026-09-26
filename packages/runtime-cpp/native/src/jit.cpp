@@ -7,6 +7,8 @@
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
 #include "llvm/ExecutionEngine/Orc/Debugging/DebuggerSupport.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
+#include "llvm/ExecutionEngine/Orc/MemoryMapper.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -104,6 +106,15 @@ Error preferLoaded(LLJIT &J, Module &M, MaterializationResponsibility &R) {
 /// initializers.
 constexpr StringLiteral InitializerPrefix = "__orc_init_func.";
 
+/// The address range the JIT places cells' code and data in. A cell reaches
+/// some of what earlier cells defined by 32-bit offsets, as a linked program
+/// does, such as the personality its unwind tables share, so all of it must
+/// lie within 2 GiB of the rest. Mapping each cell's memory apart, the JIT
+/// would rely on the kernel placing new mappings near earlier ones, which it
+/// stops doing in a session restored from a process snapshot: there, new
+/// mappings go where the restorer's went. One reservation keeps them close.
+constexpr size_t CellMemoryReservation = size_t(1) << 30;
+
 } // namespace
 
 /// What the JIT tells the session's CellJit, and asks it.
@@ -123,7 +134,7 @@ struct CellJitHooks {
       if (auto *V = dyn_cast<GlobalVariable>(&G); V && V->isThreadLocal())
         continue;
       G.setLinkage(GlobalValue::ExternalWeakLinkage);
-      // The linker's name for it has the platform's prefix: Mach-O's `_`.
+      // The linker's name for it, as the module's data layout mangles it.
       std::string Linked;
       raw_string_ostream Name(Linked);
       Mangler::getNameWithPrefix(Name, G.getName(), M.getDataLayout());
@@ -217,6 +228,13 @@ std::vector<std::string> CellJit::undefined() {
 std::unique_ptr<clang::IncrementalExecutorBuilder>
 executorBuilder(std::shared_ptr<CellJit> Cell) {
   auto JIT = std::make_unique<LLJITBuilder>();
+  // Cells' memory comes from one reservation; see CellMemoryReservation.
+  JIT->setMemoryManagerCreator(
+      [](ExecutionSession &)
+          -> Expected<std::unique_ptr<jitlink::JITLinkMemoryManager>> {
+        return MapperJITLinkMemoryManager::CreateWithMapper<
+            InProcessMemoryMapper>(CellMemoryReservation);
+      });
   // As Clang's own builder: debuggers see what the JIT compiles.
   JIT->setPrePlatformSetup([](LLJIT &J) {
     consumeError(enableDebuggerSupport(J));

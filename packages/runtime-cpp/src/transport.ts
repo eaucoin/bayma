@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { payloadValue, ProcessTransport } from "@bayma/core";
 import type { RuntimeTransport } from "@bayma/core";
 
@@ -23,40 +22,9 @@ export function createCppTransport(language: CppLanguage): RuntimeTransport {
     platformId: "stdio",
     promptRe: /(?:^|[\r\n])BAYMA> /g,
     interruptStrategy: "recycle",
-    ownsProcessTree: true,
     command: () => ({
       file: payloadValue(HOST_BIN[language]),
-      args: [
-        `--language=${language}`,
-        ...(process.platform === "darwin" ? [`--sysroot=${macosSdk()}`] : []),
-      ],
-      // As Apple's toolchain names the SDK to Clang, so the libclang cells
-      // call parses a project against it, as the project's build would.
-      ...(process.platform === "darwin"
-        ? { env: { SDKROOT: macosSdk() } }
-        : {}),
+      args: [`--language=${language}`],
     }),
   });
-}
-
-let sdk: string | undefined;
-
-/**
- * macOS cells compile against the SDK of the Xcode Command Line Tools, which
- * cannot be redistributed; on Linux the payload carries its own headers.
- */
-function macosSdk(): string {
-  if (sdk === undefined) {
-    try {
-      sdk = execFileSync("xcrun", ["--show-sdk-path"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-    } catch {
-      throw new Error(
-        "C and C++ sessions on macOS need the Xcode Command Line Tools; install them with `xcode-select --install`",
-      );
-    }
-  }
-  return sdk;
 }

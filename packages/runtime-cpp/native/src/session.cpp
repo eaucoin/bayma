@@ -387,11 +387,7 @@ std::vector<std::string> compilerArgs(const SessionOptions &Options,
             "-Wno-unused-result"};
   else
     Args = {"-xc", "-std=gnu23"};
-#ifdef __APPLE__
-  Args.insert(Args.end(), {"-isysroot", Options.Sysroot});
-#else
   Args.push_back("--sysroot=" + Options.Sysroot);
-#endif
   // The payload's headers of the host's own libraries, libclang's among them.
   Args.insert(Args.end(), {"-isystem", Options.Root + "/include"});
   Args.insert(Args.end(), {"-iquote", Options.Cwd, "-fno-color-diagnostics"});

@@ -10,8 +10,7 @@ namespace {
 
 bool isSharedLibrary(llvm::StringRef Arg) {
   return !Arg.starts_with("-") &&
-         (Arg.ends_with(".so") || Arg.contains(".so.") ||
-          Arg.ends_with(".dylib"));
+         (Arg.ends_with(".so") || Arg.contains(".so."));
 }
 
 } // namespace

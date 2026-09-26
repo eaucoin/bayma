@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createBunTransport } from "@bayma/runtime-bun";
 import { withTempDir } from "../../support/temp.ts";
@@ -26,6 +28,11 @@ async function waitForProcessExit(
 
 test.serial("transport shutdown terminates child REPLs", async () => {
   await withTempDir(async (dir) => {
+    const scratchDir = (sessionId: string) => {
+      const path = join(dir, "scratch", sessionId);
+      mkdirSync(path, { recursive: true });
+      return path;
+    };
     const transport = createBunTransport();
     const first = await transport.startSession({
       sessionId: "sess_one",
@@ -33,6 +40,7 @@ test.serial("transport shutdown terminates child REPLs", async () => {
       cwd: dir,
       cols: 120,
       rows: 40,
+      scratchDir: scratchDir("sess_one"),
     });
     const second = await transport.startSession({
       sessionId: "sess_two",
@@ -40,6 +48,7 @@ test.serial("transport shutdown terminates child REPLs", async () => {
       cwd: dir,
       cols: 120,
       rows: 40,
+      scratchDir: scratchDir("sess_two"),
     });
 
     await transport.waitForInitialPrompt(first);

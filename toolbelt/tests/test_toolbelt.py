@@ -14,7 +14,6 @@ from typing import ClassVar, Protocol, cast
 from unittest.mock import patch
 
 import bayma_toolbelt as subject
-import bayma_toolbelt_process
 
 # The skill that documents this toolbelt's Python side, beside it in the
 # repository; its examples must run against it.
@@ -82,7 +81,7 @@ class ActivateEnvironmentTest(unittest.TestCase):
             self.assertRaisesRegex(
                 RuntimeError,
                 r"this session is using Python .*Expected the toolbelt environment.*"
-                r"npx @bayma-repl/bayma doctor",
+                r"restart bayma, which installs it again",
             ),
         ):
             subject.open_toolbelt(cwd=Path(__file__))
@@ -119,7 +118,7 @@ class InterpreterContractTest(unittest.TestCase):
             expected_minor,
         )
         self.assertIn(f".venv/lib/python{expected_minor}/site-packages", skill)
-        self.assertIn("npx @bayma-repl/bayma doctor", skill)
+        self.assertIn("where bayma installs it from its image as it starts", skill)
 
     def test_documented_python_quickstart_executes_verbatim(self) -> None:
         skill = SKILL_DOC.read_text(encoding="utf-8")
@@ -193,28 +192,6 @@ class RepositoryHelpersTest(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "complete\n")
             self.assertEqual(target.stat().st_mode & 0o777, 0o640)
             self.assertFalse(list(target.parent.glob(f".{target.name}.*.tmp")))
-
-
-@unittest.skipUnless(sys.platform != "win32", "process groups are POSIX")
-class ProcessTerminationTest(unittest.TestCase):
-    def test_a_group_left_with_only_zombies_counts_as_stopped(self) -> None:
-        # macOS refuses to signal a group whose remaining members are all
-        # zombies: its leader exited, and a descendant has yet to be reaped.
-        process = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
-            start_new_session=True,
-        )
-        real_killpg = bayma_toolbelt_process.os.killpg
-
-        def refuse_zombie_group(group: int, signal_number: int) -> None:
-            if signal_number == bayma_toolbelt_process.signal.SIGKILL:
-                process.wait()
-                raise PermissionError(1, "Operation not permitted")
-            real_killpg(group, signal_number)
-
-        with patch.object(bayma_toolbelt_process.os, "killpg", refuse_zombie_group):
-            returncode = bayma_toolbelt_process.terminate_process(process)
-        self.assertEqual(returncode, -bayma_toolbelt_process.signal.SIGTERM)
 
 
 class ToolbeltTest(unittest.TestCase):

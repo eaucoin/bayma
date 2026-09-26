@@ -6,7 +6,9 @@ on:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
+  attestations: write
 
 # Development telemetry goes where the repository's secrets and variables of
 # these OpenTelemetry names say; with none set, nothing is exported. See
@@ -21,81 +23,52 @@ env:
   OTEL_EXPORTER_OTLP_METRICS_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_METRICS_HEADERS }}
   OTEL_EXPORTER_OTLP_LOGS_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_LOGS_HEADERS }}
   OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_EXPORTER_OTLP_PROTOCOL }}
+  IMAGE: ghcr.io/eaucoin/bayma
 
 jobs:
-  # The release is named after the ref it runs from, so a run from a branch
-  # must stop before it creates a release by the branch's name.
-  tag:
+  publish:
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     steps:
+      # The image is tagged after the ref it runs from, so a run from a branch
+      # must stop before it publishes one by the branch's name.
       - run: |
           [[ "$GITHUB_REF" == refs/tags/v* ]] ||
             { echo "::error::Run the release from a v* tag, not $GITHUB_REF"; exit 1; }
-
-  payload-linux:
-    needs: tag
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
-      - run: bun install --frozen-lockfile
-      - run: bun run provision
-      - run: bun run payload
-      - uses: actions/upload-artifact@v4
-        with:
-          name: payload-linux-x64
-          path: dist/bayma-payload-*.tar.gz
-
-  payload-macos:
-    needs: tag
-    runs-on: macos-15
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - run: bun install --frozen-lockfile
-      - run: bun run provision
-      - run: bun run payload
-      - uses: actions/upload-artifact@v4
-        with:
-          name: payload-darwin-arm64
-          path: dist/bayma-payload-*.tar.gz
-
-  publish:
-    needs: [payload-linux, payload-macos]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
+      - run: test "v$(bun -p 'require("./packages/server/package.json").version')" = "$GITHUB_REF_NAME"
       - run: bun install --frozen-lockfile
       - run: bun run build
-      # The release must exist, with its assets, before the package that points
-      # at them. Both steps tolerate a re-run over an existing release.
+      # The payload, what provisions it, and the image built from it take more
+      # disk than a runner starts with free.
+      - run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - run: bun run provision
+      - run: bun run payload
+      - run: bun run image
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: push
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          docker tag "$IMAGE:$version" "$IMAGE:latest"
+          docker push "$IMAGE:$version"
+          docker push "$IMAGE:latest"
+          digest="$(docker image inspect "$IMAGE:$version" --format '{{index .RepoDigests 0}}')"
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      # Tolerates a re-run over an existing release.
       - run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --title "bayma ${GITHUB_REF_NAME#v}" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" ./dist/bayma-payload-*.tar.gz --clobber
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: bun run release
-      - run: bun run pack
-      - run: test "v$(node -p 'require("./packages/server/package.json").version')" = "$GITHUB_REF_NAME"
-      - run: npm publish --provenance ./dist/*.tgz
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

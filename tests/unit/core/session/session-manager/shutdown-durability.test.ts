@@ -74,7 +74,13 @@ test("shutdown suspends checkpointed sessions and prunes ephemeral ones", async 
       { durabilityMode: "checkpointed", initialCheckpoint: { answer: 41 } },
       "controller",
     );
-    const ephemeral = await manager.create("actor_2", "ephemeral", dir);
+    const ephemeral = await manager.createWithPolicy(
+      "actor_2",
+      "ephemeral",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
     const active = await manager.submitExec(
       checkpointed.sessionId,
       "actor_1",
@@ -131,7 +137,7 @@ test("shutdown suspends checkpointed sessions and prunes ephemeral ones", async 
   });
 });
 
-test("shutdown quarantines a checkpointed session that has no recovery point", async () => {
+test("a checkpointed session that never committed a checkpoint comes back as it began", async () => {
   await withTempDir(async (dir) => {
     const catalogStore = new SessionCatalogStore(dir);
     const historyStore = new ExecHistoryStore(dir);
@@ -166,15 +172,12 @@ test("shutdown quarantines a checkpointed session that has no recovery point", a
     expect(manager.list()).toEqual([
       expect.objectContaining({
         sessionId: checkpointed.sessionId,
-        status: "quarantined",
-        quarantineReason: "checkpoint is missing",
+        status: "suspended",
+        quarantineReason: undefined,
       }),
     ]);
     expect(catalogStore.read(checkpointed.sessionId)).toEqual(
-      expect.objectContaining({
-        status: "quarantined",
-        quarantineReason: "checkpoint is missing",
-      }),
+      expect.objectContaining({ status: "suspended" }),
     );
 
     const restartedManager = new SessionManager(
@@ -196,10 +199,22 @@ test("shutdown quarantines a checkpointed session that has no recovery point", a
     expect(restartedManager.list()).toEqual([
       expect.objectContaining({
         sessionId: checkpointed.sessionId,
-        status: "quarantined",
-        quarantineReason: "checkpoint is missing",
+        status: "suspended",
+        quarantineReason: undefined,
       }),
     ]);
+    expect(restartedManager.recoveryState(checkpointed.sessionId)).toEqual(
+      expect.objectContaining({ canRecover: true, hasCheckpoint: false }),
+    );
+    await restartedManager.attach(
+      checkpointed.sessionId,
+      "actor_2",
+      "controller",
+    );
+    expect(
+      (await restartedManager.recoverSession(checkpointed.sessionId, "actor_2"))
+        .status,
+    ).toBe("live_idle");
     await restartedManager.shutdown();
   });
 });
@@ -282,7 +297,13 @@ test("shutdown cleans every session before reporting a termination failure", asy
       { durabilityMode: "checkpointed", initialCheckpoint: { answer: 41 } },
       "controller",
     );
-    const ephemeral = await manager.create("actor_2", "ephemeral", dir);
+    const ephemeral = await manager.createWithPolicy(
+      "actor_2",
+      "ephemeral",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
 
     await expect(manager.shutdown()).rejects.toThrow(
       "session manager shutdown failed",

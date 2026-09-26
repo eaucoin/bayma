@@ -1,10 +1,15 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
+import { readlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   aggregateFailure,
+  CriuSnapshotter,
   describeFailure,
   ProcessTransport,
+  type ProcessSnapshotter,
 } from "@bayma/core";
+import { withTempDir } from "../../../support/temp.ts";
 
 function processExists(pid: number): boolean {
   try {
@@ -63,6 +68,7 @@ test("process transport escalates termination when a child ignores SIGTERM", asy
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   await transport.waitForInitialPrompt(handle);
 
@@ -79,7 +85,9 @@ test("process transport can submit Enter after piped line bytes", async () => {
   const transport = new ProcessTransport({
     platformId: "test",
     promptRe: /(?:^|[\r\n])READY> /g,
-    lineSubmitDelayMs: 10,
+    // Wide enough that the child reads the line before its Enter arrives,
+    // however busy the machine: what is under test is that they arrive apart.
+    lineSubmitDelayMs: 200,
     command: () => ({
       file: process.execPath,
       args: [
@@ -103,6 +111,7 @@ test("process transport can submit Enter after piped line bytes", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   await transport.subscribe(handle, (chunk) => {
     output += Buffer.from(chunk).toString("utf8");
@@ -112,7 +121,7 @@ test("process transport can submit Enter after piped line bytes", async () => {
     await transport.write(handle, "COMMAND\n");
     for (
       let attempt = 0;
-      attempt < 40 && !output.includes("SPLIT");
+      attempt < 200 && !output.includes("SPLIT");
       attempt += 1
     ) {
       await sleep(5);
@@ -136,92 +145,160 @@ test("process transport rejects invalid line-submit delays", () => {
   ).toThrow("line submit delay must be a non-negative integer");
 });
 
-test.skipIf(process.platform === "win32")(
-  "owned process trees terminate descendants that ignore SIGTERM",
-  async () => {
+test("termination ends the session's whole process group, descendants that ignore SIGTERM included", async () => {
+  let output = "";
+  const transport = new ProcessTransport({
+    platformId: "test",
+    promptRe: /(?:^|[\r\n])READY> /g,
+    command: () => ({
+      file: process.execPath,
+      args: [
+        "-e",
+        [
+          'const { spawn } = require("node:child_process");',
+          `const child = spawn(${JSON.stringify(process.execPath)}, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+          'setTimeout(() => process.stdout.write("CHILD=" + child.pid + "\\nREADY> "), 50);',
+          "setInterval(() => {}, 1000);",
+        ].join(" "),
+      ],
+    }),
+  });
+  const handle = await transport.startSession({
+    sessionId: "sess_process_group",
+    title: "process group",
+    cwd: process.cwd(),
+    cols: 80,
+    rows: 24,
+    scratchDir: tmpdir(),
+  });
+  await transport.subscribe(handle, (chunk) => {
+    output += Buffer.from(chunk).toString("utf8");
+  });
+  await transport.waitForInitialPrompt(handle);
+  const descendantPid = Number(output.match(/CHILD=(\d+)/)?.[1]);
+  expect(descendantPid).toBeGreaterThan(0);
+  expect(processExists(descendantPid)).toBe(true);
+
+  await transport.terminate(handle);
+  await waitForProcessExit(descendantPid);
+
+  expect(processExists(handle.pid)).toBe(false);
+  expect(processExists(descendantPid)).toBe(false);
+});
+
+test("a runtime's temporary directory is its session's scratch directory", async () => {
+  await withTempDir(async (scratchDir) => {
     let output = "";
     const transport = new ProcessTransport({
       platformId: "test",
       promptRe: /(?:^|[\r\n])READY> /g,
-      ownsProcessTree: true,
       command: () => ({
         file: process.execPath,
         args: [
           "-e",
-          [
-            'const { spawn } = require("node:child_process");',
-            `const child = spawn(${JSON.stringify(process.execPath)}, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
-            'setTimeout(() => process.stdout.write("CHILD=" + child.pid + "\\nREADY> "), 50);',
-            "setInterval(() => {}, 1000);",
-          ].join(" "),
+          'process.stdout.write("TMPDIR=" + require("node:os").tmpdir() + "\\nREADY> "); setInterval(() => {}, 1_000)',
         ],
       }),
     });
     const handle = await transport.startSession({
-      sessionId: "sess_owned_tree",
-      title: "owned-tree",
+      sessionId: "sess_scratch_tmpdir",
+      title: "scratch tmpdir",
       cwd: process.cwd(),
       cols: 80,
       rows: 24,
+      scratchDir,
     });
     await transport.subscribe(handle, (chunk) => {
       output += Buffer.from(chunk).toString("utf8");
     });
-    await transport.waitForInitialPrompt(handle);
-    const descendantPid = Number(output.match(/CHILD=(\d+)/)?.[1]);
-    expect(descendantPid).toBeGreaterThan(0);
-    expect(processExists(descendantPid)).toBe(true);
-
-    await transport.terminate(handle);
-    await waitForProcessExit(descendantPid);
-
-    expect(processExists(handle.pid)).toBe(false);
-    expect(processExists(descendantPid)).toBe(false);
-  },
-);
-
-test.skipIf(process.platform === "win32")(
-  "an owned process tree that leaves only zombies terminates cleanly",
-  async () => {
-    const transport = new ProcessTransport({
-      platformId: "test",
-      promptRe: /(?:^|[\r\n])READY> /g,
-      ownsProcessTree: true,
-      command: () => ({
-        file: process.execPath,
-        args: [
-          "-e",
-          'process.stdout.write("READY> "); setInterval(() => {}, 1_000)',
-        ],
-      }),
-    });
-    const handle = await transport.startSession({
-      sessionId: "sess_zombie_tree",
-      title: "zombie-tree",
-      cwd: process.cwd(),
-      cols: 80,
-      rows: 24,
-    });
-    await transport.waitForInitialPrompt(handle);
-    // macOS refuses to signal a group whose remaining members are all
-    // zombies: its leader exited, and a descendant has yet to be reaped.
-    const kill = process.kill.bind(process);
-    const refuseZombieGroup = spyOn(process, "kill").mockImplementation(
-      (pid: number, signal?: string | number) => {
-        if (pid === -handle.pid && signal === "SIGKILL") {
-          throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
-        }
-        return kill(pid, signal);
-      },
-    );
     try {
-      await transport.terminate(handle);
+      await transport.waitForInitialPrompt(handle);
+      expect(output).toContain(`TMPDIR=${scratchDir}\n`);
     } finally {
-      refuseZombieGroup.mockRestore();
+      await transport.terminate(handle);
     }
-    expect(processExists(handle.pid)).toBe(false);
-  },
-);
+  });
+});
+
+test("a transport offers process snapshots only where it has a snapshotter", () => {
+  const config = {
+    platformId: "test",
+    promptRe: /READY>/g,
+    command: () => ({ file: process.execPath, args: [] }),
+  };
+  const snapshotter = new CriuSnapshotter("/opt/criu", "/opt/advance-pids");
+
+  expect(
+    new ProcessTransport({ ...config, snapshotter }).snapshots,
+  ).toBeDefined();
+  expect(
+    new ProcessTransport({ ...config, snapshotter: null }).snapshots,
+  ).toBeUndefined();
+  expect(
+    new ProcessTransport({ ...config, snapshots: false, snapshotter })
+      .snapshots,
+  ).toBeUndefined();
+});
+
+test("a snapshot hands the dump the stdio its runtime started with, wherever the runtime moved them", async () => {
+  const dumped: { pid: number; stdio: string[] }[] = [];
+  const snapshotter: ProcessSnapshotter = {
+    dump(pid, _directory, stdio) {
+      dumped.push({ pid, stdio });
+      // A dump ends its tree.
+      process.kill(-pid, "SIGKILL");
+      return {
+        pid,
+        maxPid: pid,
+        stdio,
+        stdioFds: [0, 4, 2],
+        bootId: "boot",
+        baymaVersion: "0.0.0",
+        createdAtMs: 0,
+      };
+    },
+    restoreCommand: () => ({ file: "/bin/false", args: [] }),
+    restoredPid: () => undefined,
+    unrestorableReason: () => undefined,
+    advancePidsPast: () => undefined,
+  };
+  const transport = new ProcessTransport({
+    platformId: "test",
+    promptRe: /READY> /g,
+    // As the Go host does: the protocol moves off stdout, which then goes
+    // elsewhere.
+    command: () => ({
+      file: "/bin/sh",
+      args: ["-c", 'exec 4>&1 1>/dev/null; printf "READY> " >&4; sleep 30'],
+    }),
+    snapshotter,
+  });
+  const handle = await transport.startSession({
+    sessionId: "sess_moved_stdio",
+    title: "moved stdio",
+    cwd: process.cwd(),
+    cols: 80,
+    rows: 24,
+    scratchDir: tmpdir(),
+  });
+  try {
+    await transport.waitForInitialPrompt(handle);
+    expect(readlinkSync(`/proc/${handle.pid}/fd/1`)).toBe("/dev/null");
+    const stdout = readlinkSync(`/proc/${handle.pid}/fd/4`);
+
+    const snapshot = await transport.snapshots!.snapshot(handle, tmpdir());
+
+    expect(dumped).toEqual([
+      {
+        pid: handle.pid,
+        stdio: [expect.any(String), stdout, expect.any(String)],
+      },
+    ]);
+    for (const link of snapshot.stdio) expect(link).toMatch(/^socket:\[\d+\]$/);
+  } finally {
+    await transport.shutdown();
+  }
+});
 
 test("stale transport handles cannot affect a replacement child", async () => {
   const transport = new ProcessTransport({
@@ -241,6 +318,7 @@ test("stale transport handles cannot affect a replacement child", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   };
   const staleHandle = await transport.startSession(input);
   await transport.waitForInitialPrompt(staleHandle);
@@ -287,6 +365,7 @@ test("prompt-like output cannot fake post-interrupt readiness", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   try {
     await transport.waitForInitialPrompt(handle);
@@ -316,6 +395,7 @@ test("single-character probe overlap stays bounded", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   let observedBytes = 0;
   await transport.subscribe(handle, (chunk) => {
@@ -365,6 +445,7 @@ test("a process exit caused by interrupt is delegated to recycle ownership", asy
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   let unsolicitedExitCount = 0;
   await transport.subscribe(
@@ -400,6 +481,7 @@ test("recycle-only interruption leaves teardown to session ownership", async () 
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   await transport.waitForInitialPrompt(handle);
 
@@ -432,6 +514,7 @@ test("a process that exits after its interrupt probe cannot report soft recovery
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   await transport.waitForInitialPrompt(handle);
 
@@ -462,6 +545,7 @@ test("interrupt recovery requires a post-probe runtime prompt", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   try {
     await transport.waitForInitialPrompt(handle);
@@ -492,6 +576,7 @@ test("interrupt exit rejects internal backpressure without notifying observers",
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
   let unsolicitedExitCount = 0;
   await transport.subscribe(
@@ -548,6 +633,7 @@ test("exit diagnostics preserve UTF-8 split across stdout chunks", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
 
   await expect(transport.waitForInitialPrompt(handle, 2_000)).rejects.toThrow(

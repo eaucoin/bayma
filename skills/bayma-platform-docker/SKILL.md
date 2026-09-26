@@ -5,7 +5,7 @@ description: Inspect the source code of and execute code from the installed `doc
 
 # Docker Platform
 
-This skill shows you where to find the relevant packages to reference when writing correct source code or interactively executing code that interacts with the platform appropriately. The skill owns its packages and its connection to a Docker Engine; both live in its own folder, `<skill>` below. The Engine itself is a daemon of the machine it runs on.
+This skill shows you where to find the relevant packages to reference when writing correct source code or interactively executing code that interacts with the platform appropriately. The skill owns its packages and its connection to a Docker Engine; both live in its own folder, `<skill>` below. The Engine itself is a daemon of the machine it runs on: bayma, which runs in a container, reaches this machine's when the host's Docker socket is mounted into it.
 
 ## Reference Materials
 

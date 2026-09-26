@@ -27,20 +27,18 @@ import {
 
 // The C and C++ payload, which both runtimes share: bayma-cpp-host, built from
 // this repository's sources against the pinned LLVM release's Clang
-// Interpreter and libclang, and what cells compile and run against. Clang's
-// resource headers and libclang's everywhere; on Linux also libc++, glibc's
-// and Linux's C headers at the glibc floor, libstdc++'s headers for sessions
-// that choose it, and libatomic, while macOS cells use the SDK and the
-// system's libc++.
+// Interpreter and libclang, and what cells compile and run against: Clang's
+// resource headers and libclang's, libc++, glibc's and Linux's C headers at
+// the glibc floor, libstdc++'s headers for sessions that choose it, and
+// libatomic.
 
 /** Where the host's sources live. */
 const NATIVE_DIR = join("packages", "runtime-cpp", "native");
 const HOST = "bayma-cpp-host";
 const LLVM_MAJOR = CLANG.llvmVersion.split(".")[0]!;
-const IS_LINUX = process.platform === "linux";
-/** The target triple the Linux release names its libc++ directories after. */
+/** The target triple the release names its libc++ directories after. */
 const LINUX_TRIPLE = "x86_64-unknown-linux-gnu";
-/** The libc++ libraries Linux cells load, in dependency order after libatomic. */
+/** The libc++ libraries cells load, in dependency order after libatomic. */
 const LIBCXX_LIBRARIES = ["libunwind.so.1", "libc++abi.so.1", "libc++.so.1"];
 
 /**
@@ -50,20 +48,16 @@ const LIBCXX_LIBRARIES = ["libunwind.so.1", "libc++abi.so.1", "libc++.so.1"];
 function llvmMember(path: string): boolean {
   return (
     /^bin\/(clang|clang\+\+|clang-\d+|clang-format|llvm-config)$/.test(path) ||
-    (IS_LINUX && /^bin\/llvm-read(elf|obj)$/.test(path)) ||
+    /^bin\/llvm-read(elf|obj)$/.test(path) ||
     /^include\/(llvm|llvm-c|clang|clang-c)\//.test(path) ||
     // Every library `llvm-config --libs` names, which includes Polly's.
     /^lib\/lib(clang[A-Z]|LLVM|Polly)\w*\.a$/.test(path) ||
-    // macOS: the release's libraries are LLVM bitcode, which only its own
-    // libLTO can read.
-    (!IS_LINUX && path === "lib/libLTO.dylib") ||
     path.startsWith(`lib/clang/${LLVM_MAJOR}/include/`) ||
-    (IS_LINUX &&
-      (path.startsWith("include/c++/v1/") ||
-        path.startsWith(`include/${LINUX_TRIPLE}/`) ||
-        LIBCXX_LIBRARIES.some((library) =>
-          path.startsWith(`lib/${LINUX_TRIPLE}/${library}`),
-        )))
+    path.startsWith("include/c++/v1/") ||
+    path.startsWith(`include/${LINUX_TRIPLE}/`) ||
+    LIBCXX_LIBRARIES.some((library) =>
+      path.startsWith(`lib/${LINUX_TRIPLE}/${library}`),
+    )
   );
 }
 
@@ -112,15 +106,13 @@ async function provisionLlvm(context: ProvisionContext): Promise<string> {
 }
 
 /**
- * Linux: the Ubuntu packages, unpacked twice. `cells` holds only what cells
- * compile against and load; `build` holds everything the host is built
- * against.
+ * The Ubuntu packages, unpacked twice. `cells` holds only what cells compile
+ * against and load; `build` holds everything the host is built against.
  */
 async function provisionSysroot(
   context: ProvisionContext,
-): Promise<{ cells: string; build: string } | undefined> {
+): Promise<{ cells: string; build: string }> {
   const packages = CLANG.sysroot;
-  if (!packages) return undefined;
   const directory = join(context.workDir, "clang", "sysroot");
   const layout = {
     cells: join(directory, "cells"),
@@ -225,7 +217,7 @@ function libclangExports(libclang: string): string[] {
 }
 
 /** LLVM's name for this machine's target. */
-const NATIVE_TARGET = process.arch === "arm64" ? "AArch64" : "X86";
+const NATIVE_TARGET = "X86";
 
 /**
  * LLVM's lists of the targets it was built for, with this machine's alone,
@@ -249,39 +241,16 @@ function writeNativeTargetConfig(buildDir: string, llvm: string): string {
   return directory;
 }
 
-async function macosSdk(): Promise<string> {
-  return (await runOrThrow(["xcrun", "--show-sdk-path"])).stdout.trim();
-}
-
-/** What every compilation of the host and its zstd shares. */
-async function targetFlags(sysroot: string | undefined): Promise<string[]> {
-  return IS_LINUX
-    ? [`--sysroot=${sysroot}`]
-    : [
-        "-isysroot",
-        await macosSdk(),
-        `-mmacosx-version-min=${CLANG.llvm.macosMinimum}`,
-      ];
-}
-
 /**
  * The symbols the JIT resolves in the host, exported by name and kept even
  * though nothing in the host calls them.
  */
 function exportFlags(buildDir: string, symbols: string[]): string[] {
-  if (IS_LINUX) {
-    const list = join(buildDir, "exports.dynamic-list");
-    writeFileSync(list, `{\n${symbols.map((s) => `  ${s};`).join("\n")}\n};\n`);
-    return [
-      `-Wl,--dynamic-list=${list}`,
-      ...symbols.map((symbol) => `-Wl,--undefined=${symbol}`),
-    ];
-  }
-  const list = join(buildDir, "exports.txt");
-  writeFileSync(list, symbols.map((symbol) => `_${symbol}\n`).join(""));
+  const list = join(buildDir, "exports.dynamic-list");
+  writeFileSync(list, `{\n${symbols.map((s) => `  ${s};`).join("\n")}\n};\n`);
   return [
-    `-Wl,-exported_symbols_list,${list}`,
-    ...symbols.map((symbol) => `-Wl,-u,_${symbol}`),
+    `-Wl,--dynamic-list=${list}`,
+    ...symbols.map((symbol) => `-Wl,--undefined=${symbol}`),
   ];
 }
 
@@ -290,7 +259,7 @@ async function buildHost(
   llvm: string,
   zstd: string,
   libclang: string,
-  sysroot: string | undefined,
+  sysroot: string,
 ): Promise<string> {
   const buildDir = join(context.workDir, "clang", "build");
   resetDirectory(buildDir);
@@ -298,7 +267,8 @@ async function buildHost(
   const clang = join(llvm, "bin", "clang");
   const clangxx = join(llvm, "bin", "clang++");
   const llvmConfig = join(llvm, "bin", "llvm-config");
-  const target = await targetFlags(sysroot);
+  // What every compilation of the host and its zstd shares.
+  const target = [`--sysroot=${sysroot}`];
 
   const objects: string[] = [];
   // zstd's x86-64 assembly is its only non-portable part, and LLVM only
@@ -385,16 +355,11 @@ async function buildHost(
   }
 
   const host = join(buildDir, HOST);
-  // What every platform's host exports, and on Linux the C runtime's
-  // emulated-TLS entry point, which the host answers for cells; and
-  // libclang's API, for cells to call.
+  // What the host exports, with the C runtime's emulated-TLS entry point,
+  // which the host answers for cells; and libclang's API, for cells to call.
   const exports = [
-    ...["exports.txt", ...(IS_LINUX ? ["exports-linux.txt"] : [])]
-      .flatMap((list) =>
-        readFileSync(join(context.repoRoot, NATIVE_DIR, list), "utf8").split(
-          "\n",
-        ),
-      )
+    ...readFileSync(join(context.repoRoot, NATIVE_DIR, "exports.txt"), "utf8")
+      .split("\n")
       .filter(Boolean),
     ...libclangExports(libclang),
   ];
@@ -415,34 +380,20 @@ async function buildHost(
     ...objects,
     `-L${join(llvm, "lib")}`,
     ...exportFlags(buildDir, exports),
-    ...(IS_LINUX
-      ? [
-          "-Wl,--gc-sections",
-          // The host's own C++ runtime stays private, so cells see one:
-          // libc++. The shared libgcc_s unwinder is where the JIT registers
-          // the frames of the code it compiles.
-          "-static-libstdc++",
-          "-Wl,--start-group",
-          ...clangLibraries,
-          ...llvmLibraries,
-          "-Wl,--end-group",
-          "-lpthread",
-          "-lrt",
-          "-ldl",
-          "-lm",
-          "-l:libz.a",
-        ]
-      : [
-          "-Wl,-dead_strip",
-          // The libraries are bitcode, so linking them compiles what the host
-          // reaches. Apple's linker compiles it with the release's libLTO,
-          // keeping what it compiled for the next build.
-          `-Wl,-lto_library,${join(llvm, "lib", "libLTO.dylib")}`,
-          `-Wl,-cache_path_lto,${join(context.workDir, "clang", "lto-cache")}`,
-          ...clangLibraries,
-          ...llvmLibraries,
-          "-lz",
-        ]),
+    "-Wl,--gc-sections",
+    // The host's own C++ runtime stays private, so cells see one: libc++.
+    // The shared libgcc_s unwinder is where the JIT registers the frames of
+    // the code it compiles.
+    "-static-libstdc++",
+    "-Wl,--start-group",
+    ...clangLibraries,
+    ...llvmLibraries,
+    "-Wl,--end-group",
+    "-lpthread",
+    "-lrt",
+    "-ldl",
+    "-lm",
+    "-l:libz.a",
   ]);
   return host;
 }
@@ -450,7 +401,6 @@ async function buildHost(
 /** The newest glibc symbol version `binary` requires must be at the floor. */
 async function assertGlibcFloor(binary: string, llvm: string): Promise<void> {
   const floor = CLANG.glibcFloor;
-  if (!floor) return;
   const versions = (
     await runOrThrow([
       join(llvm, "bin", "llvm-readelf"),
@@ -477,7 +427,7 @@ function assembleRuntime(
   root: string,
   host: string,
   llvm: string,
-  sysroot: { cells: string } | undefined,
+  sysroot: { cells: string },
   licenses: Record<string, string>,
 ): void {
   ensureDir(join(root, "bin"));
@@ -487,37 +437,35 @@ function assembleRuntime(
   copyTree(join(llvm, resourceHeaders), join(root, resourceHeaders));
   // libclang's headers, where cells' include path finds them.
   copyTree(join(llvm, "include", "clang-c"), join(root, "include", "clang-c"));
-  if (sysroot) {
-    copyTree(join(llvm, "include", "c++"), join(root, "include", "c++"));
-    copyTree(
-      join(llvm, "include", LINUX_TRIPLE),
-      join(root, "include", LINUX_TRIPLE),
-    );
-    const libraries = join(root, "lib", LINUX_TRIPLE);
-    ensureDir(libraries);
-    for (const library of LIBCXX_LIBRARIES)
-      copyFileSync(
-        join(llvm, "lib", LINUX_TRIPLE, library),
-        join(libraries, library),
-      );
+  copyTree(join(llvm, "include", "c++"), join(root, "include", "c++"));
+  copyTree(
+    join(llvm, "include", LINUX_TRIPLE),
+    join(root, "include", LINUX_TRIPLE),
+  );
+  const libraries = join(root, "lib", LINUX_TRIPLE);
+  ensureDir(libraries);
+  for (const library of LIBCXX_LIBRARIES)
     copyFileSync(
-      join(sysroot.cells, "usr", "lib", "x86_64-linux-gnu", "libatomic.so.1"),
-      join(libraries, "libatomic.so.1"),
+      join(llvm, "lib", LINUX_TRIPLE, library),
+      join(libraries, library),
     );
-    copyTree(
-      join(sysroot.cells, "usr", "include"),
-      join(root, "sysroot", "usr", "include"),
+  copyFileSync(
+    join(sysroot.cells, "usr", "lib", "x86_64-linux-gnu", "libatomic.so.1"),
+    join(libraries, "libatomic.so.1"),
+  );
+  copyTree(
+    join(sysroot.cells, "usr", "include"),
+    join(root, "sysroot", "usr", "include"),
+  );
+  // Clang finds libstdc++'s headers through the GCC installation beside
+  // them, which it knows by its crtbegin.o.
+  const gcc = join("usr", "lib", "gcc", "x86_64-linux-gnu");
+  for (const version of readdirSync(join(sysroot.cells, gcc))) {
+    ensureDir(join(root, "sysroot", gcc, version));
+    copyFileSync(
+      join(sysroot.cells, gcc, version, "crtbegin.o"),
+      join(root, "sysroot", gcc, version, "crtbegin.o"),
     );
-    // Clang finds libstdc++'s headers through the GCC installation beside
-    // them, which it knows by its crtbegin.o.
-    const gcc = join("usr", "lib", "gcc", "x86_64-linux-gnu");
-    for (const version of readdirSync(join(sysroot.cells, gcc))) {
-      ensureDir(join(root, "sysroot", gcc, version));
-      copyFileSync(
-        join(sysroot.cells, gcc, version, "crtbegin.o"),
-        join(root, "sysroot", gcc, version, "crtbegin.o"),
-      );
-    }
   }
   ensureDir(join(root, "licenses"));
   for (const [name, path] of Object.entries(licenses))
@@ -545,11 +493,7 @@ async function smokeTest(root: string): Promise<void> {
         }),
       );
       const result = await run(
-        [
-          join(root, "bin", HOST),
-          `--language=${language}`,
-          ...(IS_LINUX ? [] : [`--sysroot=${await macosSdk()}`]),
-        ],
+        [join(root, "bin", HOST), `--language=${language}`],
         { cwd: workspace, input: `:exec ${spec}\n` },
       );
       const answered = result.stdout.includes(
@@ -569,14 +513,13 @@ export async function provisionClang(
   context: ProvisionContext,
 ): Promise<Record<"c" | "cpp", RuntimePayload>> {
   const root = join(context.workDir, "clang", "runtime");
-  const sysrootPins = CLANG.sysroot
-    ? [...CLANG.sysroot.cells, ...CLANG.sysroot.build]
-    : [];
   const identity = [
     CLANG.llvm.sha256,
     CLANG.llvmSource.sha256,
     CLANG.zstd.sha256,
-    ...sysrootPins.map((pinned) => pinned.sha256),
+    ...[...CLANG.sysroot.cells, ...CLANG.sysroot.build].map(
+      (pinned) => pinned.sha256,
+    ),
     ...Object.values(CLANG.licenses).map((pinned) => pinned.sha256),
     // The build recipe is this file.
     sha256File(fileURLToPath(import.meta.url)),
@@ -598,16 +541,15 @@ export async function provisionClang(
         `${project} licence`,
       );
     for (const pkg of ["libc6-dev", "linux-libc-dev", "gcc-12-base"])
-      if (sysroot)
-        licenses[`ubuntu-${pkg}-copyright`] = join(
-          sysroot.cells,
-          "usr",
-          "share",
-          "doc",
-          pkg,
-          "copyright",
-        );
-    const host = await buildHost(context, llvm, zstd, libclang, sysroot?.build);
+      licenses[`ubuntu-${pkg}-copyright`] = join(
+        sysroot.cells,
+        "usr",
+        "share",
+        "doc",
+        pkg,
+        "copyright",
+      );
+    const host = await buildHost(context, llvm, zstd, libclang, sysroot.build);
     await assertGlibcFloor(host, llvm);
     resetDirectory(root);
     assembleRuntime(root, host, llvm, sysroot, licenses);
@@ -624,10 +566,7 @@ export async function provisionClang(
     llvmSha256: CLANG.llvm.sha256,
     zstdVersion: CLANG.zstdVersion,
     zstdSha256: CLANG.zstd.sha256,
-    ...(CLANG.glibcFloor ? { glibcFloor: CLANG.glibcFloor } : {}),
-    ...(CLANG.llvm.macosMinimum
-      ? { macosMinimum: CLANG.llvm.macosMinimum }
-      : {}),
+    glibcFloor: CLANG.glibcFloor,
   };
   const payload = (
     runtimeId: "c" | "cpp",

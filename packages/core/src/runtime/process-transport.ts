@@ -1,14 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readlinkSync } from "node:fs";
+import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure } from "../errors.ts";
+import {
+  processSnapshotter,
+  restoreFailure,
+  type ProcessSnapshot,
+  type ProcessSnapshotter,
+} from "./process-snapshots.ts";
 import type {
   RuntimeTransport,
   StartSessionInput,
   TransportChunkListener,
   TransportExitListener,
   TransportSessionHandle,
+  TransportSnapshots,
 } from "./transport.ts";
 
 interface PromptWaiter {
@@ -29,7 +38,26 @@ interface ReadinessWaiter {
 
 interface BrokerState {
   handle: TransportSessionHandle;
+  /**
+   * The process this transport started: the runtime, or for a restored
+   * session CRIU, which waits on the restored runtime and exits as it does.
+   * Either way its stdio are the runtime's.
+   */
   child: ChildProcessWithoutNullStreams;
+  /** The runtime, which leads its own process group: what signals reach. */
+  pid: number;
+  /**
+   * The stdio the runtime started with, as the kernel names them, such as
+   * `socket:[1234]`: what a snapshot of it hands new stdio in place of,
+   * wherever it has moved them since. Absent where snapshots are off, or they
+   * could not be read.
+   */
+  stdio?: [string, string, string];
+  /**
+   * For a restored runtime, where it holds its stdio: its snapshot's, where it
+   * held the old ones, which CRIU replaced.
+   */
+  stdioFds?: [number, number, number];
   listeners: Set<TransportChunkListener>;
   exitListeners: Set<TransportExitListener>;
   internalExitWaiters: Set<TransportExitListener>;
@@ -55,13 +83,16 @@ export interface ProcessTransportConfig {
     env?: NodeJS.ProcessEnv;
   };
   interruptStrategy?: "write_ctrl_c" | "sigint" | "recycle";
-  ownsProcessTree?: boolean;
   interruptProbe?(nonce: string): {
     input: string;
     expectedOutput: string;
   };
   promptTimeoutMs?: number;
   lineSubmitDelayMs?: number;
+  /** False for a runtime whose processes CRIU cannot dump. */
+  snapshots?: boolean;
+  /** The environment's snapshotter unless given; null for none. */
+  snapshotter?: ProcessSnapshotter | null;
 }
 
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -70,6 +101,33 @@ const PROMPT_SCAN_TAIL_CHARACTERS = 1024;
 const GRACEFUL_TERMINATION_TIMEOUT_MS = 250;
 const FORCED_TERMINATION_TIMEOUT_MS = 5_000;
 const DEFAULT_PROMPT_TIMEOUT_MS = 5_000;
+const RESTORE_TIMEOUT_MS = 60_000;
+const RESTORE_POLL_MS = 20;
+
+/**
+ * Runs a runtime, given as its arguments, once it has written its stdio, as
+ * the kernel names them, to descriptor 3, and closed that: the runtime, the
+ * same process, may move them as it starts, as the Go host does, and what a
+ * snapshot hands new stdio in place of is what they were. The names are read
+ * before `>&3` applies, which the shell does in its own descriptors.
+ */
+const RECORD_STDIO = `printf '%s\\n' "$(readlink /proc/$$/fd/0)" "$(readlink /proc/$$/fd/1)" "$(readlink /proc/$$/fd/2)" >&3; exec 3>&-; exec "$0" "$@"`;
+
+/** What `pid` holds at each of `fds`, as the kernel names it, if it can be read. */
+function heldStdio(
+  pid: number,
+  fds: readonly [number, number, number],
+): [string, string, string] | undefined {
+  try {
+    return fds.map((fd) => readlinkSync(`/proc/${pid}/fd/${fd}`)) as [
+      string,
+      string,
+      string,
+    ];
+  } catch {
+    return undefined;
+  }
+}
 
 function childHasExited(child: ChildProcessWithoutNullStreams): boolean {
   return child.exitCode !== null || child.signalCode !== null;
@@ -130,6 +188,8 @@ export class ProcessTransport implements RuntimeTransport {
 
   private readonly config: ProcessTransportConfig;
 
+  readonly snapshots?: TransportSnapshots;
+
   constructor(config: ProcessTransportConfig) {
     this.config = config;
     if (
@@ -139,29 +199,73 @@ export class ProcessTransport implements RuntimeTransport {
     ) {
       throw new Error("line submit delay must be a non-negative integer");
     }
+    const snapshotter =
+      config.snapshots === false
+        ? null
+        : config.snapshotter !== undefined
+          ? config.snapshotter
+          : processSnapshotter();
+    if (snapshotter) {
+      this.snapshots = {
+        snapshot: (handle, directory) =>
+          this.snapshot(snapshotter, handle, directory),
+        restore: (input, snapshot, directory) =>
+          this.restore(snapshotter, input, snapshot, directory),
+        unrestorableReason: (snapshot) =>
+          snapshotter.unrestorableReason(snapshot),
+      };
+    }
   }
 
   async startSession(
     input: StartSessionInput,
   ): Promise<TransportSessionHandle> {
-    if (this.sessions.has(input.sessionId)) {
-      throw new Error(`transport session ${input.sessionId} already exists`);
-    }
+    this.assertNewSession(input.sessionId);
     await this.config.prepare?.();
-    if (this.sessions.has(input.sessionId)) {
-      throw new Error(`transport session ${input.sessionId} already exists`);
-    }
+    this.assertNewSession(input.sessionId);
     const resolved = this.config.command(input);
-    const child = spawn(resolved.file, resolved.args, {
-      cwd: input.cwd,
-      env: {
+    const state = this.launch(
+      input,
+      resolved.file,
+      resolved.args,
+      {
         ...process.env,
         TERM: process.env.TERM || "xterm-256color",
+        TMPDIR: input.scratchDir,
         ...resolved.env,
       },
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: this.config.ownsProcessTree,
-    });
+      this.snapshots !== undefined,
+    );
+    return state.handle;
+  }
+
+  private assertNewSession(sessionId: string): void {
+    if (this.sessions.has(sessionId)) {
+      throw new Error(`transport session ${sessionId} already exists`);
+    }
+  }
+
+  /**
+   * Start `file` for a session, leading a process group of its own, so the
+   * session's processes are one tree, signalled and snapshotted together;
+   * with `recordStdio`, noting the stdio it starts with.
+   */
+  private launch(
+    input: StartSessionInput,
+    file: string,
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    recordStdio = false,
+  ): BrokerState {
+    const options = { cwd: input.cwd, env, detached: true };
+    const child = (
+      recordStdio
+        ? spawn("/bin/sh", ["-c", RECORD_STDIO, file, ...args], {
+            ...options,
+            stdio: ["pipe", "pipe", "pipe", "pipe"],
+          })
+        : spawn(file, args, { ...options, stdio: ["pipe", "pipe", "pipe"] })
+    ) as ChildProcessWithoutNullStreams;
 
     const handle: TransportSessionHandle = {
       sessionId: input.sessionId,
@@ -174,6 +278,7 @@ export class ProcessTransport implements RuntimeTransport {
     const state: BrokerState = {
       handle,
       child,
+      pid: handle.pid,
       listeners: new Set(),
       exitListeners: new Set(),
       internalExitWaiters: new Set(),
@@ -332,8 +437,91 @@ export class ProcessTransport implements RuntimeTransport {
       );
     });
 
+    const record = recordStdio ? (child.stdio[3] as Readable | null) : null;
+    if (record) {
+      let recorded = "";
+      record.setEncoding("utf8");
+      record.on("data", (text: string) => (recorded += text));
+      record.on("end", () => {
+        const links = recorded.split("\n").filter(Boolean);
+        if (links.length === 3) state.stdio = links as [string, string, string];
+      });
+      // Unrecorded stdio only make the session's snapshot fail.
+      record.on("error", () => undefined);
+    }
+
     this.sessions.set(input.sessionId, state);
-    return handle;
+    return state;
+  }
+
+  /**
+   * Dump the session's process tree, which ends it. Its output and exit
+   * listeners must be gone first: the end is the dump's, not a failure's.
+   */
+  private async snapshot(
+    snapshotter: ProcessSnapshotter,
+    handle: TransportSessionHandle,
+    directory: string,
+  ): Promise<ProcessSnapshot> {
+    const state = this.requireState(handle);
+    if (state.terminalError) throw state.terminalError;
+    const stdio =
+      state.stdio ??
+      (state.stdioFds ? heldStdio(state.pid, state.stdioFds) : undefined);
+    if (!stdio) {
+      throw new Error(
+        `transport session ${handle.sessionId} did not record its stdio as it started`,
+      );
+    }
+    const snapshot = snapshotter.dump(state.pid, directory, stdio);
+    await waitForChildExit(state.child, FORCED_TERMINATION_TIMEOUT_MS);
+    if (!childHasExited(state.child)) {
+      throw new Error(
+        `transport session ${handle.sessionId} did not end after its snapshot`,
+      );
+    }
+    this.sessions.delete(handle.sessionId);
+    return snapshot;
+  }
+
+  /**
+   * Restore a dumped session: CRIU restores the tree, handing it the new
+   * stdio this transport starts CRIU with, and stays as the tree's parent,
+   * exiting as the tree does. The session is ready once CRIU records the
+   * restored tree, at the prompt its runtime was dumped at.
+   */
+  private async restore(
+    snapshotter: ProcessSnapshotter,
+    input: StartSessionInput,
+    snapshot: ProcessSnapshot,
+    directory: string,
+  ): Promise<TransportSessionHandle> {
+    this.assertNewSession(input.sessionId);
+    const command = snapshotter.restoreCommand(snapshot, directory);
+    const state = this.launch(input, command.file, command.args, process.env);
+    const deadline = Date.now() + RESTORE_TIMEOUT_MS;
+    let restored = snapshotter.restoredPid(directory);
+    while (restored === undefined) {
+      if (state.terminalError || Date.now() > deadline) {
+        const failure = state.terminalError
+          ? restoreFailure(directory)
+          : `CRIU did not finish restoring within ${RESTORE_TIMEOUT_MS} ms`;
+        await this.terminate(state.handle);
+        throw new Error(
+          `restoring session ${input.sessionId} failed:\n${failure}`,
+        );
+      }
+      await sleep(RESTORE_POLL_MS);
+      restored = snapshotter.restoredPid(directory);
+    }
+    state.pid = restored;
+    state.handle.pid = restored;
+    // The restored runtime holds its new stdio where it held the old, read
+    // when it is snapshotted again: CRIU, which started with them, runs with
+    // capabilities, so only the runtime may be looked into, once CRIU is done
+    // with it.
+    state.stdioFds = snapshot.stdioFds;
+    return state.handle;
   }
 
   async write(
@@ -504,11 +692,10 @@ export class ProcessTransport implements RuntimeTransport {
     if (processStarted && !childHasExited(state.child)) {
       this.signal(state, "SIGTERM");
       await waitForChildExit(state.child, GRACEFUL_TERMINATION_TIMEOUT_MS);
-      if (this.config.ownsProcessTree) {
-        this.signal(state, "SIGKILL");
-      } else if (!childHasExited(state.child)) {
-        state.child.kill("SIGKILL");
-      }
+      // Whatever the session started goes with it.
+      this.signal(state, "SIGKILL");
+      // A restored session's CRIU exits once its tree has; it goes too.
+      if (!childHasExited(state.child)) state.child.kill("SIGKILL");
       if (!childHasExited(state.child)) {
         await waitForChildExit(state.child, FORCED_TERMINATION_TIMEOUT_MS);
       }
@@ -548,21 +735,16 @@ export class ProcessTransport implements RuntimeTransport {
     return state;
   }
 
+  /** Signal the session's process group, which its runtime leads. */
   private signal(state: BrokerState, signal: NodeJS.Signals): void {
-    if (this.config.ownsProcessTree && state.child.pid) {
-      try {
-        process.kill(-state.child.pid, signal);
-      } catch (error) {
-        // Nothing is left to signal: the group is gone, or its leader has
-        // exited and only zombies remain, which macOS refuses to signal.
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ESRCH") return;
-        if (code === "EPERM" && childHasExited(state.child)) return;
-        throw error;
-      }
-      return;
+    if (state.pid <= 0) return;
+    try {
+      process.kill(-state.pid, signal);
+    } catch (error) {
+      // Nothing is left to signal: the group is gone.
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
     }
-    state.child.kill(signal);
   }
 
   private waitForProbeReadiness(

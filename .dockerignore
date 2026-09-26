@@ -1,0 +1,5 @@
+# The image takes only what its Dockerfile copies.
+*
+!dist/bayma.js
+!dist/payload
+!packages/core/native/advance-pids.c

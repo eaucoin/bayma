@@ -123,13 +123,9 @@ async function assertChannelManifest(context: ProvisionContext): Promise<void> {
 
 /**
  * zig as the C linker, with the host's shared libgcc_s as the unwinder, so
- * the host's glibc floor is the pin rather than the build machine's. Only
- * Linux needs one; macOS links with Apple's clang.
+ * the host's glibc floor is the pin rather than the build machine's.
  */
-async function provisionLinker(
-  context: ProvisionContext,
-): Promise<string | undefined> {
-  if (!ZIG) return undefined;
+async function provisionLinker(context: ProvisionContext): Promise<string> {
   const zig = await provisionZig(context, ZIG);
   const directory = join(context.workDir, "rust", "linker");
   const wrapper = join(directory, "cc");
@@ -164,7 +160,7 @@ async function provisionLinker(
 async function buildHost(
   context: ProvisionContext,
   toolchain: string,
-  linker: string | undefined,
+  linker: string,
   targetDir: string,
 ): Promise<string> {
   const host = join(targetDir, RUST.target, "release", "bayma-rust-host");
@@ -174,14 +170,10 @@ async function buildHost(
     CARGO_HOME: join(context.workDir, "rust", "cargo-home"),
     CARGO_ENCODED_RUSTFLAGS: undefined,
     RUSTFLAGS: "",
-    ...(linker
-      ? {
-          [`CARGO_TARGET_${RUST.target.replaceAll("-", "_").toUpperCase()}_LINKER`]:
-            linker,
-          ZIG_GLOBAL_CACHE_DIR: join(context.workDir, "rust", "zig-cache"),
-          ZIG_LOCAL_CACHE_DIR: join(context.workDir, "rust", "zig-cache"),
-        }
-      : {}),
+    [`CARGO_TARGET_${RUST.target.replaceAll("-", "_").toUpperCase()}_LINKER`]:
+      linker,
+    ZIG_GLOBAL_CACHE_DIR: join(context.workDir, "rust", "zig-cache"),
+    ZIG_LOCAL_CACHE_DIR: join(context.workDir, "rust", "zig-cache"),
   };
   await runOrThrow(
     [
@@ -369,7 +361,7 @@ export async function provisionRust(
   );
   const identity = [
     TOOLCHAIN_IDENTITY,
-    ZIG?.sha256 ?? "no-linker",
+    ZIG.sha256,
     RUST.supportSeedLockSha256,
     sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
     sha256File(join(context.repoRoot, NATIVE_DIR, "Cargo.lock")),
@@ -425,7 +417,7 @@ export async function provisionRust(
       distDate: RUST.distDate,
       target: RUST.target,
       evcxrVersion: RUST.evcxrVersion,
-      ...(ZIG ? { linker: `zig-${ZIG.zigVersion}` } : {}),
+      linker: `zig-${ZIG.zigVersion}`,
       supportSeedLockSha256: RUST.supportSeedLockSha256,
       toolbeltLockSha256: sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
       ...Object.fromEntries(

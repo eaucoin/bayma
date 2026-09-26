@@ -64,9 +64,6 @@ const STARTUP_LATENCY_FLOOR_MS: Record<Exclude<RuntimeId, "bun">, number> = {
   // parser-only startup floor. Keep a finite ceiling that still catches a
   // material regression on the slowest native release runner or a contended
   // but otherwise healthy clean machine.
-  // Intel macOS and Windows native hosts have a materially slower first EVcxR
-  // compile than the other release runners. Preserve the 30-second bar on the
-  // faster hosts and use a measured, still-finite ceiling for those cold tails.
   rust: 30_000,
   c: 5_000,
   cpp: 5_000,

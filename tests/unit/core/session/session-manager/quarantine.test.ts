@@ -157,7 +157,13 @@ test("submission persistence failures quarantine and terminate", async () => {
       },
       () => undefined,
     );
-    const created = await manager.create("actor_1", "submission failure", dir);
+    const created = await manager.createWithPolicy(
+      "actor_1",
+      "submission failure",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
 
     catalogStore.failNextWrite = true;
     await expect(

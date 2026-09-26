@@ -148,14 +148,26 @@ export class McpStdioClient {
       } catch (cleanupError) {
         cleanupFailures.push(cleanupError);
       }
+      const stderr = serverStderr.join("").trim();
+      const failure = stderr
+        ? new Error(
+            `${error instanceof Error ? error.message : String(error)}\nserver stderr:\n${stderr}`,
+            { cause: error },
+          )
+        : error;
       if (cleanupFailures.length > 0) {
         throw new AggregateError(
-          [error, ...cleanupFailures],
+          [failure, ...cleanupFailures],
           "MCP stdio connection failed and cleanup was incomplete",
         );
       }
-      throw error;
+      throw failure;
     }
+  }
+
+  /** What the server has written to its stderr so far. */
+  serverOutput(): string {
+    return this.serverStderr.join("");
   }
 
   async listTools(): Promise<string[]> {

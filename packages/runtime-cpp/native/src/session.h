@@ -30,10 +30,9 @@ enum class Language { C, Cxx };
 struct SessionOptions {
   Language Lang = Language::Cxx;
   /// The runtime's directory in the payload: the host binary's parent's
-  /// parent, holding Clang's resource headers and, on Linux, libc++.
+  /// parent, holding Clang's resource headers and libc++.
   std::string Root;
-  /// The system headers cells compile against: the payload's on Linux, the
-  /// SDK's on macOS.
+  /// The system headers cells compile against, the payload's.
   std::string Sysroot;
   /// The session's working directory; quoted #includes resolve from it.
   std::string Cwd;

@@ -1,9 +1,9 @@
-// The platforms bayma ships payloads for, and every pinned input that goes
-// into them. Changing a pin here is the whole change.
+// The platform bayma builds its payload for, the Linux of its image, and
+// every pinned input that goes into it. Changing a pin here is the whole
+// change.
 //
-// A payload is always built on the platform it targets, so the pins for the
-// host platform are the ones provisioning uses; `PLATFORMS` exists so the
-// other platform's pins are reviewable in the same place.
+// A payload is always built on the platform it targets, so provisioning
+// refuses to run anywhere else.
 
 export interface PinnedArchive {
   url: string;
@@ -12,7 +12,7 @@ export interface PinnedArchive {
   bytes?: number;
 }
 
-export const PLATFORM_IDS = ["linux-x64", "darwin-arm64"] as const;
+export const PLATFORM_IDS = ["linux-x64"] as const;
 export type PlatformId = (typeof PLATFORM_IDS)[number];
 
 export const BUN_VERSION = "1.3.14";
@@ -79,7 +79,7 @@ export const LLVM_SOURCE: PinnedArchive = {
 
 /**
  * zstd, built from source into the C and C++ host: LLVM's libraries compress
- * with it, and neither platform's build machine is relied on to provide it.
+ * with it, and the build machine is not relied on to provide it.
  */
 export const ZSTD_SOURCE: PinnedArchive = {
   url: `https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz`,
@@ -114,16 +114,15 @@ export interface PlatformPins {
   /** uv builds the toolbelt's Python environment from its lockfile. */
   uv: PinnedArchive;
   /**
-   * Linux only: the oldest glibc the payload's native hosts may require, so
-   * no build machine's glibc decides which machines bayma runs on.
+   * The oldest glibc the payload's native hosts may require, so no build
+   * machine's glibc decides which machines bayma runs on.
    */
-  glibcFloor?: string;
+  glibcFloor: string;
   /**
-   * Linux only: a pinned zig, which compiles and links what must keep to the
-   * glibc floor: the Rust host, and the Go host and the plugins its cells
-   * build. macOS uses Apple's own clang.
+   * A pinned zig, which compiles and links what must keep to the glibc
+   * floor: the Rust host, and the Go host and the plugins its cells build.
    */
-  zig?: { zigVersion: string } & PinnedArchive;
+  zig: { zigVersion: string } & PinnedArchive;
   /** Lean's release, whose size is beyond the bound on downloads. */
   lean: PinnedArchive & { bytes: number };
   go: PinnedArchive;
@@ -132,18 +131,12 @@ export interface PlatformPins {
    * incremental Interpreter as static libraries, the clang that compiles the
    * host against them, Clang's resource headers, and libc++.
    */
-  llvm: PinnedArchive & {
-    bytes: number;
-    /** macOS only: the oldest macOS the release's libraries support, which
-     * the host built from them inherits. */
-    macosMinimum?: string;
-  };
+  llvm: PinnedArchive & { bytes: number };
   /**
-   * Linux only: Ubuntu 22.04 packages, at the glibc floor, so neither the C
-   * and C++ host nor its cells depend on the machine. macOS uses the SDK of
-   * the Xcode Command Line Tools instead.
+   * Ubuntu 22.04 packages, at the glibc floor, so neither the C and C++ host
+   * nor its cells depend on the machine.
    */
-  clangSysroot?: {
+  clangSysroot: {
     /** What cells compile against and load: glibc's and Linux's C headers,
      * libstdc++'s headers, and libatomic, which libc++ needs, with their
      * copyrights. */
@@ -266,72 +259,13 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
       ],
     },
   },
-  "darwin-arm64": {
-    id: "darwin-arm64",
-    rustTarget: "aarch64-apple-darwin",
-    bun: {
-      url: `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-darwin-aarch64.zip`,
-      sha256:
-        "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620",
-    },
-    python: {
-      url: "https://github.com/astral-sh/python-build-standalone/releases/download/20260805/cpython-3.12.13%2B20260805-aarch64-apple-darwin-install_only_stripped.tar.gz",
-      sha256:
-        "a4b36035915038104aabee94d6f02827161da444296881fe4493cb98f70304b2",
-    },
-    dotnet: {
-      url: `https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_SDK_VERSION}/dotnet-sdk-${DOTNET_SDK_VERSION}-osx-arm64.tar.gz`,
-      sha256:
-        "d143ccec4474dce17d7b778854598137a2599b81828bce51e809897fe8bdf035",
-    },
-    rustComponents: {
-      cargo: {
-        url: `https://static.rust-lang.org/dist/${RUST_DIST_DATE}/cargo-${RUST_VERSION}-aarch64-apple-darwin.tar.xz`,
-        sha256:
-          "2d84a74e9558192a7de674aca6aa3ab7464bed2df97e0377156ddb7e09a0fd7a",
-      },
-      rustc: {
-        url: `https://static.rust-lang.org/dist/${RUST_DIST_DATE}/rustc-${RUST_VERSION}-aarch64-apple-darwin.tar.xz`,
-        sha256:
-          "6076cad38ccabaa24325f26a74080a363a2633a9cd34c473a8977255d8a593cb",
-      },
-      "rust-std": {
-        url: `https://static.rust-lang.org/dist/${RUST_DIST_DATE}/rust-std-${RUST_VERSION}-aarch64-apple-darwin.tar.xz`,
-        sha256:
-          "a4895f5c6995e83cab8687e46b14324592398049def71ce75ca308c981cf200d",
-      },
-    },
-    uv: {
-      url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-aarch64-apple-darwin.tar.gz`,
-      sha256:
-        "301f72afaf54060f92da7016cb0115bd077f43a9c8e39c1d8170a0bac80fd398",
-    },
-    llvm: {
-      url: `https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-macOS-ARM64.tar.zst`,
-      sha256:
-        "3da0e91b5dfe3a5ec795ad2be79b3f5e6f28c8b23edcd3847fad7742b25e0507",
-      bytes: 873_761_429,
-      macosMinimum: "14.0",
-    },
-    lean: {
-      url: `https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/lean-${LEAN_VERSION}-darwin_aarch64.tar.zst`,
-      sha256:
-        "69f263fa6e21bbc2466bbfb1affcd92479ee2714c883a07de548e099a5922932",
-      bytes: 561_666_156,
-    },
-    go: {
-      url: `https://dl.google.com/go/go${GO_VERSION}.darwin-arm64.tar.gz`,
-      sha256:
-        "a012b25b571bd0138a03dcd25375ceba866fe5ca822f426d2c66a4de56fd3f4b",
-    },
-  },
 };
 
 export function hostPlatformId(): PlatformId {
-  const id = `${process.platform === "darwin" ? "darwin" : process.platform}-${process.arch}`;
+  const id = `${process.platform}-${process.arch}`;
   if ((PLATFORM_IDS as readonly string[]).includes(id)) return id as PlatformId;
   throw new Error(
-    `bayma builds payloads for ${PLATFORM_IDS.join(" and ")}, not ${id}`,
+    `bayma builds its payload for ${PLATFORM_IDS.join(" and ")}, not ${id}`,
   );
 }
 

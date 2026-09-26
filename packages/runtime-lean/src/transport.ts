@@ -1,8 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  cacheRoot,
-  claimScratchDirectory,
   payloadValue,
   ProcessTransport,
   type RuntimeCheckpointCodec,
@@ -22,14 +20,16 @@ export const LEAN_CHECKPOINT_CODEC = {
 const LEAN_STARTUP_TIMEOUT_MS = 60_000;
 
 export function createLeanTransport(): RuntimeTransport {
-  const scratch = claimScratchDirectory(join(cacheRoot(), "lean", "scratch"));
   return new ProcessTransport({
     platformId: "stdio",
     promptRe: /(?:^|[\r\n])BAYMA> /g,
     // Nothing stops Lean's elaborator from outside it.
     interruptStrategy: "recycle",
     promptTimeoutMs: LEAN_STARTUP_TIMEOUT_MS,
-    command: ({ cwd }) => leanHostCommand(cwd, scratch),
+    // Lean's runtime holds io_uring instances, which CRIU cannot dump; its
+    // checkpoint already keeps a session's whole environment.
+    snapshots: false,
+    command: ({ cwd, scratchDir }) => leanHostCommand(cwd, scratchDir),
   });
 }
 

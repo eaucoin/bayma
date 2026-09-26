@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import {
   buildMarkers,
   createPromptAwareEnvelopeCollector,
@@ -140,6 +141,7 @@ test(
       cwd: process.cwd(),
       cols: 80,
       rows: 24,
+      scratchDir: tmpdir(),
     });
     try {
       await transport.waitForInitialPrompt(handle);
@@ -173,6 +175,7 @@ test(
       cwd: process.cwd(),
       cols: 80,
       rows: 24,
+      scratchDir: tmpdir(),
     });
     try {
       await expect(transport.waitForInitialPrompt(handle)).rejects.toThrow(
@@ -208,6 +211,7 @@ test(
       cwd: process.cwd(),
       cols: 80,
       rows: 24,
+      scratchDir: tmpdir(),
     });
     try {
       await transport.waitForInitialPrompt(handle);
@@ -236,6 +240,7 @@ test("process transport reports spawn errors instead of crashing", async () => {
     cwd: process.cwd(),
     cols: 80,
     rows: 24,
+    scratchDir: tmpdir(),
   });
 
   await expect(transport.waitForInitialPrompt(handle)).rejects.toThrow(

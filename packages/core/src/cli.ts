@@ -1,7 +1,7 @@
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
-import { ensurePayload } from "./runtime/payload.ts";
+import { preparePayload } from "./runtime/payload.ts";
 import { runDoctor } from "./doctor.ts";
 import { serveMcpHttp } from "./mcp/http.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
@@ -41,10 +41,11 @@ function option(
   return options.get(name) ?? fallback;
 }
 
+// Sessions outlive the server unless a server is told otherwise.
 function defaultDurability(
   options: ReadonlyMap<string, string>,
 ): DurabilityMode {
-  const value = option(options, "--default-durability", "ephemeral");
+  const value = option(options, "--default-durability", "checkpointed");
   if (value !== "ephemeral" && value !== "checkpointed") {
     throw new Error("--default-durability must be ephemeral or checkpointed");
   }
@@ -84,19 +85,23 @@ Commands:
       print the current version
   mcp-stdio [--state-dir PATH] [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
-      [--default-durability ephemeral|checkpointed]
+      [--default-durability checkpointed|ephemeral]
       serve MCP over stdio
   mcp-http [--host HOST] [--port N] [--path PATH] [--state-dir PATH]
       [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
-      [--default-durability ephemeral|checkpointed]
+      [--default-durability checkpointed|ephemeral]
       serve MCP over Streamable HTTP
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
       executing code in it; a named runtime must be available
   help
-      show this help`);
+      show this help
+
+Sessions are checkpointed by default: they outlive the server, whole where
+the server can snapshot their processes, and otherwise from their
+checkpoints. --default-durability ephemeral ends them with the server.`);
 }
 
 export async function runCli(
@@ -112,7 +117,7 @@ export async function runCli(
       return;
     }
     case "mcp-stdio": {
-      applyPayloadEnvironment(await ensurePayload());
+      applyPayloadEnvironment(preparePayload());
       await serveMcpStdio(
         adapters,
         serverConfig(parseCliOptions(args, SERVER_OPTIONS)),
@@ -126,7 +131,7 @@ export async function runCli(
         "--path",
         ...SERVER_OPTIONS,
       ]);
-      applyPayloadEnvironment(await ensurePayload());
+      applyPayloadEnvironment(preparePayload());
       await serveMcpHttp(adapters, {
         host: option(parsed, "--host", "127.0.0.1"),
         port: Number(option(parsed, "--port", "7290")),
@@ -155,7 +160,7 @@ export async function runCli(
             );
       if (selected.length === 0)
         throw new Error(`runtime is unavailable: ${requested}`);
-      applyPayloadEnvironment(await ensurePayload());
+      applyPayloadEnvironment(preparePayload());
       await runDoctor(selected, {
         cwd: option(parsed, "--cwd", process.cwd()),
         stateDir: parsed.get("--state-dir"),

@@ -116,7 +116,7 @@ std::unique_ptr<llvm::orc::DefinitionGenerator> loadedThreadLocals() {
 
 #ifdef __linux__
 // Cells resolve this in the host, ahead of the C runtime's; see
-// thread_locals.h. It is exported by name; see exports-linux.txt.
+// thread_locals.h. It is exported by name; see exports.txt.
 extern "C" LLVM_ATTRIBUTE_VISIBILITY_DEFAULT void *
 __emutls_get_address(void *Control) {
   auto *C = static_cast<bayma::EmutlsControl *>(Control);

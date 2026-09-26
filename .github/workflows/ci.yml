@@ -1,7 +1,7 @@
 name: ci
 
-# On demand only: every run provisions and tests the whole payload on both
-# platforms.
+# On demand only: every run provisions and tests the whole payload, and builds
+# and tests the image from it.
 on:
   workflow_dispatch:
 
@@ -25,7 +25,7 @@ env:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -33,11 +33,14 @@ jobs:
           bun-version: 1.3.14
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run format:check
       - run: bun run build
+      # The payload, what provisions it, and the image built from it take more
+      # disk than a runner starts with free.
+      - run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: actions/cache@v4
         with:
           path: .work
@@ -45,30 +48,5 @@ jobs:
       - run: bun run provision
       - run: bun run payload
       - run: bun run test
-      - run: bun run release --host-only --base-url file://${{ github.workspace }}/dist
-      - run: bun run pack
-      - run: bun run test:e2e
-
-  macos:
-    runs-on: macos-15
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      - uses: actions/cache@v4
-        with:
-          path: .work
-          key: payload-darwin-arm64-${{ hashFiles('tooling/src/platforms.ts', 'tooling/src/provision/clang.ts', 'packages/runtime-rust/native/**', 'packages/runtime-cpp/native/**', 'packages/runtime-lean/native/**', 'packages/runtime-go/native/**', 'toolbelt/**', 'skills/bayma-runtime-python/**') }}
-      - run: bun run provision
-      - run: bun run payload
-      - run: bun run test
-      - run: bun run release --host-only --base-url file://${{ github.workspace }}/dist
-      - run: bun run pack
+      - run: bun run image
       - run: bun run test:e2e

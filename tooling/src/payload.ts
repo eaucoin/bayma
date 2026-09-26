@@ -1,18 +1,22 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { bindToolbelt, RUNTIME_IDS, TOOLBELT_DIR } from "@bayma/core";
 import { packageManifest } from "./build.ts";
 import { hostPlatformId, type PlatformId } from "./platforms.ts";
 import type { ProvisionRecord } from "./provision/index.ts";
 import { treeBytes, writeJson } from "./shared/files.ts";
-import { sha256File } from "./shared/hashing.ts";
-import { runOrThrow } from "./shared/process.ts";
 import { assertTreeUntraced } from "./telemetry/boundary.ts";
 import { recordArtifact, telemetryEnabled } from "./telemetry/index.ts";
 
 // The payload: every toolchain bayma runs and the toolbelt built against
-// them, assembled for one platform and tarred as the release asset an
-// install downloads.
+// them, assembled into the one directory bayma's image carries.
 
 export const PAYLOAD_MANIFEST = "payload.json";
 export const PAYLOAD_SCHEMA_VERSION = 1 as const;
@@ -35,26 +39,35 @@ export interface PayloadManifest {
   runtimes: Record<string, PayloadRuntime>;
 }
 
-export interface PayloadResult {
-  directory: string;
-  tarball: string;
-  sha256: string;
-  bytes: number;
+/**
+ * Let whoever runs the payload use it: bayma's image runs as the user who
+ * starts it, so every file is readable by anyone, and every directory and
+ * program usable by anyone.
+ */
+function openToEveryone(directory: string): void {
+  const paths = [
+    directory,
+    ...readdirSync(directory, { recursive: true, encoding: "utf8" }).map(
+      (path) => join(directory, path),
+    ),
+  ];
+  for (const path of paths) {
+    const entry = lstatSync(path);
+    if (entry.isSymbolicLink()) continue;
+    const usable = entry.isDirectory() || entry.mode & 0o100 ? 0o555 : 0o444;
+    chmodSync(path, (entry.mode & 0o7777) | usable);
+  }
 }
 
-export function payloadTarballName(
-  platform: PlatformId,
-  version: string,
-): string {
-  return `bayma-payload-${platform}-${version}.tar.gz`;
-}
-
-/** Copy every provisioned runtime and the toolbelt into one directory and describe it. */
-export async function assemblePayload(
+/**
+ * Copy every provisioned runtime and the toolbelt into one directory and
+ * describe it; returns the directory.
+ */
+export function assemblePayload(
   repoRoot: string,
   record: ProvisionRecord,
   outDir: string,
-): Promise<PayloadResult> {
+): string {
   const { version } = packageManifest(repoRoot);
   const platform = hostPlatformId();
   const directory = join(outDir, "payload");
@@ -98,8 +111,7 @@ export async function assemblePayload(
     recursive: true,
     verbatimSymlinks: true,
   });
-  // Bound here, so this directory runs as a payload in place; an install
-  // binds its own copy again.
+  // Bound here, so this directory runs as a payload in place.
   bindToolbelt(directory);
   const manifest: PayloadManifest = {
     schemaVersion: PAYLOAD_SCHEMA_VERSION,
@@ -108,23 +120,10 @@ export async function assemblePayload(
     runtimes,
   };
   writeJson(join(directory, PAYLOAD_MANIFEST), manifest);
+  openToEveryone(directory);
   assertTreeUntraced(directory);
   if (telemetryEnabled())
     for (const name of [...placed.keys(), TOOLBELT_DIR])
       recordArtifact(`payload/${name}`, treeBytes(join(directory, name)));
-
-  // One payload tarball per platform in dist: an older version's would
-  // outlive its payload directory and confuse a release.
-  for (const name of readdirSync(outDir)) {
-    if (name.startsWith(`bayma-payload-${platform}-`)) {
-      rmSync(join(outDir, name), { force: true });
-    }
-  }
-  const tarball = join(outDir, payloadTarballName(platform, version));
-  await runOrThrow(["tar", "-czf", tarball, "-C", outDir, "payload"]);
-  if (!existsSync(tarball))
-    throw new Error(`payload tarball was not written to ${tarball}`);
-  const bytes = Bun.file(tarball).size;
-  recordArtifact("payload tarball", bytes);
-  return { directory, tarball, sha256: sha256File(tarball), bytes };
+  return directory;
 }

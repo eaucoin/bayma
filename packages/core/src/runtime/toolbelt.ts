@@ -1,7 +1,8 @@
 import {
+  cpSync,
   existsSync,
-  lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readlinkSync,
   renameSync,
@@ -15,12 +16,18 @@ import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
 
 /**
  * The toolbelt: pinned Bun, Python, Rust, and C# packages that the runtime
- * skills load into sessions. It ships inside the payload, and one stable path
- * under bayma's data root links to the newest installed payload's copy, so
- * the skills name a single path whatever versions a machine has installed.
+ * skills load into sessions. It ships inside the payload, and bayma copies it
+ * to one stable path under the user's data root, once per version, where the
+ * skills name it and an agent can read it with its own tools: the payload
+ * lives in bayma's image, which only bayma's own processes can see.
  */
 
 export const TOOLBELT_DIR = "toolbelt";
+
+/** The file in an installed toolbelt naming the version it was copied from. */
+export const TOOLBELT_VERSION_FILE = ".bayma-toolbelt-version";
+
+const VENV_BIN = join(".venv", "bin");
 
 export function toolbeltPath(env: PathEnvironment = process.env): string {
   return join(dataRoot(env), TOOLBELT_DIR);
@@ -32,20 +39,24 @@ export function toolbeltPath(env: PathEnvironment = process.env): string {
  * interpreter's platform libraries through the `home` its `pyvenv.cfg` names
  * by absolute path, so a payload carries the path it was built at until it is
  * bound. `payloadFiles` holds the payload now; `payloadRoot` is where it will
- * run from, when an install stages it elsewhere first.
+ * run from, when it is staged elsewhere first.
  */
 export function bindToolbelt(
   payloadFiles: string,
   payloadRoot: string = payloadFiles,
 ): void {
-  const venv = join(TOOLBELT_DIR, ".venv");
-  const config = join(payloadFiles, venv, "pyvenv.cfg");
+  const toolbelt = join(payloadFiles, TOOLBELT_DIR);
+  const config = join(toolbelt, ".venv", "pyvenv.cfg");
   if (!existsSync(config)) return;
-  const bin = join(venv, "bin");
   const interpreter = resolve(
-    join(payloadRoot, bin),
-    readlinkSync(join(payloadFiles, bin, "python")),
+    join(payloadRoot, TOOLBELT_DIR, VENV_BIN),
+    readlinkSync(join(toolbelt, VENV_BIN, "python")),
   );
+  setVenvHome(toolbelt, interpreter);
+}
+
+function setVenvHome(toolbelt: string, interpreter: string): void {
+  const config = join(toolbelt, ".venv", "pyvenv.cfg");
   writeFileSync(
     config,
     readFileSync(config, "utf8").replace(
@@ -55,62 +66,90 @@ export function bindToolbelt(
   );
 }
 
-function payloadVersion(payloadRoot: string): number[] | undefined {
+/**
+ * Point a copy of the payload's toolbelt at the payload's interpreter: its
+ * environment's interpreter link is relative to the payload, so the copy's
+ * link, and the `home` its `pyvenv.cfg` names, become absolute paths into it.
+ */
+function relocateToolbelt(copy: string, payloadRoot: string): void {
+  const link = join(copy, VENV_BIN, "python");
+  if (!existsSync(join(copy, ".venv", "pyvenv.cfg"))) return;
+  const interpreter = resolve(
+    join(payloadRoot, TOOLBELT_DIR, VENV_BIN),
+    readlinkSync(link),
+  );
+  rmSync(link);
+  symlinkSync(interpreter, link);
+  setVenvHome(copy, interpreter);
+}
+
+function readVersion(path: string): string | undefined {
   try {
-    const { version } = JSON.parse(
-      readFileSync(join(payloadRoot, PAYLOAD_MANIFEST), "utf8"),
-    ) as { version?: unknown };
-    return typeof version === "string"
-      ? version.split(".").map(Number)
-      : undefined;
+    return readFileSync(path, "utf8").trim();
   } catch {
     return undefined;
   }
 }
 
-function isNewer(candidate: number[], current: number[]): boolean {
-  for (let index = 0; index < candidate.length; index += 1) {
-    const difference = candidate[index]! - (current[index] ?? 0);
-    if (difference !== 0) return difference > 0;
+function payloadVersion(payloadRoot: string): string {
+  const { version } = JSON.parse(
+    readFileSync(join(payloadRoot, PAYLOAD_MANIFEST), "utf8"),
+  ) as { version?: unknown };
+  if (typeof version !== "string" || !version) {
+    throw new Error(`${PAYLOAD_MANIFEST} names no version: ${payloadRoot}`);
   }
-  return false;
+  return version;
 }
 
 /**
- * Point the toolbelt path at `payloadRoot`'s toolbelt unless it already names
- * a newer installed one. Only bayma's own symlink is ever replaced: anything
- * else at that path is reported and left alone.
+ * Install `payloadRoot`'s toolbelt at the toolbelt path unless the toolbelt
+ * there is already this version's. The copy is assembled beside the path and
+ * renamed into place, so a reader never sees half of it.
  */
-export function linkToolbelt(
+export function installToolbelt(
   payloadRoot: string,
   env: PathEnvironment = process.env,
   report: (message: string) => void = () => undefined,
 ): void {
-  const target = join(payloadRoot, TOOLBELT_DIR);
-  const link = toolbeltPath(env);
-  if (!existsSync(target)) return;
-  let current: string | undefined;
+  const source = join(payloadRoot, TOOLBELT_DIR);
+  if (!existsSync(source)) return;
+  const version = payloadVersion(payloadRoot);
+  const target = toolbeltPath(env);
+  const installed = () => readVersion(join(target, TOOLBELT_VERSION_FILE));
+  if (installed() === version) return;
+
+  mkdirSync(dirname(target), { recursive: true });
+  const staging = mkdtempSync(`${target}.`);
+  const replaced = `${staging}.replaced`;
   try {
-    if (!lstatSync(link).isSymbolicLink()) {
-      report(
-        `bayma: ${link} is not bayma's link to its toolbelt; remove it to let bayma install the toolbelt there`,
-      );
-      return;
+    cpSync(source, staging, {
+      recursive: true,
+      force: true,
+      verbatimSymlinks: true,
+    });
+    relocateToolbelt(staging, payloadRoot);
+    writeFileSync(join(staging, TOOLBELT_VERSION_FILE), version + "\n");
+    // Whatever held the path before, an older toolbelt or the link an earlier
+    // install made, moves aside first: a directory is not renamed over.
+    if (existsSync(target) || isLink(target)) renameSync(target, replaced);
+    try {
+      renameSync(staging, target);
+    } catch (error) {
+      // Another bayma installed this version's toolbelt first.
+      if (installed() !== version) throw error;
     }
-    current = readlinkSync(link);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+    rmSync(replaced, { recursive: true, force: true });
+  }
+  report(`bayma: installed the ${version} toolbelt at ${target}`);
+}
+
+function isLink(path: string): boolean {
+  try {
+    readlinkSync(path);
+    return true;
   } catch {
-    // No link yet.
+    return false;
   }
-  if (current === target) return;
-  if (current !== undefined && existsSync(current)) {
-    const installed = payloadVersion(dirname(current));
-    const offered = payloadVersion(payloadRoot);
-    if (installed && offered && !isNewer(offered, installed)) return;
-  }
-  mkdirSync(dirname(link), { recursive: true });
-  // A symlink renamed over the old one replaces it atomically.
-  const staging = `${link}.${process.pid}`;
-  rmSync(staging, { force: true });
-  symlinkSync(target, staging);
-  renameSync(staging, link);
 }

@@ -34,7 +34,13 @@ test("durable runtime output obeys shared byte and message ceilings", async () =
       },
       () => undefined,
     );
-    const created = await manager.create("actor_1", "bounded output", dir);
+    const created = await manager.createWithPolicy(
+      "actor_1",
+      "bounded output",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
     const submitted = await manager.submitExec(
       created.sessionId,
       "actor_1",

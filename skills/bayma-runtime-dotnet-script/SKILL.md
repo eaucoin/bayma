@@ -90,11 +90,11 @@ Prefer direct .NET APIs over shelling out when an equivalent API exists. Keep se
 - C# submissions run as persistent Roslyn script state with top-level asynchronous code, captured `Console` output, and REPL-style rendering of a final non-null value.
 - Common namespaces including `System`, collections, IO, LINQ, reflection, text, JSON, and tasks are already in scope, and cwd-relative script references are supported.
 - For notebook-style multiline submissions, bayma may retry compilation after inserting semicolons at recognized statement boundaries, but ordinary C# meaning still governs ambiguous code.
-- When checkpointed recovery is active, bayma restores only JSON-serializable state written with `bayma_write_checkpoint(value)` across runtime replacement or server restart and makes it available through `bayma_read_checkpoint<T>()`, rather than reconstructing the complete Roslyn script state.
+- When checkpointed recovery is active, bayma restores only JSON-serializable state written with `bayma_write_checkpoint(value)` across runtime replacement, and across a server restart that does not restore the session whole, and makes it available through `bayma_read_checkpoint<T>()`, rather than reconstructing the complete Roslyn script state.
 
 # C# Toolbelt
 
-bayma bundles a toolbelt of pinned Roslyn assemblies, referenced by path as ordinary assemblies with no namespace of the toolbelt's own, that C# sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it with its runtimes; if it is missing, `npx @bayma-repl/bayma doctor` installs it. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned Roslyn assemblies, referenced by path as ordinary assemblies with no namespace of the toolbelt's own, that C# sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image as it starts. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The assemblies and XML documentation behind C# source and type inspection are under:
 

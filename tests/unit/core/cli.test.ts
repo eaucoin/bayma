@@ -23,10 +23,9 @@ test("runtime CLI options are command scoped and unambiguous", () => {
 });
 
 test("the platform id names the payload bayma needs", () => {
-  expect([...PLATFORM_IDS]).toEqual(["linux-x64", "darwin-arm64"]);
+  expect([...PLATFORM_IDS]).toEqual(["linux-x64"]);
   expect(hostPlatformId("linux", "x64")).toBe("linux-x64");
-  expect(hostPlatformId("darwin", "arm64")).toBe("darwin-arm64");
-  expect(() => hostPlatformId("win32", "x64")).toThrow(
-    "bayma runs on linux-x64 and darwin-arm64, not win32-x64",
+  expect(() => hostPlatformId("darwin", "arm64")).toThrow(
+    "bayma runs on linux-x64, not darwin-arm64",
   );
 });
