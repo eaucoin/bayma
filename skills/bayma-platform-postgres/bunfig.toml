@@ -1,0 +1,5 @@
+# Packages come from this skill's lockfile only. With no node_modules above
+# this folder, Bun would otherwise fetch a missing package into its global
+# cache instead of failing.
+[install]
+auto = "disable"

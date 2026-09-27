@@ -1,0 +1,8 @@
+{
+  "name": "bayma-platform-postgres",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pg": "8.23.0"
+  }
+}
