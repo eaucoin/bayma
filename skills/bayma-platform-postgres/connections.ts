@@ -23,8 +23,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import pg from "pg";
-
 interface SavedConnection {
   url: string;
 }
@@ -130,6 +128,10 @@ export async function add(name: string, url: string): Promise<void> {
   }
   url = parsed.toString();
 
+  // Imported here, not above: reading a connection does not need pg, so a
+  // REPL session that imported this file before pg was installed can still
+  // use it once pg is.
+  const { default: pg } = await import("pg");
   const client = new pg.Client({
     connectionString: url,
     application_name: "bayma-platform-postgres",
