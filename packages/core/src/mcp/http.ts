@@ -18,6 +18,8 @@ import { SubscribedResourceUpdatePublisher } from "./events.ts";
 import { shutdownAndExit } from "./shutdown.ts";
 import { createOpaqueId } from "../ids.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
+import { traceMcpTransport } from "./telemetry.ts";
+import { report, SeverityNumber } from "../telemetry/record.ts";
 
 export interface McpHttpConfig extends Pick<
   SessionManagerOptions,
@@ -312,8 +314,8 @@ export async function serveMcpHttp(
           ]);
           for (const result of cleanup) {
             if (result.status === "rejected") {
-              process.stderr.write(
-                `Failed to close idle MCP HTTP session: ${failureDetail(result.reason)}\n`,
+              report(
+                `Failed to close idle MCP HTTP session: ${failureDetail(result.reason)}`,
               );
             }
           }
@@ -358,16 +360,15 @@ export async function serveMcpHttp(
 
         transport.onclose = () => {
           void closeClientSession(transport.sessionId).catch((error) => {
-            process.stderr.write(
-              `Failed to release MCP HTTP actor: ${failureDetail(error)}\n`,
-            );
+            report(`Failed to release MCP HTTP actor: ${failureDetail(error)}`);
           });
         };
         application.server.server.onerror = (error) => {
-          process.stderr.write(failureDetail(error) + "\n");
+          report(failureDetail(error), {}, SeverityNumber.ERROR);
         };
         try {
           await application.server.connect(transport);
+          traceMcpTransport(transport, "tcp");
           await transport.handleRequest(request, response, body);
         } catch (error) {
           const initializedSessionId = transport.sessionId;
@@ -410,7 +411,7 @@ export async function serveMcpHttp(
       response.end();
     } catch (error) {
       const message = failureDetail(error);
-      process.stderr.write(message + "\n");
+      report(message, {}, SeverityNumber.ERROR);
       if (!response.headersSent) {
         const requestError =
           error instanceof HttpRequestError ? error : undefined;
@@ -485,7 +486,11 @@ export async function serveMcpHttp(
   };
 
   server.on("error", (error) => {
-    process.stderr.write(`MCP HTTP server failed: ${failureDetail(error)}\n`);
+    report(
+      `MCP HTTP server failed: ${failureDetail(error)}`,
+      {},
+      SeverityNumber.ERROR,
+    );
     shutdown(1);
   });
   process.on("SIGINT", () => shutdown(0));

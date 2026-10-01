@@ -2,7 +2,6 @@ import {
   context,
   metrics,
   propagation,
-  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
   type Attributes,
@@ -13,19 +12,22 @@ import {
   type Span,
 } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import {
+  processTraceContext,
+  startTelemetry as startExporting,
+  stopTelemetry as stopExporting,
+  telemetryRunning,
+} from "@bayma/core/telemetry";
 import { ATTR, METRIC, SCOPE } from "./attributes.ts";
-import { settleTelemetryEnvironment } from "./config.ts";
 import type { TestResult } from "./junit.ts";
 import { LineSplitter } from "./output.ts";
 import { developmentResource } from "./resource.ts";
 
 // What development tooling records through. Only OpenTelemetry's API is
-// imported here, which records nothing until an SDK is registered; the SDK
-// is loaded only when the environment configures it (see config.ts), and
-// until then every function here does nothing.
-
-/** How long stopping may take to export what is left before giving up. */
-const SHUTDOWN_TIMEOUT_MS = 30_000;
+// imported here, which records nothing until bayma's telemetry starts; it
+// starts only when the environment configures it (see
+// packages/core/src/telemetry/config.ts), and until then every function here
+// does nothing.
 
 interface Instruments {
   commandDuration: Histogram;
@@ -38,14 +40,8 @@ interface Instruments {
   testDuration: Histogram;
 }
 
-interface Session {
-  shutdown: () => Promise<void>;
-  /** The trace this process continues, from the process that started it. */
-  parent: Context;
-  instruments: Instruments;
-}
-
-let session: Session | undefined;
+/** The instruments development records with, while telemetry is exporting. */
+let instruments: Instruments | undefined;
 
 // Histogram buckets for what each measures; the SDK's defaults suit
 // milliseconds, and would put nearly every run in one bucket.
@@ -103,7 +99,7 @@ function createInstruments(): Instruments {
 }
 
 export function telemetryEnabled(): boolean {
-  return session !== undefined;
+  return instruments !== undefined;
 }
 
 /**
@@ -111,48 +107,24 @@ export function telemetryEnabled(): boolean {
  * by one being traced continues its trace, from TRACEPARENT and TRACESTATE.
  */
 export async function startTelemetry(): Promise<void> {
-  if (session || !settleTelemetryEnvironment(process.env).enabled) return;
-  const { startSdk } = await import("./sdk.ts");
-  const shutdown = startSdk(developmentResource(process.env));
-  session = {
-    shutdown,
-    parent: propagation.extract(ROOT_CONTEXT, {
-      traceparent: process.env.TRACEPARENT,
-      tracestate: process.env.TRACESTATE,
-    }),
-    instruments: createInstruments(),
-  };
+  if (instruments) return;
+  await startExporting(developmentResource(process.env));
+  if (telemetryRunning()) instruments = createInstruments();
 }
 
 /**
- * Exports what is left and stops. A backend that cannot take it is warned
- * of, and never fails the command that recorded it.
+ * Exports what is left and stops. A backend that cannot take it never fails
+ * the command that recorded it.
  */
 export async function stopTelemetry(): Promise<void> {
-  const stopping = session;
-  session = undefined;
-  if (!stopping) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      stopping.shutdown(),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
-      }),
-    ]);
-  } catch (error) {
-    console.warn(
-      `telemetry: not everything was exported: ${describe(error).message}`,
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+  instruments = undefined;
+  await stopExporting();
 }
 
 /** The span work is recorded under: the active one, or the process's parent. */
 function current(): Context {
   const active = context.active();
-  return trace.getSpan(active) || !session ? active : session.parent;
+  return trace.getSpan(active) ? active : processTraceContext();
 }
 
 function describe(error: unknown): { type: string; message: string } {
@@ -219,15 +191,12 @@ export async function inCommand<T>(
       }
     });
   } finally {
-    session?.instruments.commandDuration.record(
-      (performance.now() - started) / 1000,
-      {
-        [ATTR.command]: command,
-        ...(failure === undefined
-          ? {}
-          : { [ATTR.errorType]: describe(failure).type }),
-      },
-    );
+    instruments?.commandDuration.record((performance.now() - started) / 1000, {
+      [ATTR.command]: command,
+      ...(failure === undefined
+        ? {}
+        : { [ATTR.errorType]: describe(failure).type }),
+    });
   }
 }
 
@@ -236,7 +205,7 @@ export async function inCommand<T>(
  * records telemetry continues this trace.
  */
 export function traceEnvironment(): Record<string, string> {
-  if (!session) return {};
+  if (!instruments) return {};
   const carrier: Record<string, string> = {};
   propagation.inject(current(), carrier);
   const environment: Record<string, string> = {};
@@ -252,7 +221,7 @@ function log(
   severity: SeverityNumber,
   at: Context = current(),
 ): void {
-  if (!session) return;
+  if (!instruments) return;
   logs.getLogger(SCOPE).emit({
     body,
     attributes,
@@ -270,7 +239,7 @@ export function outputLog(
   iostream: "stdout" | "stderr",
   attributes: Attributes,
 ): LineSplitter | undefined {
-  if (!session) return undefined;
+  if (!instruments) return undefined;
   const at = current();
   return new LineSplitter((line) =>
     log(
@@ -295,7 +264,7 @@ export function recordProcess(
       code: SpanStatusCode.ERROR,
       message: `exited with status ${exitCode}`,
     });
-  session?.instruments.processDuration.record(seconds, {
+  instruments?.processDuration.record(seconds, {
     [ATTR.processExecutableName]: executable,
     [ATTR.processExitCode]: exitCode,
   });
@@ -303,7 +272,7 @@ export function recordProcess(
 
 /** Records whether a provisioned directory could be reused. */
 export function recordProvisionLookup(directory: string, cached: boolean) {
-  session?.instruments.provisionLookups.add(1, {
+  instruments?.provisionLookups.add(1, {
     [ATTR.provisionDirectory]: directory,
     [ATTR.provisionCached]: cached,
   });
@@ -316,18 +285,18 @@ export function recordDownload(
   seconds: number,
   cached: boolean,
 ): void {
-  if (!session) return;
+  if (!instruments) return;
   const attributes = {
     [ATTR.downloadLabel]: label,
     [ATTR.downloadCached]: cached,
   };
-  session.instruments.downloadSize.record(bytes, attributes);
-  session.instruments.downloadDuration.record(seconds, attributes);
+  instruments.downloadSize.record(bytes, attributes);
+  instruments.downloadDuration.record(seconds, attributes);
 }
 
 /** Records the size of something a development command produced. */
 export function recordArtifact(artifact: string, bytes: number): void {
-  session?.instruments.artifactSize.record(bytes, {
+  instruments?.artifactSize.record(bytes, {
     [ATTR.artifact]: artifact,
   });
 }
@@ -337,8 +306,8 @@ export function recordArtifact(artifact: string, bytes: number): void {
  * record per test, correlated with the span current now.
  */
 export function recordTests(runner: string, results: TestResult[]): void {
-  if (!session) return;
-  const { testCases, testDuration } = session.instruments;
+  if (!instruments) return;
+  const { testCases, testDuration } = instruments;
   for (const result of results) {
     const attributes: Attributes = {
       [ATTR.testRunner]: runner,

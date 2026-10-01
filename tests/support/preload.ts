@@ -14,6 +14,13 @@ import {
   stopTelemetry,
 } from "../../tooling/src/telemetry/index.ts";
 
+// What the test harness records, such as the output of the servers it starts,
+// joins the trace of the command that ran the tests. Telemetry starts before
+// the payload's environment, which leaves telemetry settings out, is applied,
+// so the servers the tests start export nothing unless a test configures
+// them to.
+await startTelemetry();
+
 const payloadDir = resolve(import.meta.dir, "..", "..", "dist", "payload");
 if (existsSync(join(payloadDir, PAYLOAD_MANIFEST))) {
   applyPayloadEnvironment(payloadDir);
@@ -30,10 +37,7 @@ process.env.XDG_DATA_HOME = dataHome;
 if (process.env.BAYMA_PAYLOAD_DIR)
   installToolbelt(process.env.BAYMA_PAYLOAD_DIR);
 
-// What the test harness records, such as the output of the servers it starts,
-// joins the trace of the command that ran the tests. A preload's afterAll
-// runs once, after every test file.
-await startTelemetry();
+// A preload's afterAll runs once, after every test file.
 afterAll(async () => {
   await stopTelemetry();
   rmSync(dataHome, { recursive: true, force: true });

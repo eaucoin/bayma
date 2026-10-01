@@ -12,7 +12,6 @@ import { packageManifest } from "./build.ts";
 import { hostPlatformId, type PlatformId } from "./platforms.ts";
 import type { ProvisionRecord } from "./provision/index.ts";
 import { treeBytes, writeJson } from "./shared/files.ts";
-import { assertTreeUntraced } from "./telemetry/boundary.ts";
 import { recordArtifact, telemetryEnabled } from "./telemetry/index.ts";
 
 // The payload: every toolchain bayma runs and the toolbelt built against
@@ -121,7 +120,6 @@ export function assemblePayload(
   };
   writeJson(join(directory, PAYLOAD_MANIFEST), manifest);
   openToEveryone(directory);
-  assertTreeUntraced(directory);
   if (telemetryEnabled())
     for (const name of [...placed.keys(), TOOLBELT_DIR])
       recordArtifact(`payload/${name}`, treeBytes(join(directory, name)));

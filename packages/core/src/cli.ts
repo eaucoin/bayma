@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
@@ -6,6 +7,9 @@ import { runDoctor } from "./doctor.ts";
 import { serveMcpHttp } from "./mcp/http.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
 import { defaultStateDir } from "./paths.ts";
+import { failureDetail } from "./errors.ts";
+import { startTelemetry, stopTelemetry } from "./telemetry/index.ts";
+import { log, SeverityNumber } from "./telemetry/record.ts";
 import { BAYMA_VERSION } from "./version.ts";
 import type { DurabilityMode } from "./session/model.ts";
 
@@ -104,12 +108,40 @@ Commands:
 
 Sessions are checkpointed by default: they outlive the server, whole where
 the server can snapshot their processes, and otherwise from their
-checkpoints. --default-durability ephemeral ends them with the server.`);
+checkpoints. --default-durability ephemeral ends them with the server.
+
+OpenTelemetry traces, metrics, and logs of bayma's work are exported over
+OTLP to wherever OTEL_EXPORTER_OTLP_ENDPOINT and OpenTelemetry's other
+standard variables say; with none set, nothing is exported.`);
+}
+
+/**
+ * Telemetry, for a command that does bayma's work, as the environment
+ * configures it. It starts before the payload's environment, which REPL
+ * sessions run with and which leaves telemetry settings out, is applied.
+ */
+async function startCommandTelemetry(): Promise<void> {
+  await startTelemetry({
+    "service.name": "bayma",
+    "service.version": BAYMA_VERSION,
+    "service.instance.id": randomUUID(),
+  });
 }
 
 export async function runCli(
   adapters: readonly RuntimeAdapter[],
 ): Promise<void> {
+  try {
+    await runCommand(adapters);
+  } catch (error) {
+    log(SeverityNumber.ERROR, failureDetail(error));
+    throw error;
+  } finally {
+    await stopTelemetry();
+  }
+}
+
+async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   switch (command) {
     case "version":
@@ -120,6 +152,7 @@ export async function runCli(
       return;
     }
     case "mcp-stdio": {
+      await startCommandTelemetry();
       applyPayloadEnvironment(preparePayload());
       await serveMcpStdio(
         adapters,
@@ -135,6 +168,7 @@ export async function runCli(
         "--client-idle-timeout-ms",
         ...SERVER_OPTIONS,
       ]);
+      await startCommandTelemetry();
       applyPayloadEnvironment(preparePayload());
       await serveMcpHttp(adapters, {
         host: option(parsed, "--host", "127.0.0.1"),
@@ -172,6 +206,7 @@ export async function runCli(
             );
       if (selected.length === 0)
         throw new Error(`runtime is unavailable: ${requested}`);
+      await startCommandTelemetry();
       applyPayloadEnvironment(preparePayload());
       await runDoctor(selected, {
         cwd: option(parsed, "--cwd", process.cwd()),

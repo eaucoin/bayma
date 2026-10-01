@@ -205,6 +205,23 @@ test("the resolved environment points every runtime at the payload", async () =>
   });
 });
 
+test("the resolved environment leaves bayma's telemetry settings out", async () => {
+  await withTempDir(async (dir) => {
+    const env = resolvePayloadEnvironment(realpathSync(writePayload(dir)), {
+      PATH: "/usr/bin",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+      OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer%20secret",
+      TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      TRACESTATE: "vendor=value",
+    });
+    expect(
+      Object.keys(env).filter((name) =>
+        /^(OTEL_|TRACEPARENT$|TRACESTATE$)/.test(name),
+      ),
+    ).toEqual([]);
+  });
+});
+
 test("a manifest path that escapes the payload is refused", async () => {
   await withTempDir(async (dir) => {
     const root = writePayload(dir, (manifest) => {

@@ -8,7 +8,7 @@ import {
 import { basename, join } from "node:path";
 import { readJson } from "./shared/files.ts";
 import { runOrThrow } from "./shared/process.ts";
-import { assertBundleUntraced } from "./telemetry/boundary.ts";
+import { assertBundleShipsOwnTelemetry } from "./telemetry/boundary.ts";
 import { recordArtifact } from "./telemetry/index.ts";
 
 // The server is packages/server; its manifest is the one source of the
@@ -79,7 +79,7 @@ export async function build(
   );
   if (!existsSync(bundle) || !readFileSync(bundle, "utf8").startsWith(SHEBANG))
     throw new Error(`bun build produced no bundle at ${bundle}`);
-  assertBundleUntraced(bundle);
+  assertBundleShipsOwnTelemetry(bundle);
   chmodSync(bundle, 0o755);
   recordArtifact(basename(bundle), statSync(bundle).size);
   const reported = (

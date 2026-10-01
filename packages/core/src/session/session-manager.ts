@@ -70,6 +70,18 @@ import {
   ExecOutputCapture,
   finishExec,
 } from "./exec-capture.ts";
+import { report as reportLine } from "../telemetry/record.ts";
+import {
+  observeSessionEvent,
+  rememberSubmission,
+  sessionAttributes,
+  traceExec,
+  traceRecovery,
+  traceRestore,
+  traceRuntimeStart,
+  traceSnapshot,
+  type RecoverySource,
+} from "./telemetry.ts";
 
 export interface SessionRecord {
   sessionId: string;
@@ -210,8 +222,11 @@ function execFailed(record: ExecRecord): boolean {
 }
 
 /** Note what the server's operator should know of, in its log. */
-function report(message: string): void {
-  process.stderr.write(`bayma: ${message}\n`);
+function report(
+  message: string,
+  session?: Parameters<typeof sessionAttributes>[0],
+): void {
+  reportLine(`bayma: ${message}`, session ? sessionAttributes(session) : {});
 }
 
 export class SessionManager {
@@ -397,6 +412,7 @@ export class SessionManager {
     if (!reason) return snapshot;
     report(
       `session ${entry.sessionId}'s process snapshot cannot be restored: ${reason}`,
+      entry,
     );
     return undefined;
   }
@@ -852,6 +868,7 @@ export class SessionManager {
             ),
             messages: [],
           };
+          rememberSubmission(record);
           session.history.push(record);
           this.touchSession(session);
           session.runtime!.queue.push(record);
@@ -1462,59 +1479,78 @@ export class SessionManager {
       );
     }
     try {
-      const snapshot = session.record.processSnapshot;
-      if (!snapshot) this.compatibleCheckpoint(session.record.sessionId);
-      session.record.status = "recovering";
-      this.touchSession(session);
-      session.recovery.lastAttemptAtMs = session.record.updatedAtMs;
-      this.persist(session);
-      this.emitToActors(this.actorRecipients(session.record), {
-        type: "session/recoveryStarted",
-        sessionId: session.record.sessionId,
-        runtimeGeneration: session.record.runtimeGeneration + 1,
-      });
-      this.emitToActors(this.actorRecipients(session.record), {
-        type: "session/statusChanged",
-        sessionId: session.record.sessionId,
-        status: "recovering",
-      });
-      const snapshotFailure =
-        snapshot && (await this.restoreRuntime(session, snapshot));
-      if (!snapshot || snapshotFailure) {
-        try {
-          this.compatibleCheckpoint(session.record.sessionId);
-        } catch (error) {
-          throw snapshotFailure
-            ? new Error(
-                `the session came back from neither its process snapshot (${snapshotFailure}) nor its checkpoint (${failureMessage(error)})`,
-              )
-            : error;
-        }
-        await this.spawnRuntime(session, "recovery");
-        await this.hydrateFromCheckpoint(session);
-      }
-      session.record.status = "live_idle";
-      session.record.quarantineReason = undefined;
-      session.recovery.lastError = undefined;
-      this.touchSession(session);
-      this.persist(session);
-      this.emitToActors(this.actorRecipients(session.record), {
-        type: "session/recoveryFinished",
-        sessionId: session.record.sessionId,
-        runtimeGeneration: session.record.runtimeGeneration,
-      });
-      this.emitToActors(this.actorRecipients(session.record), {
-        type: "session/statusChanged",
-        sessionId: session.record.sessionId,
-        status: "live_idle",
-      });
+      await traceRecovery(session.record, () => this.recoverRuntime(session));
     } catch (error) {
       await this.quarantineSession(session, failureDetail(error));
       throw error;
     }
   }
 
+  /**
+   * Bring a checkpointed session's runtime back after the server that ran it
+   * stopped: whole from its process snapshot, or else from its checkpoint.
+   * Returns which.
+   */
+  private async recoverRuntime(session: SessionEntry): Promise<RecoverySource> {
+    const snapshot = session.record.processSnapshot;
+    if (!snapshot) this.compatibleCheckpoint(session.record.sessionId);
+    session.record.status = "recovering";
+    this.touchSession(session);
+    session.recovery.lastAttemptAtMs = session.record.updatedAtMs;
+    this.persist(session);
+    this.emitToActors(this.actorRecipients(session.record), {
+      type: "session/recoveryStarted",
+      sessionId: session.record.sessionId,
+      runtimeGeneration: session.record.runtimeGeneration + 1,
+    });
+    this.emitToActors(this.actorRecipients(session.record), {
+      type: "session/statusChanged",
+      sessionId: session.record.sessionId,
+      status: "recovering",
+    });
+    const snapshotFailure =
+      snapshot && (await this.restoreRuntime(session, snapshot));
+    if (!snapshot || snapshotFailure) {
+      try {
+        this.compatibleCheckpoint(session.record.sessionId);
+      } catch (error) {
+        throw snapshotFailure
+          ? new Error(
+              `the session came back from neither its process snapshot (${snapshotFailure}) nor its checkpoint (${failureMessage(error)})`,
+            )
+          : error;
+      }
+      await this.spawnRuntime(session, "recovery");
+      await this.hydrateFromCheckpoint(session);
+    }
+    session.record.status = "live_idle";
+    session.record.quarantineReason = undefined;
+    session.recovery.lastError = undefined;
+    this.touchSession(session);
+    this.persist(session);
+    this.emitToActors(this.actorRecipients(session.record), {
+      type: "session/recoveryFinished",
+      sessionId: session.record.sessionId,
+      runtimeGeneration: session.record.runtimeGeneration,
+    });
+    this.emitToActors(this.actorRecipients(session.record), {
+      type: "session/statusChanged",
+      sessionId: session.record.sessionId,
+      status: "live_idle",
+    });
+    return snapshot && !snapshotFailure ? "process_snapshot" : "checkpoint";
+  }
+
   private async spawnRuntime(
+    session: SessionEntry,
+    reason: "create" | "recovery" | "recycle",
+  ): Promise<void> {
+    await traceRuntimeStart(session.record, reason, () =>
+      this.launchRuntime(session, reason),
+    );
+  }
+
+  private async launchRuntime(
     session: SessionEntry,
     reason: "create" | "recovery" | "recycle",
   ): Promise<void> {
@@ -1629,13 +1665,13 @@ export class SessionManager {
     // The dump ends the runtime, which is no failure of it.
     runtime.unsubscribe();
     try {
-      session.record.processSnapshot = await snapshots.snapshot(
-        runtime.handle,
-        this.snapshotDir(sessionId),
+      session.record.processSnapshot = await traceSnapshot(session.record, () =>
+        snapshots.snapshot(runtime.handle, this.snapshotDir(sessionId)),
       );
     } catch (error) {
       report(
         `session ${sessionId} will come back from its checkpoint, not a process snapshot: ${failureMessage(error)}`,
+        session.record,
       );
       return false;
     }
@@ -1650,6 +1686,15 @@ export class SessionManager {
    * from its checkpoint.
    */
   private async restoreRuntime(
+    session: SessionEntry,
+    snapshot: ProcessSnapshot,
+  ): Promise<string | undefined> {
+    return traceRestore(session.record, () =>
+      this.restoreFromSnapshot(session, snapshot),
+    );
+  }
+
+  private async restoreFromSnapshot(
     session: SessionEntry,
     snapshot: ProcessSnapshot,
   ): Promise<string | undefined> {
@@ -1690,6 +1735,7 @@ export class SessionManager {
       const failure = failureMessage(error);
       report(
         `session ${sessionId}'s process snapshot did not restore: ${failure}`,
+        session.record,
       );
       // A restored runtime that failed its probe quarantined its session on
       // the way out; its checkpoint is what decides now.
@@ -2055,6 +2101,16 @@ export class SessionManager {
   }
 
   private async runExec(
+    session: SessionEntry,
+    record: ExecRecord,
+    options: InternalExecOptions,
+  ): Promise<void> {
+    await traceExec(session.record, record, !options.emitActors, () =>
+      this.performExec(session, record, options),
+    );
+  }
+
+  private async performExec(
     session: SessionEntry,
     record: ExecRecord,
     options: InternalExecOptions,
@@ -2506,6 +2562,12 @@ export class SessionManager {
   }
 
   private recordEvent(event: SessionEvent): void {
+    observeSessionEvent(
+      event,
+      "sessionId" in event
+        ? this.sessions.get(event.sessionId)?.record
+        : undefined,
+    );
     const occurredAtMs = Date.now();
     this.serverEventLog.append(event, occurredAtMs);
     if ("sessionId" in event) {

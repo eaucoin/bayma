@@ -5,6 +5,8 @@ import { RUNTIME_IDS } from "../runtime/id.ts";
 import { EXEC_IMAGE_MIME_TYPES, EXEC_STATUSES } from "../session/exec-types.ts";
 import { SESSION_STATUSES, type SessionSummary } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
+import { sessionAttributes } from "../session/telemetry.ts";
+import { activeSpan } from "../telemetry/record.ts";
 import {
   collectExecSnapshot,
   MAX_EXEC_YIELD_TIME_MS,
@@ -90,6 +92,20 @@ interface ToolContext {
   sessionId?: string;
 }
 
+/**
+ * Names the session, and the exec, a call concerns on the span of its
+ * request (mcp/telemetry.ts).
+ */
+function concerns(
+  session: { sessionId: string; runtimeId?: string },
+  execId?: string,
+): void {
+  activeSpan().setAttributes({
+    ...sessionAttributes(session),
+    ...(execId ? { "bayma.exec.id": execId } : {}),
+  });
+}
+
 function projectSession(session: SessionSummary) {
   return {
     session_id: session.sessionId,
@@ -173,16 +189,17 @@ export function registerMcpTools(
       outputSchema: CreatedSessionResultSchema,
       annotations: MUTATING,
     },
-    async ({ runtime, title, cwd, role }, context) =>
-      sessionResult(
-        await manager.create(
-          resolveActorId(context),
-          title,
-          cwd,
-          role ?? "controller",
-          runtime,
-        ),
-      ),
+    async ({ runtime, title, cwd, role }, context) => {
+      const session = await manager.create(
+        resolveActorId(context),
+        title,
+        cwd,
+        role ?? "controller",
+        runtime,
+      );
+      concerns(session);
+      return sessionResult(session);
+    },
   );
 
   server.registerTool(
@@ -195,10 +212,12 @@ export function registerMcpTools(
       outputSchema: SessionResultSchema,
       annotations: READ_ONLY,
     },
-    async ({ session_id }, context) =>
-      sessionResult(
+    async ({ session_id }, context) => {
+      concerns({ sessionId: session_id });
+      return sessionResult(
         await manager.attach(session_id, resolveActorId(context), "controller"),
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -211,8 +230,12 @@ export function registerMcpTools(
       outputSchema: SessionResultSchema,
       annotations: READ_ONLY,
     },
-    async ({ session_id }, context) =>
-      sessionResult(await manager.detach(session_id, resolveActorId(context))),
+    async ({ session_id }, context) => {
+      concerns({ sessionId: session_id });
+      return sessionResult(
+        await manager.detach(session_id, resolveActorId(context)),
+      );
+    },
   );
 
   server.registerTool(
@@ -253,11 +276,13 @@ export function registerMcpTools(
       },
     },
     async ({ session_id, code, yield_time_ms, max_output_tokens }, context) => {
+      concerns({ sessionId: session_id });
       const { execId } = await manager.submitExec(
         session_id,
         resolveActorId(context),
         code,
       );
+      concerns({ sessionId: session_id }, execId);
       return execSnapshotResult(
         manager,
         await collectExecSnapshot(manager, session_id, execId, {
@@ -313,8 +338,9 @@ export function registerMcpTools(
       from_seq,
       yield_time_ms,
       max_output_tokens,
-    }) =>
-      execSnapshotResult(
+    }) => {
+      concerns({ sessionId: session_id }, exec_id);
+      return execSnapshotResult(
         manager,
         await collectExecSnapshot(manager, session_id, exec_id, {
           fromSeq: from_seq,
@@ -322,7 +348,8 @@ export function registerMcpTools(
           maxOutputTokens: max_output_tokens ?? snapshotTokenLimit,
           defaultMaxOutputTokens: snapshotTokenLimit,
         }),
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -335,10 +362,12 @@ export function registerMcpTools(
       outputSchema: SessionResultSchema,
       annotations: MUTATING,
     },
-    async ({ session_id }, context) =>
-      sessionResult(
+    async ({ session_id }, context) => {
+      concerns({ sessionId: session_id });
+      return sessionResult(
         await manager.interrupt(session_id, resolveActorId(context)),
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -365,10 +394,12 @@ export function registerMcpTools(
       outputSchema: SessionResultSchema,
       annotations: READ_ONLY,
     },
-    async ({ session_id, cols, rows }, context) =>
-      sessionResult(
+    async ({ session_id, cols, rows }, context) => {
+      concerns({ sessionId: session_id });
+      return sessionResult(
         await manager.resize(session_id, resolveActorId(context), cols, rows),
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -381,7 +412,11 @@ export function registerMcpTools(
       outputSchema: SessionResultSchema,
       annotations: MUTATING,
     },
-    async ({ session_id }, context) =>
-      sessionResult(await manager.close(session_id, resolveActorId(context))),
+    async ({ session_id }, context) => {
+      concerns({ sessionId: session_id });
+      return sessionResult(
+        await manager.close(session_id, resolveActorId(context)),
+      );
+    },
   );
 }

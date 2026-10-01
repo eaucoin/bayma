@@ -6,7 +6,9 @@ import type { PlatformId } from "./platform.ts";
 /**
  * The payload manifest and the environment it resolves to. Every runtime is
  * run from the payload: the resolver drops the host's own toolchain
- * redirects, so a machine cannot point a bundled runtime somewhere else.
+ * redirects, so a machine cannot point a bundled runtime somewhere else, and
+ * bayma's own telemetry settings, so code in a REPL session never exports
+ * where bayma does.
  */
 
 export const PAYLOAD_MANIFEST = "payload.json";
@@ -101,6 +103,13 @@ const HOST_RUNTIME_REDIRECTS = new Set([
   "RUST_SRC_PATH",
   "VIRTUAL_ENV",
 ]);
+
+/** bayma's own telemetry settings, read once as it starts (telemetry/config.ts). */
+function isTelemetrySetting(name: string): boolean {
+  return (
+    name.startsWith("OTEL_") || name === "TRACEPARENT" || name === "TRACESTATE"
+  );
+}
 
 function isHostRuntimeRedirect(name: string): boolean {
   return (
@@ -293,7 +302,9 @@ export function resolvePayloadEnvironment(
   const env: Record<string, string> = Object.fromEntries(
     Object.entries(base).filter(
       (entry): entry is [string, string] =>
-        entry[1] !== undefined && !isHostRuntimeRedirect(entry[0]),
+        entry[1] !== undefined &&
+        !isHostRuntimeRedirect(entry[0]) &&
+        !isTelemetrySetting(entry[0]),
     ),
   );
   const prepends = new Map<string, string[]>();

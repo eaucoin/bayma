@@ -8,6 +8,8 @@ import { createModelSurface } from "./model-surface.ts";
 import { SubscribedResourceUpdatePublisher } from "./events.ts";
 import { shutdownAndExit } from "./shutdown.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
+import { traceMcpTransport } from "./telemetry.ts";
+import { report, SeverityNumber } from "../telemetry/record.ts";
 
 export interface McpStdioConfig extends Pick<
   SessionManagerOptions,
@@ -60,7 +62,7 @@ export async function serveMcpStdio(
 
   const transport = new StdioServerTransport();
   application.server.server.onerror = (error) => {
-    process.stderr.write(failureDetail(error) + "\n");
+    report(failureDetail(error), {}, SeverityNumber.ERROR);
   };
   let connected = false;
   let closeObserved = false;
@@ -102,6 +104,7 @@ export async function serveMcpStdio(
     }
     throw error;
   }
+  traceMcpTransport(transport, "pipe");
   connected = true;
   if (closeObserved) exit();
   return new Promise<never>(() => undefined);

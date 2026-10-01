@@ -24,7 +24,7 @@ function usage(): never {
 
 Every command records OpenTelemetry traces, metrics, and logs when the
 environment, or the otel.env its bun run script loads, configures an
-exporter; see otel.env.example and tooling/src/telemetry/config.ts.`);
+exporter; see otel.env.example and packages/core/src/telemetry/config.ts.`);
   process.exit(2);
 }
 

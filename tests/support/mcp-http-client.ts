@@ -206,6 +206,8 @@ export interface McpHttpServerOptions {
   stateDir?: string;
   defaultDurability?: "ephemeral" | "checkpointed";
   clientIdleTimeoutMs?: number;
+  /** The server's environment: this process's unless given. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface McpHttpServer {
@@ -254,7 +256,7 @@ export async function launchMcpHttpServer(
     ],
     {
       detached: true,
-      env: process.env,
+      env: options.env ?? process.env,
       stdio: ["ignore", "ignore", "ignore"],
       windowsHide: true,
     },

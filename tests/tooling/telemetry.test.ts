@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { packageManifest } from "../../tooling/src/build.ts";
-import { settleTelemetryEnvironment } from "../../tooling/src/telemetry/config.ts";
+import { settleTelemetryEnvironment } from "@bayma/core/telemetry";
 import { parseJUnit } from "../../tooling/src/telemetry/junit.ts";
 import {
   LineSplitter,
@@ -26,8 +26,8 @@ describe("configuration", () => {
   test("nothing is exported until something is configured", () => {
     const env = { PATH: "/bin" };
     expect(settleTelemetryEnvironment(env)).toEqual({
-      enabled: false,
-      signals: [],
+      exports: [],
+      refusals: [],
     });
     expect(env).toEqual({ PATH: "/bin" });
   });
@@ -37,24 +37,41 @@ describe("configuration", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "",
       OTEL_EXPORTER_OTLP_HEADERS: " ",
     };
-    expect(settleTelemetryEnvironment(env).enabled).toBe(false);
+    expect(settleTelemetryEnvironment(env).exports).toEqual([]);
     expect(env).toEqual({});
   });
 
-  test("an endpoint for every signal exports every signal", () => {
+  test("an endpoint for every signal exports every signal, over OTLP's HTTP protobuf by default", () => {
     const env = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" };
-    expect(settleTelemetryEnvironment(env)).toEqual({
-      enabled: true,
-      signals: ["traces", "metrics", "logs"],
-    });
+    expect(settleTelemetryEnvironment(env).exports).toEqual([
+      { signal: "traces", protocol: "http/protobuf" },
+      { signal: "metrics", protocol: "http/protobuf" },
+      { signal: "logs", protocol: "http/protobuf" },
+    ]);
+  });
+
+  test("each signal goes over the protocol set for it, or for every signal", () => {
+    const env = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: "http/protobuf",
+    };
+    expect(settleTelemetryEnvironment(env).exports).toEqual([
+      { signal: "traces", protocol: "http/json" },
+      { signal: "metrics", protocol: "http/json" },
+      { signal: "logs", protocol: "http/protobuf" },
+    ]);
   });
 
   test("an endpoint or exporter for one signal exports that signal alone", () => {
     const env: Record<string, string | undefined> = {
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://collector:4318/v1/logs",
-      OTEL_TRACES_EXPORTER: "console",
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector:4318/v1/traces",
     };
-    expect(settleTelemetryEnvironment(env).signals).toEqual(["traces", "logs"]);
+    expect(
+      settleTelemetryEnvironment(env).exports.map(({ signal }) => signal),
+    ).toEqual(["traces", "logs"]);
     expect(env.OTEL_METRICS_EXPORTER).toBe("none");
   });
 
@@ -63,7 +80,27 @@ describe("configuration", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
       OTEL_METRICS_EXPORTER: "none",
     };
-    expect(settleTelemetryEnvironment(env).signals).toEqual(["traces", "logs"]);
+    expect(
+      settleTelemetryEnvironment(env).exports.map(({ signal }) => signal),
+    ).toEqual(["traces", "logs"]);
+  });
+
+  test("a signal bayma cannot export is refused, and turned off", () => {
+    const env: Record<string, string | undefined> = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4317",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: "http/protobuf",
+      OTEL_METRICS_EXPORTER: "console",
+    };
+    expect(settleTelemetryEnvironment(env)).toEqual({
+      exports: [{ signal: "logs", protocol: "http/protobuf" }],
+      refusals: [
+        "traces: bayma exports over http/protobuf or http/json, not grpc",
+        "metrics: bayma has no console exporter",
+      ],
+    });
+    expect(env.OTEL_TRACES_EXPORTER).toBe("none");
+    expect(env.OTEL_METRICS_EXPORTER).toBe("none");
   });
 
   test("OTEL_SDK_DISABLED turns everything off", () => {
@@ -71,7 +108,7 @@ describe("configuration", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
       OTEL_SDK_DISABLED: "true",
     };
-    expect(settleTelemetryEnvironment(env).enabled).toBe(false);
+    expect(settleTelemetryEnvironment(env).exports).toEqual([]);
   });
 
   test("otel.env.example names what config.ts describes, and nothing else", () => {
@@ -79,7 +116,7 @@ describe("configuration", () => {
       .split("\n")
       .filter((line) => line.trim() !== "" && !line.startsWith("#"));
     const described = readFileSync(
-      join(repoRoot, "tooling", "src", "telemetry", "config.ts"),
+      join(repoRoot, "packages", "core", "src", "telemetry", "config.ts"),
       "utf8",
     );
     expect(variables.length).toBeGreaterThan(0);
@@ -96,7 +133,7 @@ describe("configuration", () => {
     const env: Record<string, string | undefined> = Object.fromEntries(
       variables.map((line) => [line.slice(0, -1), ""]),
     );
-    expect(settleTelemetryEnvironment(env).enabled).toBe(false);
+    expect(settleTelemetryEnvironment(env).exports).toEqual([]);
   });
 
   test("every bun run script loads otel.env, which git ignores", () => {
@@ -506,16 +543,31 @@ describe("a development command configured for one signal", () => {
 });
 
 describe("a development command whose backend cannot be reached", () => {
+  // Nothing listens on the discard port.
+  const unreachable = {
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    OTEL_EXPORTER_OTLP_TIMEOUT: "1000",
+  };
+
   test(
-    "warns of what it could not export, and exits as it would have",
+    "exits as it would have, quietly",
+    async () => {
+      const { exitCode, stderr } = await runCommand("succeed", unreachable);
+      expect(exitCode).toBe(0);
+      expect(stderr).not.toContain("telemetry");
+    },
+    COMMAND_TIMEOUT_MS,
+  );
+
+  test(
+    "tells what it could not export to the diagnostics OTEL_LOG_LEVEL asks for",
     async () => {
       const { exitCode, stderr } = await runCommand("succeed", {
-        // Nothing listens on the discard port.
-        OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
-        OTEL_EXPORTER_OTLP_TIMEOUT: "1000",
+        ...unreachable,
+        OTEL_LOG_LEVEL: "warn",
       });
       expect(exitCode).toBe(0);
-      expect(stderr).toContain("telemetry: not everything was exported: ");
+      expect(stderr).toContain("bayma: telemetry: ");
     },
     COMMAND_TIMEOUT_MS,
   );

@@ -10,7 +10,7 @@ permissions:
 
 # Development telemetry goes where the repository's secrets and variables of
 # these OpenTelemetry names say; with none set, nothing is exported. See
-# tooling/src/telemetry/config.ts.
+# packages/core/src/telemetry/config.ts.
 env:
   OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }}

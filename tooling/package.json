@@ -4,10 +4,9 @@
   "version": "0.8.0",
   "type": "module",
   "dependencies": {
+    "@bayma/core": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.222.0",
-    "@opentelemetry/resources": "2.11.0",
-    "@opentelemetry/sdk-node": "0.222.0",
     "fast-xml-parser": "5.11.1"
   }
 }

@@ -16,6 +16,8 @@ import {
   acquireStateDirectoryLease,
   type StateDirectoryLease,
 } from "./runtime/state-directory-lease.ts";
+import { observeSessions } from "./session/telemetry.ts";
+import { inSpan } from "./telemetry/record.ts";
 
 // If initialization cannot prove that its transport stopped, retaining the
 // lease until process exit is safer than allowing another runtime to mutate
@@ -35,7 +37,19 @@ export interface Engine {
   shutdown: () => Promise<void>;
 }
 
+/**
+ * Opens the engine on its state directory, as the span `bayma.start`; its
+ * shutdown is `bayma.shutdown`.
+ */
 export async function createEngine(
+  runtimes: readonly (RuntimeAdapter | RuntimeBinding)[],
+  config: EngineConfig,
+  emit: SessionEventSink,
+): Promise<Engine> {
+  return inSpan("bayma.start", {}, () => openEngine(runtimes, config, emit));
+}
+
+async function openEngine(
   runtimes: readonly (RuntimeAdapter | RuntimeBinding)[],
   config: EngineConfig,
   emit: SessionEventSink,
@@ -91,15 +105,18 @@ export async function createEngine(
     }
     throw error;
   }
+  const stopObservingSessions = observeSessions(() => manager.list());
   return {
     registry,
     manager,
     catalogStore,
     historyStore,
     checkpointStore,
-    shutdown: async () => {
-      await manager.shutdown();
-      await lease.release();
-    },
+    shutdown: () =>
+      inSpan("bayma.shutdown", {}, async () => {
+        stopObservingSessions();
+        await manager.shutdown();
+        await lease.release();
+      }),
   };
 }

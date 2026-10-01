@@ -6,6 +6,7 @@ import { aggregateFailure } from "./errors.ts";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import type { RuntimeId } from "./runtime/id.ts";
 import { createEngine, type Engine } from "./engine.ts";
+import { inSpan } from "./telemetry/record.ts";
 
 // `doctor` proves that every selected runtime can create a session and
 // execute its probe, through the same engine the servers use.
@@ -40,7 +41,21 @@ export function assertDoctorProcessResult(
   }
 }
 
-async function probe(
+/** Proves one runtime, as the span `bayma.doctor.probe`. */
+function probe(
+  engine: Engine,
+  adapter: RuntimeAdapter,
+  actorId: string,
+  cwd: string,
+): Promise<string> {
+  return inSpan(
+    "bayma.doctor.probe",
+    { "bayma.runtime": adapter.runtimeId },
+    () => probeRuntime(engine, adapter, actorId, cwd),
+  );
+}
+
+async function probeRuntime(
   engine: Engine,
   adapter: RuntimeAdapter,
   actorId: string,
@@ -75,7 +90,15 @@ async function probe(
   throw new Error(`${adapter.runtimeId} doctor exec timed out`);
 }
 
+/** Runs doctor as the span `bayma.doctor`. */
 export async function runDoctor(
+  adapters: readonly RuntimeAdapter[],
+  options: DoctorOptions,
+): Promise<void> {
+  await inSpan("bayma.doctor", {}, () => diagnose(adapters, options));
+}
+
+async function diagnose(
   adapters: readonly RuntimeAdapter[],
   options: DoctorOptions,
 ): Promise<void> {

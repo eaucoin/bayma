@@ -1,15 +1,12 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  assertBundleUntraced,
-  assertTreeUntraced,
-} from "../../tooling/src/telemetry/boundary.ts";
+import { assertBundleShipsOwnTelemetry } from "../../tooling/src/telemetry/boundary.ts";
 import { withTempDir } from "../support/temp.ts";
 
-// Development telemetry never reaches what bayma publishes, and costs nothing
-// where it is not configured.
+// bayma ships its own telemetry and nothing of its development's, and loads
+// the SDK only where telemetry is configured.
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
 
@@ -40,7 +37,7 @@ function imports(path: string): { specifier: string; dynamic: boolean }[] {
     );
 }
 
-test("no package bayma publishes depends on OpenTelemetry or the tooling", () => {
+test("no package bayma ships depends on the tooling", () => {
   for (const manifest of repositoryFiles("packages/*/package.json")) {
     const { dependencies, devDependencies, peerDependencies } = JSON.parse(
       readFileSync(join(repoRoot, manifest), "utf8"),
@@ -50,63 +47,50 @@ test("no package bayma publishes depends on OpenTelemetry or the tooling", () =>
       ...devDependencies,
       ...peerDependencies,
     }))
-      expect(`${manifest}: ${name}`).not.toMatch(
-        /: (@opentelemetry\/|@bayma\/tooling$)/,
-      );
+      expect(`${manifest}: ${name}`).not.toMatch(/: @bayma\/tooling$/);
   }
   for (const source of repositoryFiles("packages").filter((path) =>
     /\.(ts|js|mjs|cjs)$/.test(path),
   ))
     for (const { specifier } of imports(source))
-      expect(`${source}: ${specifier}`).not.toMatch(
-        /: (@opentelemetry\/|.*\btooling\/)/,
-      );
+      expect(`${source}: ${specifier}`).not.toMatch(/: .*\btooling\//);
 });
 
-test("only an SDK that is configured is loaded", () => {
-  // The API records nothing by itself; the SDK is sdk.ts's alone, and
-  // imported only when the environment configures telemetry.
+test("only telemetry that is configured loads the SDK", () => {
+  // Everything else records through OpenTelemetry's API, which records
+  // nothing by itself; the SDK is sdk.ts's alone, and imported only when the
+  // environment configures telemetry.
+  const sdk = "packages/core/src/telemetry/sdk.ts";
   const api = new Set(["@opentelemetry/api", "@opentelemetry/api-logs"]);
-  for (const source of repositoryFiles("tooling", "tests")) {
+  for (const source of repositoryFiles("packages", "tooling", "tests")) {
     if (!/\.ts$/.test(source)) continue;
     for (const { specifier, dynamic } of imports(source)) {
       if (specifier.startsWith("@opentelemetry/") && !api.has(specifier))
-        expect(source).toBe("tooling/src/telemetry/sdk.ts");
+        expect(source).toBe(sdk);
       if (/(^|\/)sdk\.ts$/.test(specifier))
         expect({ source, dynamic }).toEqual({
-          source: "tooling/src/telemetry/index.ts",
+          source: "packages/core/src/telemetry/index.ts",
           dynamic: true,
         });
     }
   }
 });
 
-test("a bundle or tree with OpenTelemetry in it is refused", () => {
+test("a bundle with development tooling, the Node SDK, or gRPC in it is refused", () => {
   withTempDir((dir) => {
     const bundle = join(dir, "bundle.js");
-    writeFileSync(bundle, "// node_modules/zod/index.js\nexport {};\n");
-    expect(() => assertBundleUntraced(bundle)).not.toThrow();
-    writeFileSync(bundle, "// node_modules/@opentelemetry/api/index.js\n");
-    expect(() => assertBundleUntraced(bundle)).toThrow("OpenTelemetry");
-
-    const tree = join(dir, "payload");
-    mkdirSync(join(tree, "toolbelt", "node_modules", "zod"), {
-      recursive: true,
-    });
     writeFileSync(
-      join(tree, "toolbelt", "node_modules", "zod", "index.js"),
-      "",
+      bundle,
+      "// node_modules/@opentelemetry/exporter-trace-otlp-proto/build/src/index.js\nexport {};\n",
     );
-    expect(() => assertTreeUntraced(tree)).not.toThrow();
-    const otel = join(
-      tree,
-      "toolbelt",
-      "node_modules",
-      "@opentelemetry",
-      "api",
-    );
-    mkdirSync(otel, { recursive: true });
-    writeFileSync(join(otel, "index.js"), "");
-    expect(() => assertTreeUntraced(tree)).toThrow("OpenTelemetry");
+    expect(() => assertBundleShipsOwnTelemetry(bundle)).not.toThrow();
+    for (const [module, what] of [
+      ["tooling/src/telemetry/index.ts", "development tooling"],
+      ["node_modules/@opentelemetry/sdk-node/build/src/sdk.js", "Node SDK"],
+      ["node_modules/@grpc/grpc-js/build/src/index.js", "gRPC"],
+    ]) {
+      writeFileSync(bundle, `// ${module}\n`);
+      expect(() => assertBundleShipsOwnTelemetry(bundle)).toThrow(what);
+    }
   });
 });

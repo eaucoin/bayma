@@ -36,6 +36,16 @@ REPL session, its whole process and everything it holds, and a later bayma
 restores it where it left off; after a reboot, a REPL session comes back from
 its own checkpoints instead.
 
+bayma exports OpenTelemetry traces, metrics, and logs of its own work, over
+OTLP's HTTP protocols, to wherever `OTEL_EXPORTER_OTLP_ENDPOINT` and
+OpenTelemetry's other standard variables say; with none set, it exports
+nothing. Pass each into its container, as `-e OTEL_EXPORTER_OTLP_ENDPOINT`
+does, remembering that `localhost` there is the container itself. Each MCP
+request is a span that continues the trace its client propagated, in the
+request's `_meta` or its `traceparent` header, with spans for the execs,
+runtimes, and REPL sessions it concerns. A REPL session is never told where
+bayma exports.
+
 Then you can use bayma. Each runtime has a skill, `bayma-runtime-*`, on how to
 work in that runtime with bayma. Within a REPL session, an agent executes code
 in that runtime, including against legacy software. For example, in the C++
