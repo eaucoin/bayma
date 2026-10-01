@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import http from "node:http";
+import { finished } from "node:stream";
 import {
   localhostHostValidation,
   localhostOriginValidation,
@@ -31,16 +32,30 @@ export interface McpHttpConfig extends Pick<
   snapshotTokenLimit: number;
   defaultCols: number;
   defaultRows: number;
+  /** How long a client session with no request or stream open stays open. */
+  clientIdleTimeoutMs: number;
 }
 
 interface HttpClientSession {
   application: McpApplication;
   transport: NodeStreamableHTTPServerTransport;
   updates: SubscribedResourceUpdatePublisher;
+  /** Count this response as the client's open connection until it ends. */
+  track: (response: http.ServerResponse) => void;
+  /** Whether the client has a connection open, or had one a moment ago. */
+  live: () => boolean;
   close: () => Promise<void>;
 }
 
 const MAX_MCP_HTTP_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+// A connected client holds a stream open for its whole MCP session, as Claude
+// Code and Codex do, and so stays live however long it idles. A client stays
+// live this long after its last connection ends, to reopen a dropped stream;
+// after that, its controller leases can be taken over, as when its process
+// was replaced or its connections were lost to a sandbox's restore.
+const CLIENT_RECONNECT_GRACE_MS = 10_000;
+const HTTP_ACTOR_ID_PREFIX = "actor_mcp_http_";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 class HttpRequestError extends Error {
@@ -136,6 +151,15 @@ export async function serveMcpHttp(
   ) {
     throw new Error("MCP HTTP path must be one absolute URL pathname");
   }
+  if (
+    !Number.isSafeInteger(config.clientIdleTimeoutMs) ||
+    config.clientIdleTimeoutMs < 1 ||
+    config.clientIdleTimeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new Error(
+      `MCP HTTP client idle timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`,
+    );
+  }
   const sessions = new Map<string, HttpClientSession>();
 
   const engine = await createEngine(
@@ -147,6 +171,10 @@ export async function serveMcpHttp(
       defaultCols: config.defaultCols,
       defaultRows: config.defaultRows,
       resolveCreatePolicy: config.resolveCreatePolicy,
+      isActorLive: (actorId) =>
+        actorId.startsWith(HTTP_ACTOR_ID_PREFIX) &&
+        (sessions.get(actorId.slice(HTTP_ACTOR_ID_PREFIX.length))?.live() ??
+          false),
     },
     (envelope) => {
       for (const session of sessions.values()) {
@@ -213,6 +241,7 @@ export async function serveMcpHttp(
             });
             return;
           }
+          existing.track(response);
           await existing.transport.handleRequest(request, response, body);
           return;
         }
@@ -231,12 +260,16 @@ export async function serveMcpHttp(
 
         const pendingActorId = createOpaqueId("actor_mcp_http_pending");
         const actorIdForSession = (sessionId?: string): string =>
-          sessionId ? `actor_mcp_http_${sessionId}` : pendingActorId;
+          sessionId ? `${HTTP_ACTOR_ID_PREFIX}${sessionId}` : pendingActorId;
         let cleanupPromise: Promise<void> | undefined;
+        let openResponses = 0;
+        let lastResponseEndedAtMs = 0;
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
         const closeClientSession = (
           closingSessionId?: string,
         ): Promise<void> => {
           if (!closingSessionId) return Promise.resolve();
+          clearTimeout(idleTimer);
           cleanupPromise ??= (async () => {
             sessions.delete(closingSessionId);
             await manager.releaseActor(actorIdForSession(closingSessionId));
@@ -263,6 +296,23 @@ export async function serveMcpHttp(
           config.snapshotTokenLimit,
           createModelSurface(engine.registry, config.snapshotTokenLimit),
         );
+        // A client that ends its process without ending its MCP session sends
+        // nothing more, so bayma closes a session no request or stream has
+        // held open for the idle timeout, as if the client had ended it. Its
+        // leases were open to takeover once its reconnect grace ran out.
+        const closeIdleClientSession = async (): Promise<void> => {
+          const cleanup = await Promise.allSettled([
+            application.server.close(),
+            closeClientSession(transport.sessionId),
+          ]);
+          for (const result of cleanup) {
+            if (result.status === "rejected") {
+              process.stderr.write(
+                `Failed to close idle MCP HTTP session: ${failureDetail(result.reason)}\n`,
+              );
+            }
+          }
+        };
         clientSession = {
           application,
           transport,
@@ -270,8 +320,27 @@ export async function serveMcpHttp(
             application.server,
             application.subscriptions,
           ),
+          track: (trackedResponse) => {
+            clearTimeout(idleTimer);
+            openResponses += 1;
+            // A response ends when it completes, and when its connection is
+            // closed, reset, or fails, however cleanly or not.
+            finished(trackedResponse, () => {
+              openResponses -= 1;
+              lastResponseEndedAtMs = Date.now();
+              if (openResponses > 0 || cleanupPromise) return;
+              idleTimer = setTimeout(
+                () => void closeIdleClientSession(),
+                config.clientIdleTimeoutMs,
+              );
+            });
+          },
+          live: () =>
+            openResponses > 0 ||
+            Date.now() - lastResponseEndedAtMs < CLIENT_RECONNECT_GRACE_MS,
           close: () => closeClientSession(transport.sessionId),
         };
+        clientSession.track(response);
 
         transport.onclose = () => {
           void closeClientSession(transport.sessionId).catch((error) => {
@@ -318,6 +387,7 @@ export async function serveMcpHttp(
           response.end("unknown MCP session");
           return;
         }
+        existing.track(response);
         await existing.transport.handleRequest(request, response);
         return;
       }

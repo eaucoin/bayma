@@ -69,7 +69,7 @@ Workbench usefulness remains the primary selection criterion; these states matte
 - `quarantined`: inspect the reason; replace the session unless the underlying fault is explicitly repaired.
 - `closed`, or announced for eviction by a `session/evictionScheduled` event: do not select for new work.
 
-Controller authority is exclusive. Do not steal or close another actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work.
+Controller authority is exclusive while the controller's client stays connected. Do not steal or close another connected actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work. Once the previous controller's client has no open connection, as with a session you created before a reconnect, `session.acquire_controller` takes it over.
 
 Everything the session declared persists across execs and client reconnects while the Go host remains up. An interrupt restarts the host; only the last committed checkpoint carries over. A panic in a goroutine a cell started ends the host and quarantines the session. Durable exec resources are the authority on whether submitted work compiled and ran: `bayma:///session/{sessionId}/exec/{execId}` for status and code, and `/messages` for ordered output and errors.
 

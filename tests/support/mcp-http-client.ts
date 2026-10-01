@@ -47,6 +47,11 @@ export class McpHttpClient {
     );
   }
 
+  /** The MCP session the server gave this client. */
+  get mcpSessionId(): string | undefined {
+    return this.transport.sessionId;
+  }
+
   static async connect(url: string): Promise<McpHttpClient> {
     const client = new Client({
       name: "bayma-http-test-client",
@@ -200,6 +205,7 @@ export interface McpHttpServerOptions {
   warnUsagePercent?: number;
   stateDir?: string;
   defaultDurability?: "ephemeral" | "checkpointed";
+  clientIdleTimeoutMs?: number;
 }
 
 export interface McpHttpServer {
@@ -242,6 +248,9 @@ export async function launchMcpHttpServer(
       String(options.maxSessions ?? 8),
       "--warn-usage-percent",
       String(options.warnUsagePercent ?? 75),
+      ...(options.clientIdleTimeoutMs === undefined
+        ? []
+        : ["--client-idle-timeout-ms", String(options.clientIdleTimeoutMs)]),
     ],
     {
       detached: true,

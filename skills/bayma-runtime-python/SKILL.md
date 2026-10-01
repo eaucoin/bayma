@@ -69,7 +69,7 @@ Workbench usefulness remains the primary selection criterion; these states matte
 - `quarantined`: inspect the reason; replace the session unless the underlying fault is explicitly repaired.
 - `closed`, or announced for eviction by a `session/evictionScheduled` event: do not select for new work.
 
-Controller authority is exclusive. Do not steal or close another actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work.
+Controller authority is exclusive while the controller's client stays connected. Do not steal or close another connected actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work. Once the previous controller's client has no open connection, as with a session you created before a reconnect, `session.acquire_controller` takes it over.
 
 Live globals, imports, helpers, and objects persist across execs and client reconnects while the Python runtime remains up. Durable exec resources are the authority on whether submitted work ran: `bayma:///session/{sessionId}/exec/{execId}` for status and code, and `/messages` for ordered output and errors.
 

@@ -91,7 +91,10 @@ Commands:
       [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
-      serve MCP over Streamable HTTP
+      [--client-idle-timeout-ms N]
+      serve MCP over Streamable HTTP; a client session with no request or
+      stream open for the idle timeout, five minutes unless given, is
+      closed
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
@@ -129,6 +132,7 @@ export async function runCli(
         "--host",
         "--port",
         "--path",
+        "--client-idle-timeout-ms",
         ...SERVER_OPTIONS,
       ]);
       applyPayloadEnvironment(preparePayload());
@@ -136,6 +140,14 @@ export async function runCli(
         host: option(parsed, "--host", "127.0.0.1"),
         port: Number(option(parsed, "--port", "7290")),
         path: option(parsed, "--path", "/mcp"),
+        // A client that exits without ending its MCP session, as Claude Code
+        // does, leaves the session behind; this closes it. Its leases are
+        // open to takeover well before, so the timeout only bounds how long
+        // an abandoned session is kept, and five minutes spares a client
+        // that holds no stream open its MCP session across ordinary pauses.
+        clientIdleTimeoutMs: Number(
+          option(parsed, "--client-idle-timeout-ms", "300000"),
+        ),
         ...serverConfig(parsed),
       });
       return;

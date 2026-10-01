@@ -159,6 +159,12 @@ export interface SessionManagerOptions extends RetentionPolicy {
   defaultRows: number;
   /** The environment's snapshotter unless given; null for none. */
   processSnapshotter?: ProcessSnapshotter | null;
+  /**
+   * Whether an actor's client is still there; every actor is unless given. A
+   * controller lease whose actor is gone may be taken over, and does not keep
+   * its session from eviction.
+   */
+  isActorLive?: (actorId: string) => boolean;
   resolveCreatePolicy?: (request: {
     actorId: string;
     runtimeId: RuntimeId;
@@ -640,10 +646,8 @@ export class SessionManager {
   ): Promise<SessionSummary> {
     return this.withSessionMutation(sessionId, async (session) => {
       if (role === "controller") {
-        if (
-          session.record.controllerActorId &&
-          session.record.controllerActorId !== actorId
-        ) {
+        const holder = this.liveController(session.record);
+        if (holder && holder !== actorId) {
           throw new Error("controller lease already held");
         }
         session.record.observerActorIds.delete(actorId);
@@ -1150,7 +1154,7 @@ export class SessionManager {
       sessionId: record.sessionId,
       createdAtMs: record.createdAtMs,
       busy: record.status === "live_busy" || record.status === "recovering",
-      controllerActorId: record.controllerActorId,
+      controllerActorId: this.liveController(record),
       status: record.status,
     };
   }
@@ -1201,6 +1205,13 @@ export class SessionManager {
         durabilityMode: "checkpointed",
       }
     );
+  }
+
+  /** The session's controller, unless its client is gone. */
+  private liveController(record: SessionRecord): string | undefined {
+    const actorId = record.controllerActorId;
+    if (actorId === undefined) return undefined;
+    return (this.options.isActorLive?.(actorId) ?? true) ? actorId : undefined;
   }
 
   private assertController(record: SessionRecord, actorId: string): void {
