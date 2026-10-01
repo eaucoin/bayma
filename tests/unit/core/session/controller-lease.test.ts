@@ -16,6 +16,7 @@ function createManager(
   options: {
     maxSessions?: number;
     isActorLive?: (actorId: string) => boolean;
+    actorReconnectWindowMs?: (actorId: string) => number;
     emit?: (envelope: SessionEventEnvelope) => void;
   } = {},
 ): SessionManager {
@@ -32,6 +33,7 @@ function createManager(
       defaultCols: 80,
       defaultRows: 24,
       isActorLive: options.isActorLive,
+      actorReconnectWindowMs: options.actorReconnectWindowMs,
     },
     options.emit ?? (() => undefined),
   );
@@ -124,6 +126,52 @@ test("a controller lease whose client is gone does not pin its session against e
     expect(() => manager.detail(first.sessionId)).toThrow(
       `unknown session ${first.sessionId}`,
     );
+    await manager.shutdown();
+  });
+});
+
+test("taking over a controller whose client is within its reconnect window waits it out", async () => {
+  await withTempDir(async (dir) => {
+    // conn_a lost its connections a moment ago: live for its window, then gone.
+    const goneAtMs = Date.now() + 200;
+    const manager = createManager(dir, {
+      isActorLive: (actorId) => actorId !== "conn_a" || Date.now() < goneAtMs,
+      actorReconnectWindowMs: (actorId) =>
+        actorId === "conn_a" ? Math.max(0, goneAtMs - Date.now()) : 0,
+    });
+    const session = await manager.create("conn_a", "title", dir, "controller");
+
+    const startedAtMs = Date.now();
+    const taken = await manager.attach(
+      session.sessionId,
+      "conn_b",
+      "controller",
+    );
+    expect(taken.controllerActorId).toBe("conn_b");
+    expect(Date.now()).toBeGreaterThanOrEqual(goneAtMs);
+    expect(Date.now() - startedAtMs).toBeLessThan(2_000);
+    await manager.shutdown();
+  });
+});
+
+test("a controller that reconnects within its window keeps its lease", async () => {
+  await withTempDir(async (dir) => {
+    // conn_a's window is open when conn_b asks, and conn_a reconnects in it.
+    let reconnected = false;
+    const manager = createManager(dir, {
+      isActorLive: () => true,
+      actorReconnectWindowMs: (actorId) =>
+        actorId === "conn_a" && !reconnected ? 100 : 0,
+    });
+    const session = await manager.create("conn_a", "title", dir, "controller");
+    setTimeout(() => {
+      reconnected = true;
+    }, 20);
+
+    await expect(
+      manager.attach(session.sessionId, "conn_b", "controller"),
+    ).rejects.toThrow("controller lease already held");
+    await manager.submitExec(session.sessionId, "conn_a", "1 + 1");
     await manager.shutdown();
   });
 });

@@ -31,7 +31,7 @@ export function createModelSurface(
       "Wait returns only output at or after from_seq, or the terminal result when execution finishes.",
       "Both tools return bounded terminal-like text plus structured stdout, stderr, result, and error channels, and each PNG, JPEG, GIF, or WebP image the code showed, as image content; each runtime's note below names the helper that shows one.",
       "Use session lifecycle tools only when control, interruption, terminal sizing, reconnection, or permanent closure is required.",
-      "session.acquire_controller takes over a session once its previous controller's client has no open connection, such as one this client created before it reconnected; a session another connected client controls stays its own.",
+      "session.acquire_controller takes over a session whose previous controller's client has no open connection, such as one this client created before it reconnected, waiting a few seconds if that client only just lost its connections; a session another connected client controls stays its own.",
       `Read ${SESSIONS_URI} to discover sessions and exec resources to inspect complete retained execution history.`,
       ...profiles.map(
         ({ heading, description }) => `${heading}: ${description}`,

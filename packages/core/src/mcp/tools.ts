@@ -190,7 +190,7 @@ export function registerMcpTools(
     {
       title: "Acquire Session Control",
       description:
-        "Take exclusive control of a known session so this client can execute code, interrupt, resize, recover, or close it. Succeeds when the session has no controller, or its controller's client has had no connection open for a few seconds, as when that client exited or reconnected as a new client; fails while another connected client controls it.",
+        "Take exclusive control of a known session so this client can execute code, interrupt, resize, recover, or close it. Succeeds when the session has no controller, or its controller's client has no connection open, as when that client exited or reconnected as a new client; if that client lost its connections only moments ago, waits the few seconds it has to reconnect before taking over. Fails while another connected client controls it.",
       inputSchema: z.strictObject({ session_id: SessionIdSchema }),
       outputSchema: SessionResultSchema,
       annotations: READ_ONLY,

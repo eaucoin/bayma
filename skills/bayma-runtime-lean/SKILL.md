@@ -69,7 +69,7 @@ Workbench usefulness remains the primary selection criterion; these states matte
 - `quarantined`: inspect the reason; replace the session unless the underlying fault is explicitly repaired.
 - `closed`, or announced for eviction by a `session/evictionScheduled` event: do not select for new work.
 
-Controller authority is exclusive while the controller's client stays connected. Do not steal or close another connected actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work. Once the previous controller's client has no open connection, as with a session you created before a reconnect, `session.acquire_controller` takes it over.
+Controller authority is exclusive while the controller's client stays connected. Do not steal or close another connected actor's session. Observe it, wait for release, or create a separate workbench only for genuinely independent work. Once the previous controller's client has no open connection, as with a session you created before a reconnect, `session.acquire_controller` takes it over, waiting a few seconds if that client only just disconnected.
 
 The environment persists across execs and client reconnects while the Lean host remains up. An interrupt restarts the host; with checkpointed recovery active, the last committed checkpoint restores it. Durable exec resources are the authority on whether submitted work elaborated: `bayma:///session/{sessionId}/exec/{execId}` for status and code, and `/messages` for ordered output and errors.
 

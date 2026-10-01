@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure, failureDetail, failureMessage } from "../errors.ts";
 import type { RuntimeId } from "../runtime/id.ts";
@@ -166,6 +167,13 @@ export interface SessionManagerOptions extends RetentionPolicy {
    * its session from eviction.
    */
   isActorLive?: (actorId: string) => boolean;
+  /**
+   * How long until a live actor whose client has no connection open, and is
+   * only within its reconnect grace, is gone; 0 for one that is connected or
+   * gone. Taking over such an actor's lease waits this long, so a client
+   * replacing one that just vanished is not refused for a few seconds.
+   */
+  actorReconnectWindowMs?: (actorId: string) => number;
   resolveCreatePolicy?: (request: {
     actorId: string;
     runtimeId: RuntimeId;
@@ -667,6 +675,17 @@ export class SessionManager {
     actorId: string,
     role: SessionRole,
   ): Promise<SessionSummary> {
+    if (role === "controller") {
+      // A controller whose client just lost its connections may reconnect;
+      // wait out its window rather than refuse, outside the session's lock.
+      // If it reconnects meanwhile, its lease stays its own.
+      const holder = this.sessions.get(sessionId)?.record.controllerActorId;
+      const windowMs =
+        holder && holder !== actorId
+          ? (this.options.actorReconnectWindowMs?.(holder) ?? 0)
+          : 0;
+      if (windowMs > 0) await sleep(windowMs);
+    }
     return this.withSessionMutation(sessionId, async (session) => {
       if (role === "controller") {
         const holder = this.liveController(session.record);

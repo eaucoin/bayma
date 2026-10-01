@@ -44,6 +44,8 @@ interface HttpClientSession {
   track: (response: http.ServerResponse) => void;
   /** Whether the client has a connection open, or had one a moment ago. */
   live: () => boolean;
+  /** How long until a client with no connection open is no longer live; 0 when it has one. */
+  reconnectWindowMs: () => number;
   close: () => Promise<void>;
 }
 
@@ -161,6 +163,10 @@ export async function serveMcpHttp(
     );
   }
   const sessions = new Map<string, HttpClientSession>();
+  const httpClientSession = (actorId: string): HttpClientSession | undefined =>
+    actorId.startsWith(HTTP_ACTOR_ID_PREFIX)
+      ? sessions.get(actorId.slice(HTTP_ACTOR_ID_PREFIX.length))
+      : undefined;
 
   const engine = await createEngine(
     adapters,
@@ -171,10 +177,9 @@ export async function serveMcpHttp(
       defaultCols: config.defaultCols,
       defaultRows: config.defaultRows,
       resolveCreatePolicy: config.resolveCreatePolicy,
-      isActorLive: (actorId) =>
-        actorId.startsWith(HTTP_ACTOR_ID_PREFIX) &&
-        (sessions.get(actorId.slice(HTTP_ACTOR_ID_PREFIX.length))?.live() ??
-          false),
+      isActorLive: (actorId) => httpClientSession(actorId)?.live() ?? false,
+      actorReconnectWindowMs: (actorId) =>
+        httpClientSession(actorId)?.reconnectWindowMs() ?? 0,
     },
     (envelope) => {
       for (const session of sessions.values()) {
@@ -338,6 +343,15 @@ export async function serveMcpHttp(
           live: () =>
             openResponses > 0 ||
             Date.now() - lastResponseEndedAtMs < CLIENT_RECONNECT_GRACE_MS,
+          reconnectWindowMs: () =>
+            openResponses > 0
+              ? 0
+              : Math.max(
+                  0,
+                  lastResponseEndedAtMs +
+                    CLIENT_RECONNECT_GRACE_MS -
+                    Date.now(),
+                ),
           close: () => closeClientSession(transport.sessionId),
         };
         clientSession.track(response);

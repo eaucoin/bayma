@@ -77,7 +77,7 @@ async function ping(url: string, mcpSessionId: string): Promise<number> {
 }
 
 test(
-  "a killed client's session can be taken over once its reconnect grace passes",
+  "a killed client's session is taken over as soon as its reconnect grace passes",
   async () => {
     const server = await launchMcpHttpServer({
       clientIdleTimeoutMs: LONG_IDLE_TIMEOUT_MS,
@@ -87,20 +87,14 @@ test(
       const killedAtMs = Date.now();
       const successor = await server.spawnClient();
       try {
-        await expect(acquireController(successor, sessionId)).rejects.toThrow(
-          "controller lease already held",
+        // Asked at once, the acquire waits out the killed client's grace
+        // rather than refusing, and takes over when it ends.
+        await acquireController(successor, sessionId);
+        const tookOverAfterMs = Date.now() - killedAtMs;
+        expect(tookOverAfterMs).toBeGreaterThanOrEqual(
+          RECONNECT_GRACE_MS - 1_000,
         );
-
-        const deadline = killedAtMs + RECONNECT_GRACE_MS * 2;
-        while (true) {
-          try {
-            await acquireController(successor, sessionId);
-            break;
-          } catch (error) {
-            if (Date.now() > deadline) throw error;
-            await sleep(250);
-          }
-        }
+        expect(tookOverAfterMs).toBeLessThan(RECONNECT_GRACE_MS * 2);
         await expectExec(successor, sessionId);
         // The killed client's MCP session is still open: the takeover did
         // not wait for the idle timeout to close it.
