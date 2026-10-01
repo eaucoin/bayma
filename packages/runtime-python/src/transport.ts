@@ -20,11 +20,13 @@ import asyncio
 import builtins
 import codecs
 import contextlib
+import io
 import json
 import os
 import pickle
 import reprlib
 import sys
+import tempfile
 import traceback
 
 MAX_MESSAGE_BYTES = ${RUNTIME_OUTPUT_CAPTURE_POLICY.maxMessageBytes}
@@ -61,6 +63,8 @@ SESSION_GLOBALS = {
     "_error": None,
 }
 CHECKPOINT = None
+# The running exec's event prefix and directory, while one runs.
+RUNNING_EXEC = None
 
 SESSION_CWD = os.getcwd()
 if SESSION_CWD not in sys.path:
@@ -151,8 +155,45 @@ def bayma_write_checkpoint(value):
     return value
 
 
+def image_bytes(image) -> bytes:
+    if isinstance(image, (str, os.PathLike)):
+        with open(image, "rb") as file:
+            return file.read()
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        return bytes(image)
+    for render in ("_repr_png_", "_repr_jpeg_"):
+        method = getattr(image, render, None)
+        if callable(method) and (rendered := method()) is not None:
+            return rendered
+    if callable(getattr(image, "savefig", None)):
+        buffer = io.BytesIO()
+        image.savefig(buffer, format="png")
+        return buffer.getvalue()
+    raise TypeError(
+        "bayma_display_image takes a path, bytes, or an object with _repr_png_, _repr_jpeg_, or savefig, not "
+        + type(image).__name__
+    )
+
+
+def bayma_display_image(image) -> None:
+    """Shows the model a PNG, JPEG, GIF, or WebP image: a file's path, its
+    bytes, or an object that renders as one, such as a PIL image or a
+    matplotlib figure."""
+    if RUNNING_EXEC is None:
+        raise RuntimeError("bayma_display_image shows images only while an exec runs")
+    prefix, directory = RUNNING_EXEC
+    data = image_bytes(image)
+    # The exec's directory, which bayma removes after the exec, once it has
+    # kept a copy of each image.
+    descriptor, path = tempfile.mkstemp(prefix="image-", dir=directory)
+    with os.fdopen(descriptor, "wb") as file:
+        file.write(data)
+    write_protocol_line(prefix + json.dumps({"kind": "image", "payloadPath": path}, ensure_ascii=False))
+
+
 SESSION_GLOBALS["bayma_read_checkpoint"] = bayma_read_checkpoint
 SESSION_GLOBALS["bayma_write_checkpoint"] = bayma_write_checkpoint
+SESSION_GLOBALS["bayma_display_image"] = bayma_display_image
 
 
 def compile_submission(source: str, filename: str):
@@ -178,7 +219,7 @@ def format_result(value):
 
 
 def run_submission(spec_path: str) -> None:
-    global CHECKPOINT
+    global CHECKPOINT, RUNNING_EXEC
     with open(spec_path, "r", encoding="utf8") as handle:
         spec = json.load(handle)
     prefix = spec["event_prefix"]
@@ -195,6 +236,7 @@ def run_submission(spec_path: str) -> None:
             raise RuntimeError("unsupported Python checkpoint payload kind: " + str(checkpoint.get("payload_kind")))
     stdout = ChannelWriter(prefix, "stdout")
     stderr = ChannelWriter(prefix, "stderr")
+    RUNNING_EXEC = (prefix, os.path.dirname(spec_path))
     try:
         SESSION_GLOBALS.pop("__bayma_result__", None)
         code, has_result, result_name = compile_submission(spec["code"], spec["source_path"])
@@ -236,6 +278,7 @@ def run_submission(spec_path: str) -> None:
                 write_protocol_line(prefix + json.dumps(event, ensure_ascii=False))
             except Exception as error:
                 emit(prefix, "error", "".join(traceback.format_exception(error)).rstrip())
+        RUNNING_EXEC = None
         emit(prefix, "done")
 
 

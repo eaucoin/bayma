@@ -90,6 +90,7 @@ If imports fail, the session may simply be pointed at the wrong package tree; th
 - Bun sessions run JavaScript or TypeScript with live bindings across calls and expose `Bun.*`, `fetch`, top-level `await`, dynamic imports, `require`, `module`, `__filename`, `__dirname`, and packages resolved from the session working directory.
 - A non-`undefined` final value is returned as result text and stored in `_`, while a thrown value is stored in `_error`; console and value rendering are bounded, so very large or unsafe-to-inspect values may be abbreviated.
 - When checkpointed recovery is active, bayma restores only `$checkpoint` across runtime replacement, and across a server restart that does not restore the session whole, using its structured-clone codec and never replays earlier calls or their side effects.
+- `$displayImage(image)` shows you an image, as the exec's result shows you a value: a PNG, JPEG, GIF, or WebP file's path or `file:` URL, or its bytes, such as a `Uint8Array` or `ArrayBuffer`. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 
 # Bun Toolbelt
 

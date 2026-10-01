@@ -1,12 +1,17 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { RuntimeId } from "../runtime/id.ts";
-import type { ExecMessageRecord, ExecStatus } from "../session/exec-types.ts";
+import type {
+  ExecImageMimeType,
+  ExecMessageRecord,
+  ExecStatus,
+} from "../session/exec-types.ts";
 import type { SessionManager } from "../session/session-manager.ts";
 import {
   approxBytesForTokens,
   approxTokenCount,
   truncateTextToByteBudget,
 } from "./truncate.ts";
+import { sessionExecImageUri } from "./uris.ts";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
@@ -62,6 +67,14 @@ export interface ExecSnapshot {
   stderr_text: string;
   result_text: string;
   error_text: string;
+  /** The images the exec showed, whose content follows the snapshot's text. */
+  images: ExecSnapshotImage[];
+}
+
+export interface ExecSnapshotImage {
+  seq: number;
+  mime_type: ExecImageMimeType;
+  uri: string;
 }
 
 export interface ExecSnapshotOptions {
@@ -242,6 +255,17 @@ export async function collectExecSnapshot(
     stderr_text: projected.rendered.stderrText,
     result_text: projected.rendered.resultText,
     error_text: projected.rendered.errorText,
+    images: messages.flatMap(({ seq, image }) =>
+      image
+        ? [
+            {
+              seq,
+              mime_type: image.mimeType,
+              uri: sessionExecImageUri(sessionId, execId, seq),
+            },
+          ]
+        : [],
+    ),
   };
 }
 

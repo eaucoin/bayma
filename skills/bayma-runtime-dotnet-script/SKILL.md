@@ -91,6 +91,7 @@ Prefer direct .NET APIs over shelling out when an equivalent API exists. Keep se
 - Common namespaces including `System`, collections, IO, LINQ, reflection, text, JSON, and tasks are already in scope, and cwd-relative script references are supported.
 - For notebook-style multiline submissions, bayma may retry compilation after inserting semicolons at recognized statement boundaries, but ordinary C# meaning still governs ambiguous code.
 - When checkpointed recovery is active, bayma restores only JSON-serializable state written with `bayma_write_checkpoint(value)` across runtime replacement, and across a server restart that does not restore the session whole, and makes it available through `bayma_read_checkpoint<T>()`, rather than reconstructing the complete Roslyn script state.
+- `bayma_display_image(path)` or `bayma_display_image(bytes)`, with a `byte[]`, shows you a PNG, JPEG, GIF, or WebP image, as the exec's result shows you a value. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 
 # C# Toolbelt
 

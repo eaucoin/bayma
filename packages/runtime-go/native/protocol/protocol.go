@@ -74,6 +74,11 @@ func (w *Writer) Text(prefix, kind, text string) {
 	}
 }
 
+// Image emits an image the exec showed, which the file at path holds.
+func (w *Writer) Image(prefix, path string) {
+	w.emit(prefix, map[string]any{"kind": "image", "payloadPath": path})
+}
+
 // Checkpoint emits the session's checkpoint: the JSON its cells last wrote.
 func (w *Writer) Checkpoint(prefix string, value json.RawMessage) {
 	if value == nil {

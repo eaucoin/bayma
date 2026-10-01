@@ -50,9 +50,11 @@ func TestEventLines(t *testing.T) {
 	w.Text("P", "result", "42")
 	w.Text("P", "stdout", "")
 	w.Checkpoint("P", json.RawMessage(`{"a":1}`))
+	w.Image("P", "/exec/image-1")
 	w.Done("P")
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 3 || lines[0] != `P{"kind":"result","text":"42"}` || lines[2] != `P{"kind":"done"}` {
+	if len(lines) != 4 || lines[0] != `P{"kind":"result","text":"42"}` ||
+		lines[2] != `P{"kind":"image","payloadPath":"/exec/image-1"}` || lines[3] != `P{"kind":"done"}` {
 		t.Fatalf("got %q", lines)
 	}
 	var event struct {

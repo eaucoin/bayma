@@ -108,6 +108,7 @@ func execute(s *session.Session, out *output.Output, w *protocol.Writer, specPat
 	values, err := s.Exec(spec.Code)
 	w.Text(spec.EventPrefix, "stdout", out.Stdout.Drain())
 	w.Text(spec.EventPrefix, "stderr", out.Stderr.Drain())
+	showImages(s, w, spec.EventPrefix, filepath.Dir(specPath))
 	if err != nil {
 		w.Text(spec.EventPrefix, "error", session.Demangle(err.Error()))
 	} else if values != nil {
@@ -122,6 +123,20 @@ func execute(s *session.Session, out *output.Output, w *protocol.Writer, specPat
 		}
 	}
 	w.Done(spec.EventPrefix)
+}
+
+// showImages emits the images the cell showed, each written to a file in the
+// exec's directory, which bayma removes after the exec, once it has kept a
+// copy of each.
+func showImages(s *session.Session, w *protocol.Writer, prefix, directory string) {
+	for i, image := range s.TakeImages() {
+		path := filepath.Join(directory, fmt.Sprintf("image-%d", i+1))
+		if err := os.WriteFile(path, image, 0o600); err != nil {
+			w.Text(prefix, "stderr", fmt.Sprintf("bayma-go-host: %v\n", err))
+			continue
+		}
+		w.Image(prefix, path)
+	}
 }
 
 // checkpointValue is the JSON a checkpoint's text holds, or nil for none.

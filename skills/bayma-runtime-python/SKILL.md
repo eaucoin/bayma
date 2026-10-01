@@ -92,6 +92,7 @@ Prefer direct Python APIs over shelling out when an equivalent API exists. The s
 - A top-level asynchronous submission runs through a fresh `asyncio.run` invocation, so tasks created there must finish during that call rather than being treated as persistent background work.
 - `sys.stdout` and `sys.stderr` are UTF-8 non-TTY proxies supporting `write`, `flush`, `writable`, `isatty`, `encoding`, `errors`, and a writable binary buffer, but they are not general terminal or file objects.
 - When checkpointed recovery is active, bayma restores only the pickle-compatible value written with `bayma_write_checkpoint(...)` across runtime replacement, and across a server restart that does not restore the session whole, makes it available through `bayma_read_checkpoint()`, and does not replay live globals or earlier side effects.
+- `bayma_display_image(image)` shows you an image, as the exec's result shows you a value: a PNG, JPEG, GIF, or WebP file's path or bytes, or an object that renders as one, through `_repr_png_` or `_repr_jpeg_` as a PIL image does, or `savefig` as a matplotlib figure or `pyplot` does. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 
 # Python Toolbelt
 

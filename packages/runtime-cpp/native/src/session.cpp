@@ -20,12 +20,14 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaConsumer.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/TargetParser/Host.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <unistd.h>
 #include <utility>
@@ -47,6 +49,8 @@ struct CellApiState {
   std::string CheckpointError;
   /// A C++ cell's result, as bayma_capture_result rendered it.
   std::optional<std::string> Result;
+  /// The images the running cell showed, in order.
+  std::vector<std::string> Images;
 };
 
 CellApiState CellApi;
@@ -82,6 +86,8 @@ constexpr llvm::StringLiteral CxxPrelude = R"cpp(
 #endif
 extern "C" const char *bayma_read_checkpoint(void);
 extern "C" int bayma_write_checkpoint(const char *json);
+extern "C" int bayma_display_image(const void *data, std::size_t size);
+extern "C" int bayma_display_image_file(const char *path);
 extern "C" [[noreturn]] void bayma_abandon_interpreter(const char *reason);
 extern "C" void bayma_report_result(const char *text, std::size_t size);
 namespace bayma_detail {
@@ -200,6 +206,8 @@ static const auto bayma_detail_previous_terminate =
 constexpr llvm::StringLiteral CPrelude = R"c(
 const char *bayma_read_checkpoint(void);
 int bayma_write_checkpoint(const char *json);
+int bayma_display_image(const void *data, __SIZE_TYPE__ size);
+int bayma_display_image_file(const char *path);
 )c";
 
 /// Replaces a C++ cell's trailing expression `e` with
@@ -427,6 +435,29 @@ bool failedToParse(llvm::StringRef Reason) {
   return Reason.starts_with("Parsing failed.");
 }
 
+/// Emits each image the running cell showed, written to a file in
+/// `Directory`: the exec's own, which bayma removes after the exec, once it
+/// has kept a copy of each.
+void emitImages(llvm::StringRef Prefix, llvm::StringRef Directory) {
+  for (auto [Index, Image] : llvm::enumerate(CellApi.Images)) {
+    llvm::SmallString<256> Path(Directory);
+    llvm::sys::path::append(Path, "image-" + llvm::Twine(Index + 1));
+    std::error_code Error;
+    {
+      llvm::raw_fd_ostream File(Path, Error);
+      if (!Error) {
+        File << Image;
+        File.close();
+        Error = File.error();
+      }
+    }
+    writeProtocol(Error ? envelope(Prefix, "stderr",
+                                   "bayma: an image could not be written: " +
+                                       Error.message() + "\n")
+                        : imageEnvelope(Prefix, Path));
+  }
+}
+
 } // namespace
 
 Session::Session(Language Lang, OutputCapture &Capture)
@@ -581,6 +612,7 @@ void Session::execute(llvm::StringRef SpecPath) {
     CellApi.Checkpoint = Spec->CheckpointJson;
   CellApi.CheckpointError.clear();
   CellApi.Result.reset();
+  CellApi.Images.clear();
   takeDiagnostics();
 
   recordCellStart(Prefix);
@@ -635,6 +667,7 @@ void Session::execute(llvm::StringRef SpecPath) {
     writeProtocol(envelope(Prefix, "stderr",
                            "bayma: the cell's output did not drain in time; "
                            "some of it may be missing\n"));
+  emitImages(Prefix, llvm::sys::path::parent_path(SpecPath));
   bool CheckpointRefused = !CellApi.CheckpointError.empty();
   if (CheckpointRefused)
     writeProtocol(envelope(Prefix, "error",
@@ -679,6 +712,37 @@ LLVM_ATTRIBUTE_VISIBILITY_DEFAULT int bayma_write_checkpoint(const char *json) {
     return -1;
   }
   bayma::CellApi.Checkpoint = std::string(json);
+  return 0;
+}
+
+/// Shows the model an image, the `size` bytes at `data`, those of a PNG,
+/// JPEG, GIF, or WebP file, when the cell ends. Returns 0, or -1 with errno
+/// set when `data` is NULL.
+LLVM_ATTRIBUTE_VISIBILITY_DEFAULT int bayma_display_image(const void *data,
+                                                          std::size_t size) {
+  if (!data) {
+    errno = EINVAL;
+    return -1;
+  }
+  bayma::CellApi.Images.emplace_back(static_cast<const char *>(data), size);
+  return 0;
+}
+
+/// Shows the model the image in the file at `path`. Returns 0, or -1 with
+/// errno set when the file cannot be read.
+LLVM_ATTRIBUTE_VISIBILITY_DEFAULT int
+bayma_display_image_file(const char *path) {
+  if (!path) {
+    errno = EINVAL;
+    return -1;
+  }
+  auto Image = llvm::MemoryBuffer::getFile(path, /*IsText=*/false,
+                                           /*RequiresNullTerminator=*/false);
+  if (!Image) {
+    errno = Image.getError().value();
+    return -1;
+  }
+  bayma::CellApi.Images.emplace_back((*Image)->getBuffer());
   return 0;
 }
 

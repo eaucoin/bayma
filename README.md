@@ -63,6 +63,10 @@ application or service an agent drives through its API. The skill shows where
 that API's reference is, and keeps what the platform needs in its own folder
 rather than being bundled with bayma.
 
+What code in a REPL session renders, such as a plot, a screenshot, or a
+frame, it can show the agent as an image beside the exec's output; each
+runtime's skill names the helper that shows one.
+
 Within each of the two namespaces, the skills share a similar structure, which
 makes it easier to add new runtimes and platforms.
 

@@ -116,6 +116,23 @@ func TestCheckpoints(t *testing.T) {
 	}
 }
 
+func TestImages(t *testing.T) {
+	s := newSession(t, t.TempDir())
+	path := filepath.Join(t.TempDir(), "image.png")
+	os.WriteFile(path, []byte("from a file"), 0o644)
+	result(t, s, fmt.Sprintf("shown := []byte(\"from bytes\")\nbayma_display_image(shown)\nshown[0] = 'F'\nbayma_display_image_file(%q)", path))
+	images := s.TakeImages()
+	if len(images) != 2 || string(images[0]) != "from bytes" || string(images[1]) != "from a file" {
+		t.Fatalf("got %q", images)
+	}
+	if images := s.TakeImages(); images != nil {
+		t.Fatalf("images are taken once: got %q", images)
+	}
+	if got := result(t, s, `bayma_display_image_file("missing.png") != nil`); got != "true" {
+		t.Fatalf("got %s", got)
+	}
+}
+
 func TestTheWorkingDirectorysModule(t *testing.T) {
 	project := t.TempDir()
 	os.MkdirAll(filepath.Join(project, "answer"), 0o755)

@@ -93,6 +93,7 @@ Modules come through the Go module proxy, and a module's version is fixed once t
 - The first session on a machine compiles Go's standard library for its cells, once, so it starts slowly.
 - Goroutines a cell starts keep running, but output written while no cell runs is dropped, and a panic that escapes one ends the host and quarantines the session: recover inside the goroutines a cell starts.
 - When checkpointed recovery is active, bayma preserves only the JSON-compatible value written with `bayma_write_checkpoint(value)`, read back with `bayma_read_checkpoint(&value)`, and never replays earlier calls or their side effects.
+- `bayma_display_image(image)`, with a PNG, JPEG, GIF, or WebP file's bytes, or `bayma_display_image_file(path)`, which returns the error of reading it, shows you the image when the cell ends, as the exec's result shows you a value. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 
 # Go Toolbelt
 

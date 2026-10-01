@@ -1,5 +1,5 @@
 import type { ActorId, SessionRole, SessionStatus } from "./model.ts";
-import type { ExecStatus } from "./exec-types.ts";
+import type { ExecImageMimeType, ExecStatus } from "./exec-types.ts";
 
 export type SessionEvent =
   | { type: "session/started"; sessionId: string; status: SessionStatus }
@@ -99,6 +99,15 @@ export type SessionEvent =
       seq: number;
       messageId: string;
       text: string;
+    }
+  | {
+      type: "exec/image";
+      sessionId: string;
+      execId: string;
+      seq: number;
+      messageId: string;
+      mimeType: ExecImageMimeType;
+      byteLength: number;
     }
   | {
       type: "exec/finished";

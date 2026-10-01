@@ -146,7 +146,7 @@ export function registerMcpResources(
     {
       title: "Execution Messages",
       description:
-        "Ordered stdout, stderr, result, and error messages for a single exec.",
+        "Ordered stdout, stderr, result, error, and image messages for a single exec.",
       mimeType: "application/json",
     },
     async (uri, { sessionId, execId }) => ({
@@ -165,5 +165,34 @@ export function registerMcpResources(
         },
       ],
     }),
+  );
+
+  server.registerResource(
+    "session-exec-image",
+    new ResourceTemplate(
+      "bayma:///session/{sessionId}/exec/{execId}/image/{seq}",
+      { list: undefined },
+    ),
+    {
+      title: "Execution Image",
+      description:
+        "An image an exec showed, as the image message at seq of its messages.",
+    },
+    async (uri, { sessionId, execId, seq }) => {
+      const image = manager.execImage(
+        templateValue(sessionId, "sessionId"),
+        templateValue(execId, "execId"),
+        Number(templateValue(seq, "seq")),
+      );
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: image.mimeType,
+            blob: image.bytes.toString("base64"),
+          },
+        ],
+      };
+    },
   );
 }

@@ -25,6 +25,7 @@ test("the marker parser reports finish only after the prompt follows done", () =
   const complete = parseExecWindow(
     [
       `${markers.eventPrefix}{"kind":"stdout","text":"42\\n"}`,
+      `${markers.eventPrefix}{"kind":"image","payloadPath":"/exec/image-1"}`,
       `${markers.eventPrefix}{"kind":"checkpoint-preserved"}`,
       `${markers.eventPrefix}{"kind":"done"}`,
       "> ",
@@ -35,6 +36,7 @@ test("the marker parser reports finish only after the prompt follows done", () =
   expect(complete.done).toBe(true);
   expect(complete.envelopes).toEqual([
     { kind: "stdout", text: "42\n" },
+    { kind: "image", payloadPath: "/exec/image-1" },
     { kind: "checkpoint-preserved" },
   ]);
 
@@ -50,6 +52,11 @@ test("the marker parser reports finish only after the prompt follows done", () =
       `${markers.eventPrefix}{"kind":"checkpoint","checkpoint":{"runtimeId":"bun","codecId":"codec","codecVersion":1,"payloadKind":"binary-sidecar","payloadPath":"payload.bin","sha256":"not-a-digest"}}`,
       `${markers.eventPrefix}{"kind":"checkpoint-preserved","text":"ambiguous"}`,
       `${markers.eventPrefix}{"kind":"result","text":"42","extra":true}`,
+      `${markers.eventPrefix}{"kind":"image"}`,
+      `${markers.eventPrefix}{"kind":"image","payloadPath":""}`,
+      `${markers.eventPrefix}{"kind":"image","payloadPath":{"not":"a path"}}`,
+      `${markers.eventPrefix}{"kind":"image","payloadPath":"/exec/image-1","text":"ambiguous"}`,
+      `${markers.eventPrefix}{"kind":"stdout","text":"42","payloadPath":"/exec/image-1"}`,
       `${markers.eventPrefix}{"kind":"done"}`,
       "> ",
     ],

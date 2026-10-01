@@ -42,6 +42,7 @@ export { EventLog } from "./session/event-log.ts";
 export {
   ExecOutputCapture,
   appendExecMessage,
+  imageMimeType,
 } from "./session/exec-capture.ts";
 
 // Runtimes: the adapter contract and the machinery adapters build on.

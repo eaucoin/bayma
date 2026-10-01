@@ -93,6 +93,7 @@ Use ordinary Rust and Cargo semantics within bayma's declared boundaries. Keep s
 - bayma supplies the compiler and build authority, so EVcxR commands cannot replace the toolchain, linker, compiler wrappers, protected environment, or startup configuration.
 - Compiler failures, caught panics, and an early return through `?` are reported through the execution channels, while an unsafe abort or fatal signal can destroy the evaluation child.
 - When checkpointed recovery is active, checkpoint values must support serde and are written with `bayma_rust_support::write_checkpoint(&mut bayma_checkpoint, &value)` and read with `bayma_rust_support::read_checkpoint(&bayma_checkpoint)`.
+- `bayma_rust_support::display_image(&bytes)`, with a PNG, JPEG, GIF, or WebP file's bytes, or `bayma_rust_support::display_image_file(path)` shows you the image when the cell ends, as the exec's result shows you a value; each returns an `io::Result<()>`. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 - Recovery restores only the last committed checkpoint, never replays earlier calls or their side effects, and discards non-checkpointed live state when the execution child is replaced or the session is interrupted.
 - Threads and child processes must finish before the call returns because detached writers cannot retain causal output attribution and work that outlives its call is unsupported.
 

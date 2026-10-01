@@ -7,6 +7,7 @@ const SHARED = [
   "Quoted #include paths resolve from the session working directory.",
   "A compile_flags.txt there, one argument per line as clangd reads it, sets the session's compiler arguments (such as -I, -isystem, -D, and -std=) and loads its libraries (-L and -l, or a library's path), each with the libraries it needs from those directories.",
   "Checkpointed recovery preserves only JSON text written with bayma_write_checkpoint(json) and read with bayma_read_checkpoint().",
+  "bayma_display_image(data, size) or bayma_display_image_file(path) shows the model a PNG, JPEG, GIF, or WebP image when the cell ends.",
 ].join(" ");
 
 const FAILURES =

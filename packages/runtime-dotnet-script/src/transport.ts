@@ -458,6 +458,9 @@ public static class __bayma_internal_channels
     private const int MaxMessageBytes = ${RUNTIME_OUTPUT_CAPTURE_POLICY.maxMessageBytes};
     private const string TruncationMarker = ${JSON.stringify(RUNTIME_OUTPUT_TRUNCATION_MARKER)};
     public static string CurrentPrefix { get; set; } = string.Empty;
+    /// The running exec's directory, which bayma removes after the exec, once
+    /// it has kept a copy of each image the exec showed there.
+    public static string CurrentDirectory { get; set; } = string.Empty;
 
     private static string BoundText(string value)
     {
@@ -499,6 +502,17 @@ public static class __bayma_internal_channels
     public static void EmitEnvelope(object payload)
     {
         RawStdout.WriteLine(CurrentPrefix + JsonSerializer.Serialize(payload));
+    }
+
+    public static void EmitImage(byte[] image)
+    {
+        var payloadPath = Path.Combine(CurrentDirectory, "image-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllBytes(payloadPath, image);
+        EmitEnvelope(new Dictionary<string, object?>
+        {
+            ["kind"] = "image",
+            ["payloadPath"] = payloadPath,
+        });
     }
 }
 
@@ -694,6 +708,16 @@ void __bayma_internal_emit_checkpoint(string checkpointOutputPath)
     });
 }
 
+void bayma_display_image(byte[] image)
+{
+    __bayma_internal_channels.EmitImage(image);
+}
+
+void bayma_display_image(string path)
+{
+    __bayma_internal_channels.EmitImage(File.ReadAllBytes(path));
+}
+
 void Print(object? value)
 {
     Console.WriteLine(__bayma_internal_format_display(value));
@@ -726,6 +750,7 @@ void Print(object? value)
             string.Join(
                 "\\n",
                 "__bayma_internal_channels.CurrentPrefix = " + JsonSerializer.Serialize(eventPrefix) + ";",
+                "__bayma_internal_channels.CurrentDirectory = " + JsonSerializer.Serialize(Path.GetDirectoryName(sourcePath)) + ";",
                 "System.Console.SetOut(new __bayma_internal_channel_writer(\\\"stdout\\\"));",
                 "System.Console.SetError(new __bayma_internal_channel_writer(\\\"stderr\\\"));"
             ),

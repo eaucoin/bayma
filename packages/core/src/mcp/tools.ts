@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { SAFE_PERSISTED_ID_PATTERN } from "../ids.ts";
 import { RUNTIME_IDS } from "../runtime/id.ts";
-import { EXEC_STATUSES } from "../session/exec-types.ts";
+import { EXEC_IMAGE_MIME_TYPES, EXEC_STATUSES } from "../session/exec-types.ts";
 import { SESSION_STATUSES, type SessionSummary } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
 import {
@@ -53,6 +53,13 @@ const ExecSnapshotSchema = z.strictObject({
   stderr_text: z.string(),
   result_text: z.string(),
   error_text: z.string(),
+  images: z.array(
+    z.strictObject({
+      seq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      mime_type: z.enum(EXEC_IMAGE_MIME_TYPES),
+      uri: z.string(),
+    }),
+  ),
 });
 
 const YieldTimeSchema = z
@@ -107,10 +114,18 @@ function sessionResult(session: SessionSummary) {
   };
 }
 
-function execSnapshotResult(snapshot: ExecSnapshot) {
+/** A snapshot's text, then each image the exec showed, for the model to see. */
+function execSnapshotResult(manager: SessionManager, snapshot: ExecSnapshot) {
   return {
     content: [
       { type: "text" as const, text: renderExecSnapshotText(snapshot) },
+      ...snapshot.images.map(({ seq, mime_type }) => ({
+        type: "image" as const,
+        data: manager
+          .execImage(snapshot.session_id, snapshot.exec_id, seq)
+          .bytes.toString("base64"),
+        mimeType: mime_type,
+      })),
     ],
     structuredContent: { ...snapshot },
   };
@@ -211,6 +226,7 @@ export function registerMcpTools(
         "- The code field contains raw source text. Do not include Markdown code fences.",
         "- yield_time_ms asks exec to wait for an inline first snapshot. Defaults to 10000 ms.",
         `- max_output_tokens sets the approximate content-token budget for returned output. Defaults to ${snapshotTokenLimit} tokens.`,
+        "- Images the code shows with its runtime's image helper follow the text as image content.",
         "- If the result has done: false, use wait with its session_id, exec_id, and next_seq.",
       ].join("\n"),
       inputSchema: z.strictObject({
@@ -243,6 +259,7 @@ export function registerMcpTools(
         code,
       );
       return execSnapshotResult(
+        manager,
         await collectExecSnapshot(manager, session_id, execId, {
           fromSeq: 1,
           yieldTimeMs: yield_time_ms,
@@ -298,6 +315,7 @@ export function registerMcpTools(
       max_output_tokens,
     }) =>
       execSnapshotResult(
+        manager,
         await collectExecSnapshot(manager, session_id, exec_id, {
           fromSeq: from_seq,
           yieldTimeMs: yield_time_ms,

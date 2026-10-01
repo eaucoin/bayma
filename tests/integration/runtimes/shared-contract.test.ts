@@ -98,6 +98,37 @@ const RUNTIME_SCENARIOS: RuntimeScenario[] = [
   },
 ];
 
+// A one-pixel PNG, which each runtime shows twice: from its file, then from
+// its bytes.
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** `bytes` as a C string literal. */
+function cBytes(bytes: Buffer): string {
+  return `"${[...bytes].map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`).join("")}"`;
+}
+
+const IMAGE_SCENARIOS: Record<RuntimeId, (path: string) => string> = {
+  bun: (path) =>
+    `$displayImage(${path});\n$displayImage(await Bun.file(${path}).bytes());`,
+  python: (path) =>
+    `bayma_display_image(${path})\nbayma_display_image(open(${path}, "rb").read())`,
+  "dotnet-script": (path) =>
+    `bayma_display_image(${path});\nbayma_display_image(System.IO.File.ReadAllBytes(${path}));`,
+  rust: (path) =>
+    `bayma_rust_support::display_image_file(${path}).unwrap();\nbayma_rust_support::display_image(std::fs::read(${path}).unwrap()).unwrap();`,
+  c: (path) =>
+    `static const char pixel[] = ${cBytes(PNG)};\nbayma_display_image_file(${path});\nbayma_display_image(pixel, sizeof pixel - 1);`,
+  cpp: (path) =>
+    `static const char pixel[] = ${cBytes(PNG)};\nbayma_display_image_file(${path});\nbayma_display_image(pixel, sizeof pixel - 1);`,
+  lean: (path) =>
+    `#eval Bayma.displayImageFile ${path}\n#eval do Bayma.displayImage (← IO.FS.readBinFile ${path})`,
+  go: (path) =>
+    `import "os"\nbayma_display_image_file(${path})\npixel, _ := os.ReadFile(${path})\nbayma_display_image(pixel)`,
+};
+
 function doctorExec(
   resultTexts: string[],
   status: ExecRecord["status"] = "ok",
@@ -161,6 +192,66 @@ test(
       expect(exec.stderr_text).toBe(PYTHON_STREAM_CONTRACT_STDERR);
       expect(exec.result_text).toBe("42");
       expect(exec.error_text ?? "").toBe("");
+      await client.callTool("session.close", { session_id: sessionId });
+    });
+  },
+  RUNTIME_CONTRACT_TEST_TIMEOUT_MS,
+);
+
+test(
+  "Python shows objects that render as images, as PIL images and matplotlib figures do",
+  async () => {
+    await withMcpStdio(async (client) => {
+      const created = await client.callTool<{
+        session: { session_id: string };
+      }>("session.create", {
+        runtime: "python",
+        title: "python-rendered-images",
+        cwd: process.cwd(),
+      });
+      const sessionId = created.session.session_id;
+      const run = async (code: string) =>
+        await waitForSettledExec(
+          client,
+          sessionId,
+          await client.callTool<ExecSnapshot>("exec", {
+            session_id: sessionId,
+            code,
+            yield_time_ms: 1_000,
+          }),
+          { timeoutMs: EXEC_SETTLE_TIMEOUT_MS },
+        );
+
+      const shown = await run(
+        [
+          "import base64",
+          `pixel = base64.b64decode(${JSON.stringify(PNG.toString("base64"))})`,
+          "class Rendered:",
+          "    def _repr_png_(self):",
+          "        return pixel",
+          "class Declined:",
+          "    def _repr_png_(self):",
+          "        return None",
+          "    def _repr_jpeg_(self):",
+          "        return pixel",
+          "class Figure:",
+          "    def savefig(self, file, format):",
+          "        file.write(pixel)",
+          "for image in (Rendered(), Declined(), Figure()):",
+          "    bayma_display_image(image)",
+        ].join("\n"),
+      );
+      expect(shown.status).toBe("ok");
+      expect(shown.images).toHaveLength(3);
+      for (const image of shown.images ?? []) {
+        expect((await client.readBlobResource(image.uri)).bytes).toEqual(PNG);
+      }
+
+      const refused = await run("bayma_display_image(42)");
+      expect(refused.status).toBe("error");
+      expect(refused.error_text).toContain(
+        "bayma_display_image takes a path, bytes, or an object with _repr_png_, _repr_jpeg_, or savefig, not int",
+      );
       await client.callTool("session.close", { session_id: sessionId });
     });
   },
@@ -419,6 +510,55 @@ test(
   },
   RUNTIME_CONTRACT_TEST_TIMEOUT_MS,
 );
+
+for (const [runtimeId, imageCode] of Object.entries(IMAGE_SCENARIOS)) {
+  test(
+    `${runtimeId} shows the model images, from files and from bytes`,
+    async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "bayma-images-"));
+      try {
+        const path = join(cwd, "pixel.png");
+        writeFileSync(path, PNG);
+        await withMcpStdio(async (client) => {
+          const created = await client.callTool<{
+            session: { session_id: string };
+          }>("session.create", {
+            runtime: runtimeId,
+            title: `${runtimeId}-images`,
+            cwd,
+          });
+          const sessionId = created.session.session_id;
+          const exec = await waitForSettledExec(
+            client,
+            sessionId,
+            await client.callTool<ExecSnapshot>("exec", {
+              session_id: sessionId,
+              code: imageCode(JSON.stringify(path)),
+              yield_time_ms: 1_000,
+            }),
+            { timeoutMs: EXEC_SETTLE_TIMEOUT_MS },
+          );
+          expect(exec.status).toBe("ok");
+          expect(exec.stderr_text ?? "").toBe("");
+          expect(exec.images?.map((image) => image.mime_type)).toEqual([
+            "image/png",
+            "image/png",
+          ]);
+          for (const image of exec.images ?? []) {
+            expect(await client.readBlobResource(image.uri)).toEqual({
+              mimeType: "image/png",
+              bytes: PNG,
+            });
+          }
+          await client.callTool("session.close", { session_id: sessionId });
+        });
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    RUNTIME_CONTRACT_TEST_TIMEOUT_MS,
+  );
+}
 
 for (const scenario of RUNTIME_SCENARIOS) {
   test(

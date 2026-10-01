@@ -92,6 +92,7 @@ A Lake project in the session working directory supplies its libraries, such as 
 - Warnings go to stderr and errors to the exec's error, each with its `line:column`; a command that fails leaves the commands after it to run, and the exec ends in error.
 - An interrupt restarts the session, since nothing stops Lean's elaborator from outside it.
 - When checkpointed recovery is active, bayma restores everything the session declared, with its open namespaces, options, and variables, and never replays earlier calls or their side effects.
+- `#eval Bayma.displayImage bytes`, with a PNG, JPEG, GIF, or WebP file's bytes as a `ByteArray`, or `#eval Bayma.displayImageFile path` shows you the image when the cell ends, as a cell's result shows you a value. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 
 # Lean Toolbelt
 

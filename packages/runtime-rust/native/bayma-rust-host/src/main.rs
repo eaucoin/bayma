@@ -20,6 +20,7 @@ const MAX_MESSAGE_BYTES: usize = 60 * 1024;
 const TRUNCATION_MARKER: &str = "…Bayma truncated runtime message…";
 const PROTOCOL_VERSION: u32 = 1;
 const CHECKPOINT_PATH_ENV: &str = "BAYMA_RUST_CHECKPOINT_PATH";
+const IMAGE_DIR_ENV: &str = "BAYMA_RUST_IMAGE_DIR";
 const IGNORE_CWD_CONFIG_ENV: &str = "EVCXR_IGNORE_CWD_CONFIG";
 const SEALED_RUNTIME_ENV: &str = "BAYMA_EVCXR_SEALED";
 const MAX_CACHE_BYTES_ENV: &str = "BAYMA_RUST_MAX_CACHE_BYTES";
@@ -81,7 +82,34 @@ fn emit(prefix: &str, kind: &str, text: Option<&str>, checkpoint: Option<Value>)
     if let Some(checkpoint) = checkpoint {
         payload["checkpoint"] = checkpoint;
     }
+    emit_payload(prefix, &payload);
+}
+
+fn emit_payload(prefix: &str, payload: &Value) {
     let _ = write_stdout(&format!("{prefix}{payload}\n"));
+}
+
+/// Empties the directory cells leave images in, so an exec shows only its
+/// own: bayma copied each image an earlier exec showed before that exec
+/// ended.
+fn clear_images(image_dir: &Path) -> Result<(), String> {
+    let _ = fs::remove_dir_all(image_dir);
+    fs::create_dir_all(image_dir)
+        .map_err(|error| format!("failed to prepare the image directory: {error}"))
+}
+
+/// Emits the images the exec's cells left, in the order they showed them.
+fn emit_images(prefix: &str, image_dir: &Path) -> Result<(), String> {
+    let read_error = |error: io::Error| format!("failed to read the image directory: {error}");
+    let mut images = fs::read_dir(image_dir)
+        .map_err(read_error)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(read_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    images.sort();
+    for image in images {
+        emit_payload(prefix, &json!({ "kind": "image", "payloadPath": image.to_string_lossy() }));
+    }
+    Ok(())
 }
 
 fn print_prompt() {
@@ -209,6 +237,7 @@ fn run_exec(
     context: &mut CommandContext,
     spec_path: &Path,
     checkpoint_staging_path: &Path,
+    image_dir: &Path,
     active: &Arc<Mutex<Option<ActiveExecution>>>,
     pending_output_lines: &AtomicUsize,
 ) {
@@ -267,6 +296,7 @@ fn run_exec(
                 .execute(&checkpoint_prep(&spec))
                 .map_err(|error| format!("failed to prepare Rust checkpoint: {error}"))?;
         }
+        clear_images(image_dir)?;
 
         let started_active = Arc::clone(active);
         let started_prefix = spec.event_prefix.clone();
@@ -328,6 +358,7 @@ fn run_exec(
                 }
             }
         }
+        emit_images(&spec.event_prefix, image_dir)?;
 
         if spec.durability_mode == "checkpointed" {
             if execution.is_err() {
@@ -427,6 +458,7 @@ fn prepend_tool_directories(tools: &[&Path]) -> Result<(), String> {
 
 fn initialize(
     checkpoint_staging_path: &Path,
+    image_dir: &Path,
 ) -> Result<(CommandContext, EvalContextOutputs), String> {
     let rustc_bin = required_file("BAYMA_RUSTC_BIN")?;
     let cargo_bin = required_file("BAYMA_CARGO_BIN")?;
@@ -438,6 +470,7 @@ fn initialize(
     // no other thread can concurrently observe or mutate the process environment.
     unsafe {
         env::set_var(CHECKPOINT_PATH_ENV, checkpoint_staging_path);
+        env::set_var(IMAGE_DIR_ENV, image_dir);
         env::set_var(IGNORE_CWD_CONFIG_ENV, "1");
         env::set_var(SEALED_RUNTIME_ENV, "1");
         env::set_var(MAX_CACHE_BYTES_ENV, MAX_CACHE_BYTES.to_string());
@@ -477,8 +510,9 @@ fn main() {
     };
     let checkpoint_staging_path =
         config_dir.join(format!("checkpoint-{}.json", std::process::id()));
+    let image_dir = config_dir.join(format!("images-{}", std::process::id()));
 
-    let (mut context, outputs) = match initialize(&checkpoint_staging_path) {
+    let (mut context, outputs) = match initialize(&checkpoint_staging_path, &image_dir) {
         Ok(value) => value,
         Err(error) => {
             eprintln!("bayma-rust-host: {error}");
@@ -510,6 +544,7 @@ fn main() {
                 &mut context,
                 Path::new(path),
                 &checkpoint_staging_path,
+                &image_dir,
                 &active,
                 pending_output_lines.as_ref(),
             );
@@ -523,6 +558,7 @@ fn main() {
         print_prompt();
     }
     let _ = fs::remove_file(checkpoint_staging_path);
+    let _ = fs::remove_dir_all(image_dir);
 }
 
 #[cfg(test)]

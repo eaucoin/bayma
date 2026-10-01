@@ -232,3 +232,66 @@ hostile
     await client.callTool("session.close", { session_id: sessionId });
   });
 }, 30_000);
+
+test("inline snapshots show the model each image once, after its text", async () => {
+  // A one-pixel PNG.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const image = {
+    type: "image" as const,
+    data: png.toString("base64"),
+    mimeType: "image/png",
+  };
+  await withMcpStdio(async (client) => {
+    const created = await client.callTool<{ session: { session_id: string } }>(
+      "session.create",
+      { runtime: "bun", title: "mcp-inline-images", cwd: process.cwd() },
+    );
+    const sessionId = created.session.session_id;
+
+    const submitted = await client.callToolResult("exec", {
+      session_id: sessionId,
+      code: `
+const pixel = Buffer.from(${JSON.stringify(image.data)}, "base64");
+console.log("first");
+$displayImage(pixel);
+await Bun.sleep(3_000);
+$displayImage(pixel);
+42
+      `.trim(),
+      yield_time_ms: 1_000,
+    });
+    const first = submitted.structuredContent as {
+      exec_id: string;
+      done: boolean;
+      next_seq: number;
+      images: { seq: number; mime_type: string; uri: string }[];
+    };
+    expect(first.done).toBe(false);
+    expect(first.images).toEqual([
+      {
+        seq: 2,
+        mime_type: "image/png",
+        uri: `bayma:///session/${sessionId}/exec/${first.exec_id}/image/2`,
+      },
+    ]);
+    expect(submitted.content).toEqual([{ type: "text", text: "first" }, image]);
+
+    const waited = await client.callToolResult("wait", {
+      session_id: sessionId,
+      exec_id: first.exec_id,
+      from_seq: first.next_seq,
+      yield_time_ms: 5_000,
+    });
+    expect(waited.structuredContent).toMatchObject({
+      done: true,
+      status: "ok",
+      images: [{ seq: 3, mime_type: "image/png" }],
+    });
+    expect(waited.content).toEqual([{ type: "text", text: "42" }, image]);
+
+    await client.callTool("session.close", { session_id: sessionId });
+  });
+}, 30_000);

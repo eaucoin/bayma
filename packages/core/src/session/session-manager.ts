@@ -55,6 +55,7 @@ import {
 } from "./retention-policy.ts";
 import { reconcileOrphanedExecs } from "./exec-recovery.ts";
 import type {
+  ExecImage,
   ExecInterruptionReason,
   ExecMessageRecord,
   ExecRecord,
@@ -393,17 +394,20 @@ export class SessionManager {
   }
 
   /**
-   * Remove the scratch directories no session owns any more, and the snapshot
-   * directories of no stored snapshot.
+   * Remove the scratch and image directories no session owns any more, and
+   * the snapshot directories of no stored snapshot.
    */
   private sweepSessionDirectories(): void {
-    const owners = {
-      scratch: (session: SessionEntry | undefined) => session !== undefined,
-      snapshots: (session: SessionEntry | undefined) =>
-        session?.record.processSnapshot !== undefined,
-    };
-    for (const [parent, owns] of Object.entries(owners)) {
-      const root = join(this.catalogStore.rootDir, parent);
+    const exists = (session: SessionEntry | undefined) => session !== undefined;
+    const owners: [string, (session: SessionEntry | undefined) => boolean][] = [
+      [join(this.catalogStore.rootDir, "scratch"), exists],
+      [
+        join(this.catalogStore.rootDir, "snapshots"),
+        (session) => session?.record.processSnapshot !== undefined,
+      ],
+      [this.historyStore.imagesDir, exists],
+    ];
+    for (const [root, owns] of owners) {
       let entries: string[];
       try {
         entries = readdirSync(root);
@@ -485,6 +489,25 @@ export class SessionManager {
     return this.requireExec(this.requireSession(sessionId), execId)
       .messages.filter((message) => message.seq >= fromSeq)
       .map((message) => ({ ...message }));
+  }
+
+  /** The image an exec's message `seq` showed, with its bytes. */
+  execImage(
+    sessionId: string,
+    execId: string,
+    seq: number,
+  ): ExecImage & { bytes: Buffer } {
+    const message = this.requireExec(
+      this.requireSession(sessionId),
+      execId,
+    ).messages.find((candidate) => candidate.seq === seq);
+    if (!message?.image) {
+      throw new Error(`exec ${execId} has no image at seq ${seq}`);
+    }
+    return {
+      ...message.image,
+      bytes: this.historyStore.readImage(sessionId, message.messageId),
+    };
   }
 
   events(sessionId: string, fromSeq = 1): SessionEventRecord[] {
@@ -2045,7 +2068,16 @@ export class SessionManager {
       seq: 0,
       collector: prepared.collector,
       decoder: new TextDecoder(),
-      capture: new ExecOutputCapture(record, this.adapter(session).runtimeId),
+      capture: new ExecOutputCapture(
+        record,
+        this.adapter(session).runtimeId,
+        (messageId, bytes) =>
+          this.historyStore.writeImage(
+            session.record.sessionId,
+            messageId,
+            bytes,
+          ),
+      ),
       completion: Promise.resolve(),
       resolveCompletion: () => undefined,
       dispose: prepared.dispose,

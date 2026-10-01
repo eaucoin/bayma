@@ -15,3 +15,11 @@ export function sessionExecMessagesUri(
 ): string {
   return `${sessionExecUri(sessionId, execId)}/messages`;
 }
+
+export function sessionExecImageUri(
+  sessionId: string,
+  execId: string,
+  seq: number,
+): string {
+  return `${sessionExecUri(sessionId, execId)}/image/${seq}`;
+}

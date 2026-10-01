@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type {
   PrepareExecInput,
   PreparedExec,
@@ -42,6 +43,7 @@ function writeBunExecFile(input: PrepareExecInput): PreparedExec {
       `const __baymaCheckpointOutputPath = ${JSON.stringify(checkpointOutputPath)};`,
       `const { serialize: __baymaSerialize, deserialize: __baymaDeserialize } = await import("bun:jsc");`,
       `const { readFileSync: __baymaReadFileSync, writeFileSync: __baymaWriteFileSync } = await import("node:fs");`,
+      `const { join: __baymaJoin } = await import("node:path");`,
       `const __baymaOriginalStdoutWrite = process.stdout.write.bind(process.stdout);`,
       `const __baymaOriginalStderrWrite = process.stderr.write.bind(process.stderr);`,
       `const __baymaTextDecoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };`,
@@ -74,6 +76,24 @@ function writeBunExecFile(input: PrepareExecInput): PreparedExec {
       `  const boundedPayload = typeof payload.text === "string" ? { ...payload, text: __baymaBoundText(payload.text) } : payload;`,
       `  __baymaOriginalStdoutWrite(__baymaEventPrefix + JSON.stringify({ kind, ...boundedPayload }) + "\\n");`,
       `};`,
+      `let __baymaExecRunning = true;`,
+      // The exec's directory, which bayma removes after the exec, once it
+      // has kept a copy of each image.
+      `const __baymaExecDirectory = ${JSON.stringify(dirname(execFile))};`,
+      `Object.defineProperty(globalThis, "$displayImage", {`,
+      `  configurable: true,`,
+      `  value(image) {`,
+      `    if (!__baymaExecRunning) throw new Error("$displayImage shows images only while an exec runs");`,
+      `    let bytes;`,
+      `    if (typeof image === "string" || image instanceof URL) bytes = __baymaReadFileSync(image);`,
+      `    else if (ArrayBuffer.isView(image)) bytes = new Uint8Array(image.buffer, image.byteOffset, image.byteLength);`,
+      `    else if (image instanceof ArrayBuffer) bytes = new Uint8Array(image);`,
+      `    else throw new TypeError("$displayImage takes a path, a file URL, or bytes");`,
+      `    const payloadPath = __baymaJoin(__baymaExecDirectory, "image-" + crypto.randomUUID());`,
+      `    __baymaWriteFileSync(payloadPath, bytes);`,
+      `    __baymaEmit("image", { payloadPath });`,
+      `  },`,
+      `});`,
       `const __baymaDecodeChunk = (kind, chunk) => {`,
       `  const decoder = __baymaTextDecoders[kind];`,
       `  if (typeof chunk === "string") return decoder.decode() + chunk;`,
@@ -164,6 +184,7 @@ function writeBunExecFile(input: PrepareExecInput): PreparedExec {
       `  console.debug = __baymaConsoleMethods.debug;`,
       `  console.warn = __baymaConsoleMethods.warn;`,
       `  console.error = __baymaConsoleMethods.error;`,
+      `  __baymaExecRunning = false;`,
       `  __baymaEmit("done");`,
       `}`,
       `void 0;`,

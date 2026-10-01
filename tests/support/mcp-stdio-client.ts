@@ -40,6 +40,7 @@ export interface ExecSnapshot {
   error_text?: string;
   truncated?: boolean;
   original_token_count?: number;
+  images?: { seq: number; mime_type: string; uri: string }[];
 }
 
 export interface WaitForSettledExecOptions {
@@ -246,6 +247,23 @@ export class McpStdioClient {
     return JSON.parse(text) as T;
   }
 
+  async readBlobResource(
+    uri: string,
+  ): Promise<{ mimeType?: string; bytes: Buffer }> {
+    const result = await this.client.readResource({ uri });
+    const content = result.contents.find(
+      (content): content is { uri: string; mimeType?: string; blob: string } =>
+        "blob" in content,
+    );
+    if (!content) {
+      throw new Error(`resource ${uri} did not contain a blob`);
+    }
+    return {
+      mimeType: content.mimeType,
+      bytes: Buffer.from(content.blob, "base64"),
+    };
+  }
+
   waitForResourceUpdate(
     predicate: (uri: string) => boolean,
     timeoutMs = MCP_RESOURCE_TIMEOUT_MS,
@@ -368,6 +386,7 @@ function mergeExecSnapshots(
   return {
     ...next,
     ...mergeSnapshotText(previous, next),
+    images: [...(previous.images ?? []), ...(next.images ?? [])],
   };
 }
 

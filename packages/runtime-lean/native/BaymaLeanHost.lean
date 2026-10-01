@@ -125,6 +125,39 @@ structure Checkpoint where
 /-- The module a part of a session is imported as. -/
 def partName (index : Nat) : Name := .str `BaymaSession s!"part{index}"
 
+/-- What every session declares before its first cell's commands: how cells
+show the model an image. `Bayma.displayImage` leaves each image in the images
+directory of the host's scratch directory, `Host.images`, named by its number,
+for the host to emit when the cell ends. -/
+def preludeSource : String := "
+namespace Bayma
+
+/-- Shows the model `image`, the bytes of a PNG, JPEG, GIF, or WebP file, when
+the cell ends. -/
+def displayImage (image : ByteArray) : IO Unit := do
+  let some scratchRoot ← IO.getEnv \"BAYMA_LEAN_SCRATCH_DIR\"
+    | throw <| IO.userError \"Bayma.displayImage shows images only in a bayma session\"
+  let directory := System.FilePath.mk scratchRoot / toString (← IO.Process.getPID) / \"images\"
+  IO.FS.createDirAll directory
+  IO.FS.writeBinFile (directory / toString ((← directory.readDir).size + 1)) image
+
+/-- Shows the model the image in the file at `path`, when the cell ends. -/
+def displayImageFile (path : System.FilePath) : IO Unit := do
+  displayImage (← IO.FS.readBinFile path)
+
+end Bayma
+"
+
+/-- The command state with the prelude declared, unless it already is, as in a
+session restored from a checkpoint. A prelude that does not elaborate, on an
+environment without Lean's own library, leaves the state as it was. -/
+def withPrelude (state : Command.State) : IO Command.State := do
+  if state.env.contains `Bayma.displayImage then return state
+  let inputCtx := Parser.mkInputContext preludeSource "<bayma>"
+  let (messages, after) ← (elaborateCommands {} |>.run { inputCtx }).run
+    { commandState := state, parserState := {}, cmdPos := 0 }
+  return if messages.hasErrors then state else { after.commandState with messages := {} }
+
 /-- A session: its command state, once it has one, the imports its first cell
 made, and the parts restored into it, which its environment imports. -/
 structure Session where
@@ -145,8 +178,8 @@ def Session.elaborate (session : Session) (code : String) :
     | none => do
       let (header, parserState, messages) ← Parser.parseHeader inputCtx
       let (env, messages) ← processHeader header cellOptions messages inputCtx
-      pure ({ session with imports := env.header.imports }, Command.mkState env {} cellOptions,
-        parserState, messages)
+      pure ({ session with imports := env.header.imports },
+        ← withPrelude (Command.mkState env {} cellOptions), parserState, messages)
   let (messages, state) ← (elaborateCommands headerMessages |>.run { inputCtx }).run
     { commandState, parserState, cmdPos := parserState.pos }
   return ({ session with state? := some state.commandState }, messages)
@@ -196,7 +229,7 @@ unsafe def Session.restore (path scratch : FilePath) : IO Session := do
   let state ← match ← (activate cellContext |>.run state).toIO' with
     | .ok ((), state) => pure state
     | .error error => throw <| IO.userError (← error.toMessageData.toString)
-  return { state? := some state, imports := checkpoint.imports,
+  return { state? := some (← withPrelude state), imports := checkpoint.imports,
            restored := checkpoint.parts, regions := #[region] }
 
 /-- Where the protocol goes: the process's own stdout, which cells never see. -/
@@ -215,6 +248,18 @@ def Host.emit (host : Host) (eventPrefix kind : String)
 
 def Host.emitText (host : Host) (eventPrefix kind text : String) : IO Unit :=
   unless text.isEmpty do host.emit eventPrefix kind [("text", bounded text)]
+
+/-- Where cells leave the images they show, as the prelude names it. -/
+def Host.images (host : Host) : FilePath := host.scratch / "images"
+
+/-- Emits the images the cell showed, in the order it showed them. bayma copies
+each as it reads its envelope, before the next exec, which starts by removing
+them. -/
+def Host.emitImages (host : Host) (eventPrefix : String) : IO Unit := do
+  unless ← host.images.pathExists do return
+  let images := (← host.images.readDir).qsort (·.fileName.toNat! < ·.fileName.toNat!)
+  for image in images do
+    host.emit eventPrefix "image" [("payloadPath", image.path.toString)]
 
 /-- Emits a cell's messages. Its last info message, such as a final `#eval`'s
 value, is its result; earlier ones, such as what an `#eval` printed, are its
@@ -252,11 +297,13 @@ unsafe def Host.run (host : Host) (sessionRef : IO.Ref Session) (spec : Spec) : 
       let restored ← try Session.restore path host.scratch catch error =>
         throw <| IO.userError s!"restoring the session's checkpoint {path} failed: {error}"
       sessionRef.set restored
+  if ← host.images.pathExists then IO.FS.removeDirAll host.images
   let ((session, messages), stdout, stderr) ← captured ((← sessionRef.get).elaborate spec.code)
   sessionRef.set session
   host.emitText spec.eventPrefix "stdout" stdout
   host.emitText spec.eventPrefix "stderr" stderr
   host.emitMessages spec.eventPrefix messages.toArray
+  host.emitImages spec.eventPrefix
   if spec.checkpointed then
     if let some state := session.state? then
       session.checkpoint state spec.checkpointPath

@@ -18,15 +18,34 @@ export const EXEC_MESSAGE_KINDS = [
   "stderr",
   "result",
   "error",
+  "image",
 ] as const;
 export type ExecMessageKind = (typeof EXEC_MESSAGE_KINDS)[number];
+
+/** The image formats an exec can show, each as its media type. */
+export const EXEC_IMAGE_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+] as const;
+export type ExecImageMimeType = (typeof EXEC_IMAGE_MIME_TYPES)[number];
+
+/** An image an exec showed; its bytes are kept beside the exec's history. */
+export interface ExecImage {
+  mimeType: ExecImageMimeType;
+  byteLength: number;
+}
 
 export interface ExecMessageRecord {
   seq: number;
   messageId: string;
   kind: ExecMessageKind;
+  /** The message's text; an image message has none. */
   text: string;
   occurredAtMs: number;
+  /** What an image message showed, and only an image message. */
+  image?: ExecImage;
 }
 
 export interface ExecRecord {

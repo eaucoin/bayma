@@ -95,6 +95,7 @@ Quoted `#include` paths resolve from the session working directory. Keep secrets
 - If an exec crashes the process, throws an uncaught exception, or exits, the exec ends with an error and the session continues in a fresh interpreter, keeping its checkpoint but losing its definitions and values; an interrupt does the same.
 - Output written by threads after an exec returns is discarded, so join threads before a cell returns.
 - When checkpointed recovery is active, bayma preserves only JSON text written with `bayma_write_checkpoint(json)` and read with `bayma_read_checkpoint()`, and never replays earlier calls or their side effects.
+- `bayma_display_image(data, size)`, with a PNG, JPEG, GIF, or WebP file's bytes, or `bayma_display_image_file(path)` shows you the image when the cell ends, as the exec's result shows you a value; each returns 0, or -1 with `errno` set. It follows the exec's text as image content, up to 8 images and 8 MiB an exec, 3 MiB each.
 
 # C++ Toolbelt
 

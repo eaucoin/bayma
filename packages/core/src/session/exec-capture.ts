@@ -1,7 +1,10 @@
+import { readFileSync, statSync } from "node:fs";
 import { failureDetail } from "../errors.ts";
 import type { RuntimeCheckpointCommit } from "./checkpoint-store.ts";
 import type { SessionEvent } from "./events.ts";
 import type {
+  ExecImage,
+  ExecImageMimeType,
   ExecMessageRecord,
   ExecRecord,
   ExecStatus,
@@ -13,9 +16,9 @@ import {
 } from "../runtime/output-capture.ts";
 
 // What one running exec accumulates from its runtime's envelopes: bounded
-// durable messages, the completion status, and exactly one checkpoint
-// outcome. The session manager owns persistence and notification; this
-// owns the capture policy.
+// durable messages, the images they show, the completion status, and exactly
+// one checkpoint outcome. The session manager owns persistence and
+// notification; this owns the capture policy.
 
 export type ExecCompletionStatus = Extract<
   ExecStatus,
@@ -23,10 +26,52 @@ export type ExecCompletionStatus = Extract<
 >;
 export type CheckpointOutcome = "none" | "commit" | "preserved" | "invalid";
 
+/** Keeps the bytes of the image a message shows. */
+export type ExecImageSink = (messageId: string, bytes: Uint8Array) => void;
+
+/** How each image format's files begin. */
+const IMAGE_SIGNATURES: readonly {
+  mimeType: ExecImageMimeType;
+  matches: (bytes: Uint8Array) => boolean;
+}[] = [
+  {
+    mimeType: "image/png",
+    matches: (bytes) => startsWith(bytes, 0, "\x89PNG\r\n\x1a\n"),
+  },
+  {
+    mimeType: "image/jpeg",
+    matches: (bytes) => startsWith(bytes, 0, "\xff\xd8\xff"),
+  },
+  {
+    mimeType: "image/gif",
+    matches: (bytes) =>
+      startsWith(bytes, 0, "GIF87a") || startsWith(bytes, 0, "GIF89a"),
+  },
+  {
+    mimeType: "image/webp",
+    matches: (bytes) =>
+      startsWith(bytes, 0, "RIFF") && startsWith(bytes, 8, "WEBP"),
+  },
+];
+
+function startsWith(bytes: Uint8Array, offset: number, text: string): boolean {
+  return [...text].every(
+    (character, index) => bytes[offset + index] === character.charCodeAt(0),
+  );
+}
+
+/** The format of an image's bytes, which say what they are, or undefined. */
+export function imageMimeType(
+  bytes: Uint8Array,
+): ExecImageMimeType | undefined {
+  return IMAGE_SIGNATURES.find(({ matches }) => matches(bytes))?.mimeType;
+}
+
 export function appendExecMessage(
   record: ExecRecord,
   kind: ExecMessageRecord["kind"],
   text: string,
+  image?: ExecImage,
 ): ExecMessageRecord {
   const seq = record.messages.length + 1;
   const observedAtMs = Math.max(
@@ -43,6 +88,7 @@ export function appendExecMessage(
       record.finishedAtMs === undefined
         ? observedAtMs
         : Math.min(observedAtMs, record.finishedAtMs),
+    ...(image ? { image } : {}),
   };
   record.messages.push(message);
   return message;
@@ -54,14 +100,17 @@ export function execMessageEvent(
   execId: string,
   message: ExecMessageRecord,
 ): SessionEvent {
-  return {
-    type: `exec/${message.kind}`,
+  const identity = {
     sessionId,
     execId,
     seq: message.seq,
     messageId: message.messageId,
-    text: message.text,
   };
+  if (message.kind === "image") {
+    // An image is announced; its bytes are read from its resource.
+    return { type: "exec/image", ...identity, ...message.image! };
+  }
+  return { type: `exec/${message.kind}`, ...identity, text: message.text };
 }
 
 export function execFinishedEvent(
@@ -97,15 +146,19 @@ export class ExecOutputCapture {
   checkpointCommit?: RuntimeCheckpointCommit;
   private capturedBytes = 0;
   private capturedMessages = 0;
+  private capturedImages = 0;
+  private capturedImageBytes = 0;
   private stopped = false;
   private terminalErrorCapturedAfterLimit = false;
 
   readonly record: ExecRecord;
   private readonly runtimeId: string;
+  private readonly keepImage: ExecImageSink;
 
-  constructor(record: ExecRecord, runtimeId: string) {
+  constructor(record: ExecRecord, runtimeId: string, keepImage: ExecImageSink) {
     this.record = record;
     this.runtimeId = runtimeId;
+    this.keepImage = keepImage;
   }
 
   /** Apply runtime envelopes; returns the durable messages they produced. */
@@ -120,6 +173,10 @@ export class ExecOutputCapture {
         continue;
       }
       if (envelope.kind === "done") continue;
+      if (envelope.kind === "image") {
+        messages.push(...this.consumeImage(envelope.payloadPath!));
+        continue;
+      }
       if (
         envelope.kind === "error" &&
         this.completionStatus !== "interrupted"
@@ -164,6 +221,44 @@ export class ExecOutputCapture {
         appendExecMessage(this.record, "error", failureDetail(error));
       }
     }
+  }
+
+  /**
+   * Keep a copy of an image the runtime wrote, while its file is still in
+   * place, if it is one of the formats a model reads and within the policy's
+   * limits; otherwise say why not, on stderr.
+   */
+  private consumeImage(payloadPath: string): ExecMessageRecord[] {
+    const policy = RUNTIME_OUTPUT_CAPTURE_POLICY;
+    const refuse = (reason: string) =>
+      this.appendBounded("stderr", `Bayma did not show an image: ${reason}\n`);
+    if (this.capturedImages >= policy.maxExecImages) {
+      return refuse(`an exec shows at most ${policy.maxExecImages} images`);
+    }
+    let bytes: Buffer;
+    try {
+      if (statSync(payloadPath).size > policy.maxImageBytes) {
+        return refuse(`an image holds at most ${policy.maxImageBytes} bytes`);
+      }
+      bytes = readFileSync(payloadPath);
+    } catch (error) {
+      return refuse(failureDetail(error));
+    }
+    if (this.capturedImageBytes + bytes.byteLength > policy.maxExecImageBytes) {
+      return refuse(
+        `an exec's images hold at most ${policy.maxExecImageBytes} bytes together`,
+      );
+    }
+    const mimeType = imageMimeType(bytes);
+    if (!mimeType) return refuse("it is not a PNG, JPEG, GIF, or WebP image");
+    const message = appendExecMessage(this.record, "image", "", {
+      mimeType,
+      byteLength: bytes.byteLength,
+    });
+    this.keepImage(message.messageId, bytes);
+    this.capturedImages += 1;
+    this.capturedImageBytes += bytes.byteLength;
+    return [message];
   }
 
   /**

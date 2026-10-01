@@ -15,6 +15,7 @@ export type RuntimeExecEnvelopeKind =
   | "stderr"
   | "result"
   | "error"
+  | "image"
   | "done"
   | "checkpoint"
   | "checkpoint-preserved";
@@ -23,6 +24,11 @@ export interface RuntimeExecEnvelope {
   kind: RuntimeExecEnvelopeKind;
   text?: string;
   checkpoint?: RuntimeCheckpointCommit;
+  /**
+   * An image's file, which must stay in place until its exec ends; the core
+   * copies it as it reads the envelope.
+   */
+  payloadPath?: string;
 }
 
 const RUNTIME_EXEC_ENVELOPE_KINDS = new Set<RuntimeExecEnvelopeKind>([
@@ -30,6 +36,7 @@ const RUNTIME_EXEC_ENVELOPE_KINDS = new Set<RuntimeExecEnvelopeKind>([
   "stderr",
   "result",
   "error",
+  "image",
   "done",
   "checkpoint",
   "checkpoint-preserved",
@@ -105,7 +112,7 @@ export function parseRuntimeExecEnvelope(
   const envelope = value as Record<string, unknown>;
   if (
     Object.keys(envelope).some(
-      (key) => !["kind", "text", "checkpoint"].includes(key),
+      (key) => !["kind", "text", "checkpoint", "payloadPath"].includes(key),
     ) ||
     typeof envelope.kind !== "string" ||
     !RUNTIME_EXEC_ENVELOPE_KINDS.has(
@@ -113,17 +120,21 @@ export function parseRuntimeExecEnvelope(
     ) ||
     (envelope.text !== undefined && typeof envelope.text !== "string") ||
     (envelope.checkpoint !== undefined &&
-      !isCheckpointCommit(envelope.checkpoint))
+      !isCheckpointCommit(envelope.checkpoint)) ||
+    (envelope.payloadPath !== undefined &&
+      (typeof envelope.payloadPath !== "string" ||
+        envelope.payloadPath.length === 0))
   ) {
     return null;
   }
   const kind = envelope.kind as RuntimeExecEnvelopeKind;
   const isMessage = ["stdout", "stderr", "result", "error"].includes(kind);
   if (
+    (kind === "image") !== (envelope.payloadPath !== undefined) ||
     (isMessage &&
       (typeof envelope.text !== "string" ||
         envelope.checkpoint !== undefined)) ||
-    (["done", "checkpoint-preserved"].includes(kind) &&
+    (["image", "done", "checkpoint-preserved"].includes(kind) &&
       (envelope.text !== undefined || envelope.checkpoint !== undefined)) ||
     (kind === "checkpoint" &&
       (envelope.text === undefined) === (envelope.checkpoint === undefined))
@@ -135,6 +146,9 @@ export function parseRuntimeExecEnvelope(
     ...(typeof envelope.text === "string" ? { text: envelope.text } : {}),
     ...(isCheckpointCommit(envelope.checkpoint)
       ? { checkpoint: envelope.checkpoint }
+      : {}),
+    ...(typeof envelope.payloadPath === "string"
+      ? { payloadPath: envelope.payloadPath }
       : {}),
   };
 }

@@ -64,6 +64,14 @@ std::string envelope(llvm::StringRef Prefix, llvm::StringRef Kind,
   return Line;
 }
 
+std::string imageEnvelope(llvm::StringRef Prefix, llvm::StringRef PayloadPath) {
+  llvm::json::Object Payload{{"kind", "image"}, {"payloadPath", PayloadPath}};
+  std::string Line;
+  llvm::raw_string_ostream(Line)
+      << Prefix << llvm::json::Value(std::move(Payload)) << "\n";
+  return Line;
+}
+
 std::size_t completeUtf8Prefix(llvm::StringRef Text) {
   std::size_t End = Text.size();
   std::size_t Trailing = 0;

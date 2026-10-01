@@ -19,6 +19,7 @@ export const MCP_RESOURCE_TEMPLATES = [
   "bayma:///session/{sessionId}",
   "bayma:///session/{sessionId}/exec/{execId}",
   "bayma:///session/{sessionId}/exec/{execId}/messages",
+  "bayma:///session/{sessionId}/exec/{execId}/image/{seq}",
 ] as const;
 
 export const MCP_FIXED_RESOURCES = [SESSIONS_URI, SERVER_EVENTS_URI] as const;

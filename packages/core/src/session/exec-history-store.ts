@@ -10,6 +10,7 @@ import { join } from "node:path";
 import * as z from "zod";
 import { assertSafePersistedId, SAFE_PERSISTED_ID_PATTERN } from "../ids.ts";
 import {
+  EXEC_IMAGE_MIME_TYPES,
   EXEC_INTERRUPTION_REASONS,
   EXEC_MESSAGE_KINDS,
   EXEC_STATUSES,
@@ -18,13 +19,27 @@ import {
 
 export const EXEC_HISTORY_SCHEMA_VERSION = 1 as const;
 
-const ExecMessageRecordSchema = z.strictObject({
-  seq: z.number().int().positive(),
-  messageId: z.string().min(1),
-  kind: z.enum(EXEC_MESSAGE_KINDS),
-  text: z.string(),
-  occurredAtMs: z.number().finite().nonnegative(),
-});
+const ExecMessageRecordSchema = z
+  .strictObject({
+    seq: z.number().int().positive(),
+    messageId: z.string().min(1),
+    kind: z.enum(EXEC_MESSAGE_KINDS),
+    text: z.string(),
+    occurredAtMs: z.number().finite().nonnegative(),
+    image: z
+      .strictObject({
+        mimeType: z.enum(EXEC_IMAGE_MIME_TYPES),
+        byteLength: z.number().int().positive(),
+      })
+      .optional(),
+  })
+  .refine(
+    (message) =>
+      message.kind === "image"
+        ? message.image !== undefined && message.text === ""
+        : message.image === undefined,
+    { message: "only an image message, without text, describes an image" },
+  );
 
 const ExecRecordSchema: z.ZodType<ExecRecord> = z
   .strictObject({
@@ -170,11 +185,40 @@ export class ExecHistoryStore {
     return join(this.rootDir, "execs");
   }
 
+  /** Where each session keeps the images its execs showed. */
+  get imagesDir(): string {
+    return join(this.rootDir, "images");
+  }
+
   historyPath(sessionId: string): string {
     return join(
       this.historiesDir,
       `${assertSafePersistedId(sessionId, "session ID")}.json`,
     );
+  }
+
+  private sessionImagesDir(sessionId: string): string {
+    return join(this.imagesDir, assertSafePersistedId(sessionId, "session ID"));
+  }
+
+  /** The file holding the bytes of an image message. */
+  imagePath(sessionId: string, messageId: string): string {
+    return join(
+      this.sessionImagesDir(sessionId),
+      assertSafePersistedId(messageId, "message ID"),
+    );
+  }
+
+  writeImage(sessionId: string, messageId: string, bytes: Uint8Array): void {
+    mkdirSync(this.sessionImagesDir(sessionId), { recursive: true });
+    const finalPath = this.imagePath(sessionId, messageId);
+    const tempPath = `${finalPath}.tmp`;
+    writeFileSync(tempPath, bytes);
+    renameSync(tempPath, finalPath);
+  }
+
+  readImage(sessionId: string, messageId: string): Buffer {
+    return readFileSync(this.imagePath(sessionId, messageId));
   }
 
   write(sessionId: string, history: ExecRecord[]): void {
@@ -205,5 +249,6 @@ export class ExecHistoryStore {
 
   remove(sessionId: string): void {
     rmSync(this.historyPath(sessionId), { force: true });
+    rmSync(this.sessionImagesDir(sessionId), { recursive: true, force: true });
   }
 }

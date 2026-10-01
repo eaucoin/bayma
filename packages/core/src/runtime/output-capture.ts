@@ -2,6 +2,11 @@ export const RUNTIME_OUTPUT_CAPTURE_POLICY = {
   maxMessageBytes: 65_536,
   maxExecBytes: 4 * 1024 * 1024,
   maxMessages: 4_096,
+  // An image's base64, as a snapshot carries it, stays within the 5 MB a
+  // model accepts per image; an exec's images, within one reasonable reply.
+  maxImageBytes: 3 * 1024 * 1024,
+  maxExecImages: 8,
+  maxExecImageBytes: 8 * 1024 * 1024,
 } as const;
 
 export const RUNTIME_OUTPUT_TRUNCATION_MARKER =

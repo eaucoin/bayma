@@ -27,6 +27,10 @@ void writeProtocol(llvm::StringRef Bytes);
 std::string envelope(llvm::StringRef Prefix, llvm::StringRef Kind,
                      std::optional<llvm::StringRef> Text = std::nullopt);
 
+/// One image envelope line: `Prefix` and `{"kind": "image", "payloadPath":
+/// PayloadPath}`, for the image in the file at `PayloadPath`.
+std::string imageEnvelope(llvm::StringRef Prefix, llvm::StringRef PayloadPath);
+
 /// The length of the longest prefix of `Text` that ends on a UTF-8 character
 /// boundary.
 std::size_t completeUtf8Prefix(llvm::StringRef Text);
