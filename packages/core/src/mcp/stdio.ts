@@ -77,6 +77,10 @@ export async function serveMcpStdio(
     closeObserved = true;
     if (connected) exit();
   };
+  // The transport closes on a stdio error alone; stdin ending is the client
+  // closing stdio too. Without it, a server with no runtime to keep it
+  // running would just exit, skipping its shutdown.
+  process.stdin.once("end", () => void transport.close());
   process.on("SIGINT", exit);
   process.on("SIGTERM", exit);
 
