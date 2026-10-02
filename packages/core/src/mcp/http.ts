@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
 import http from "node:http";
 import { finished } from "node:stream";
@@ -36,6 +36,8 @@ export interface McpHttpConfig extends Pick<
   defaultRows: number;
   /** How long a client session with no request or stream open stays open. */
   clientIdleTimeoutMs: number;
+  /** When given, every request must carry it as `Authorization: Bearer`. */
+  bearerToken?: string;
 }
 
 interface HttpClientSession {
@@ -61,6 +63,28 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const CLIENT_RECONNECT_GRACE_MS = 10_000;
 const HTTP_ACTOR_ID_PREFIX = "actor_mcp_http_";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/**
+ * Whether a request carries the bearer token. Digests are compared, so the
+ * comparison takes the same time whatever the token's length or contents.
+ */
+function bearerAuthorization(
+  token: string,
+): (request: http.IncomingMessage) => boolean {
+  if (token.length === 0 || token !== token.trim()) {
+    throw new Error(
+      "MCP HTTP bearer token must be non-empty, with no surrounding whitespace",
+    );
+  }
+  const digest = (value: string) => createHash("sha256").update(value).digest();
+  const expected = digest(`Bearer ${token}`);
+  return (request) => {
+    const header = request.headers.authorization;
+    return (
+      typeof header === "string" && timingSafeEqual(digest(header), expected)
+    );
+  };
+}
 
 class HttpRequestError extends Error {
   readonly statusCode: number;
@@ -164,6 +188,11 @@ export async function serveMcpHttp(
       `MCP HTTP client idle timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`,
     );
   }
+  const authorizeRequest =
+    config.bearerToken === undefined
+      ? undefined
+      : bearerAuthorization(config.bearerToken);
+
   const sessions = new Map<string, HttpClientSession>();
   const httpClientSession = (actorId: string): HttpClientSession | undefined =>
     actorId.startsWith(HTTP_ACTOR_ID_PREFIX)
@@ -205,6 +234,12 @@ export async function serveMcpHttp(
   const server = http.createServer(async (request, response) => {
     if (guardLoopbackRequest && !guardLoopbackRequest(request, response))
       return;
+    if (authorizeRequest && !authorizeRequest(request)) {
+      response.statusCode = 401;
+      response.setHeader("WWW-Authenticate", "Bearer");
+      response.end();
+      return;
+    }
     if (!request.url) {
       response.statusCode = 404;
       response.end();

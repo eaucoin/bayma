@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,12 +52,20 @@ export class McpHttpClient {
     return this.transport.sessionId;
   }
 
-  static async connect(url: string): Promise<McpHttpClient> {
+  static async connect(
+    url: string,
+    bearerToken?: string,
+  ): Promise<McpHttpClient> {
     const client = new Client({
       name: "bayma-http-test-client",
       version: "1.0.0",
     });
-    const transport = new StreamableHTTPClientTransport(new URL(url));
+    const transport = new StreamableHTTPClientTransport(new URL(url), {
+      requestInit:
+        bearerToken === undefined
+          ? undefined
+          : { headers: { authorization: `Bearer ${bearerToken}` } },
+    });
     try {
       await client.connect(transport);
       return new McpHttpClient(client, transport);
@@ -206,6 +214,8 @@ export interface McpHttpServerOptions {
   stateDir?: string;
   defaultDurability?: "ephemeral" | "checkpointed";
   clientIdleTimeoutMs?: number;
+  /** Serve with --token-file, a file holding this token. */
+  bearerToken?: string;
   /** The server's environment: this process's unless given. */
   env?: NodeJS.ProcessEnv;
 }
@@ -231,6 +241,10 @@ export async function launchMcpHttpServer(
   const port = await reservePort();
   const url = `http://127.0.0.1:${port}/mcp`;
   const stateDir = options.stateDir ?? join(root, "state");
+  const tokenFile = join(root, "token");
+  if (options.bearerToken !== undefined) {
+    writeFileSync(tokenFile, `${options.bearerToken}\n`, { mode: 0o600 });
+  }
   const child = spawn(
     launch.command,
     [
@@ -253,6 +267,7 @@ export async function launchMcpHttpServer(
       ...(options.clientIdleTimeoutMs === undefined
         ? []
         : ["--client-idle-timeout-ms", String(options.clientIdleTimeoutMs)]),
+      ...(options.bearerToken === undefined ? [] : ["--token-file", tokenFile]),
     ],
     {
       detached: true,
@@ -291,7 +306,7 @@ export async function launchMcpHttpServer(
     url,
     stateDir,
     binary: launch.binaryLabel,
-    spawnClient: () => McpHttpClient.connect(url),
+    spawnClient: () => McpHttpClient.connect(url, options.bearerToken),
     stop,
     close: async () => {
       await stop();

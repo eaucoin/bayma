@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
@@ -95,10 +96,11 @@ Commands:
       [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
-      [--client-idle-timeout-ms N]
+      [--client-idle-timeout-ms N] [--token-file PATH]
       serve MCP over Streamable HTTP; a client session with no request or
       stream open for the idle timeout, five minutes unless given, is
-      closed
+      closed; with --token-file, every request must carry the file's
+      token as Authorization: Bearer
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
@@ -166,8 +168,10 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         "--port",
         "--path",
         "--client-idle-timeout-ms",
+        "--token-file",
         ...SERVER_OPTIONS,
       ]);
+      const tokenFile = parsed.get("--token-file");
       await startCommandTelemetry();
       applyPayloadEnvironment(preparePayload());
       await serveMcpHttp(adapters, {
@@ -182,6 +186,12 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         clientIdleTimeoutMs: Number(
           option(parsed, "--client-idle-timeout-ms", "300000"),
         ),
+        // The token is read from a file so it stays out of the process's
+        // arguments and environment, which other processes can read.
+        bearerToken:
+          tokenFile === undefined
+            ? undefined
+            : readFileSync(tokenFile, "utf8").trimEnd(),
         ...serverConfig(parsed),
       });
       return;
