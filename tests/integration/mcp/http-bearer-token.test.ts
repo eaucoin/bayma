@@ -94,7 +94,8 @@ test(
           "--token-file",
           tokenFile,
         ],
-        { encoding: "utf8", timeout: TEST_TIMEOUT_MS },
+        // The environment the preload prepared, which names the payload.
+        { encoding: "utf8", env: process.env, timeout: TEST_TIMEOUT_MS },
       );
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(
