@@ -36,7 +36,7 @@ function writePayload(
         env: {},
         envPaths: { BAYMA_BUN_BIN: "bun" },
         pathEnvPrepend: { PATH: ["."] },
-        pins: { version: "1.3.14" },
+        pins: { version: "1.4.2" },
       },
       python: {
         root: "python",

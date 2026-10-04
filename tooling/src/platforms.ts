@@ -15,7 +15,7 @@ export interface PinnedArchive {
 export const PLATFORM_IDS = ["linux-x64"] as const;
 export type PlatformId = (typeof PLATFORM_IDS)[number];
 
-export const BUN_VERSION = "1.3.14";
+export const BUN_VERSION = "1.4.2";
 export const PYTHON_VERSION = "3.12.13";
 export const DOTNET_SDK_VERSION = "10.0.401";
 export const DOTNET_SCRIPT_VERSION = "2.0.1";
@@ -155,7 +155,7 @@ export const PLATFORMS: Record<PlatformId, PlatformPins> = {
     bun: {
       url: `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip`,
       sha256:
-        "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+        "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913",
     },
     python: {
       url: "https://github.com/astral-sh/python-build-standalone/releases/download/20260805/cpython-3.12.13%2B20260805-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",

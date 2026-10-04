@@ -1,7 +1,7 @@
 {
   "name": "bayma-workspace",
   "private": true,
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -51,7 +51,7 @@
     "@bayma/server": "workspace:*",
     "@bayma/tooling": "workspace:*",
     "@types/node": "26.6.2",
-    "bun-types": "1.3.14",
+    "bun-types": "1.4.2",
     "prettier": "3.9.6",
     "typescript": "5.9.3"
   }
