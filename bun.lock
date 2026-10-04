@@ -44,60 +44,60 @@
     },
     "packages/core": {
       "name": "@bayma/core",
-      "version": "0.10.0",
+      "version": "0.11.0",
     },
     "packages/runtime-bun": {
       "name": "@bayma/runtime-bun",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-cpp": {
       "name": "@bayma/runtime-cpp",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-dotnet-script": {
       "name": "@bayma/runtime-dotnet-script",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-go": {
       "name": "@bayma/runtime-go",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-lean": {
       "name": "@bayma/runtime-lean",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-python": {
       "name": "@bayma/runtime-python",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/runtime-rust": {
       "name": "@bayma/runtime-rust",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
       },
     },
     "packages/server": {
       "name": "@bayma/server",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "devDependencies": {
         "@bayma/core": "workspace:*",
         "@bayma/runtime-bun": "workspace:*",
@@ -111,7 +111,7 @@
     },
     "tooling": {
       "name": "@bayma/tooling",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "dependencies": {
         "@bayma/core": "workspace:*",
         "@opentelemetry/api": "1.9.1",
