@@ -2,8 +2,9 @@
 # process snapshots take, on Ubuntu 24.04. Built by `bun run image` from what
 # `bun run build` and `bun run payload` leave in dist/.
 #
-# Run it as the README says: as the invoking user, with their home mounted at
-# the same path, and with the capabilities and seccomp profile CRIU needs.
+# Run it as the bayma command does (packages/cli/src/launcher.ts): as the
+# invoking user, with their home mounted at the same path, and with the
+# capabilities and seccomp profile CRIU needs.
 
 FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS node
 

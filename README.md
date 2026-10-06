@@ -8,27 +8,31 @@ interfaces.
 
 ## Get Started
 
-On Linux (x64), with Docker, pull bayma's image, which holds everything
-bundled with bayma: its runtimes, their toolbelt, and what it takes to keep
-REPL sessions on disk.
+On Linux (x64), with Docker and Node 22 or later, set bayma up:
 
 ```sh
-docker pull ghcr.io/eaucoin/bayma
+npx bayma init
 ```
 
-Then add bayma to your agent setup as an MCP server, for Claude Code or for
-Codex:
+This pulls bayma's image of the same version, pinned by digest, which holds
+everything bundled with bayma: its runtimes, their toolbelt, and what it
+takes to keep REPL sessions on disk. It installs the toolbelt, checks with
+bayma's doctor that each runtime works, and adds bayma as an MCP server to
+Claude Code and to Codex, where they are installed, printing what any other
+MCP client takes. Your MCP clients then launch bayma in a container of its
+own, running as you, with your home directory at its own path, and allowed
+to snapshot REPL sessions within it. `npx bayma status` shows what is set up,
+and `npx bayma doctor` checks each runtime again.
+
+To move to the latest bayma, run
 
 ```sh
-BAYMA='exec docker run -i --rm --user "$(id -u):$(id -g)" -e HOME -v "$HOME:$HOME" -w "$PWD" --cap-add CHECKPOINT_RESTORE --cap-add SYS_PTRACE --security-opt seccomp=unconfined ghcr.io/eaucoin/bayma'
-claude mcp add bayma -- sh -c "$BAYMA"
-codex mcp add bayma -- sh -c "$BAYMA"
+npx bayma@latest upgrade
 ```
 
-For any other MCP client, use `{"command": "sh", "args": ["-c", "<$BAYMA>"]}`.
-bayma runs as you, with your home directory at its own path, and the last
-three flags let it snapshot REPL sessions within its own container.
-`docker run --rm ghcr.io/eaucoin/bayma doctor` checks that each runtime works.
+and restart your MCP clients: a REPL session snapshotted by another version
+comes back from its checkpoints rather than live. `npx bayma uninstall` takes
+bayma off again, and with `--purge`, REPL sessions' state too.
 
 REPL sessions are kept under `~/.local/state/bayma`, one directory per project
 directory the client launched from. When bayma stops, it snapshots each idle
@@ -38,9 +42,9 @@ its own checkpoints instead.
 
 bayma exports OpenTelemetry traces, metrics, and logs of its own work, over
 OTLP's HTTP protocols, to wherever `OTEL_EXPORTER_OTLP_ENDPOINT` and
-OpenTelemetry's other standard variables say; with none set, it exports
-nothing. Pass each into its container, as `-e OTEL_EXPORTER_OTLP_ENDPOINT`
-does, remembering that `localhost` there is the container itself. Each MCP
+OpenTelemetry's other standard variables say, as set where your MCP client
+launches it; with none set, it exports nothing. It reads them within its
+container, so `localhost` there is the container itself. Each MCP
 request is a span that continues the trace its client propagated, in the
 request's `_meta` or its `traceparent` header, with spans for the execs,
 runtimes, and REPL sessions it concerns. A REPL session is never told where
@@ -83,5 +87,6 @@ makes it easier to add new runtimes and platforms.
 ## Development
 
 See `package.json` for the development scripts, `Dockerfile` for the image,
-`.github/workflows/` for the GitHub Actions workflows, and
+`packages/cli` for the `bayma` command npm publishes, `.github/workflows/` for
+the GitHub Actions workflows, and
 `.agents/skills/development-observability/` for development observability.

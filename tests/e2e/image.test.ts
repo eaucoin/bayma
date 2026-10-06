@@ -23,8 +23,8 @@ import {
 import { expectExactMcpSurface } from "../support/mcp-surface.ts";
 
 // bayma as its users run it: the image `bun run image` builds, started with
-// `docker run` as the README says, as the invoking user with a home mounted at
-// its own path. Every server is a fresh container, so a REPL session that
+// `docker run` as the bayma command starts it, as the invoking user with a
+// home mounted at its own path. Every server is a fresh container, so a REPL session that
 // keeps its live state across two of them was restored from its process
 // snapshot, not rebuilt from its checkpoint.
 
@@ -45,7 +45,7 @@ const SNAPSHOT_FLAGS = [
   "seccomp=unconfined",
 ];
 
-/** A home for one test, mounted at its own path, as the README mounts $HOME. */
+/** A home for one test, mounted at its own path, as the bayma command mounts $HOME. */
 function makeHome(): { home: string; stateDir: string } {
   const home = mkdtempSync(join(tmpdir(), "bayma-image-"));
   const stateDir = join(home, ".local", "state", "bayma", "test");
