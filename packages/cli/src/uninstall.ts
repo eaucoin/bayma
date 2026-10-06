@@ -1,16 +1,9 @@
-import { existsSync, readdirSync, rmdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { findExecutable, MCP_CLIENTS, runCommand } from "./clients.ts";
 import { connectDocker, type Context, say } from "./context.ts";
 import type { DockerEngine } from "./docker.ts";
 import { IMAGE_OVERRIDE } from "./image.ts";
-import {
-  cacheRoot,
-  cliRoot,
-  dataRoot,
-  pathEnvironment,
-  stateRoot,
-  toolbeltDir,
-} from "./paths.ts";
+import { cacheRoot, dataRoot, pathEnvironment, stateRoot } from "./paths.ts";
 import { IMAGE_REPOSITORY } from "./release.ts";
 
 // Taking bayma off this machine: its registrations, the commands installed
@@ -91,11 +84,15 @@ export async function uninstall(
       await docker.engine.removeImage(reference);
       say(context, `removed the image ${reference}`);
     }
-  remove(context, cliRoot(paths), "bayma's commands for MCP clients");
-  remove(context, toolbeltDir(paths), "the toolbelt bundled with bayma");
+  // All of bayma's data directory is bayma's: beside the toolbelt and this
+  // command's installs are the lock installs take and what a stopped one
+  // left, so it goes whole.
+  remove(
+    context,
+    dataRoot(paths),
+    "the toolbelt bundled with bayma and bayma's commands for MCP clients",
+  );
   remove(context, cacheRoot(paths), "bayma's cache");
-  const data = dataRoot(paths);
-  if (existsSync(data) && readdirSync(data).length === 0) rmdirSync(data);
 
   const state = stateRoot(paths);
   if (!existsSync(state)) return 0;

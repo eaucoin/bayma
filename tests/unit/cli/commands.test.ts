@@ -6,6 +6,7 @@ import {
   cacheRoot as coreCacheRoot,
   dataRoot as coreDataRoot,
   stateRoot as coreStateRoot,
+  TOOLBELT_INSTALL_LOCK,
   TOOLBELT_VERSION_FILE as CORE_TOOLBELT_VERSION_FILE,
   toolbeltPath,
 } from "@bayma/core";
@@ -347,8 +348,12 @@ test("uninstall removes registrations, commands, pulled images, the toolbelt, an
       toolbeltDir({ HOME: home }),
       cacheRoot({ HOME: home }),
       join(stateRoot({ HOME: home }), "0123456789abcdef"),
+      // What an install that was stopped leaves beside the toolbelt.
+      `${toolbeltDir({ HOME: home })}.Ab12Cd`,
     ])
       mkdirSync(directory, { recursive: true });
+    // The lock installs take, which outlives them.
+    writeFileSync(join(dataRoot({ HOME: home }), TOOLBELT_INSTALL_LOCK), "");
 
     expect(await uninstall(context, false)).toBe(0);
     expect(fakeMcpClientRuns(join(home, "clients.log"))).toEqual([
