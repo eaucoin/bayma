@@ -9,7 +9,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { doctorSuccessOutput, RUNTIME_IDS, type RuntimeId } from "@bayma/core";
+import {
+  DOCTOR_RESULT_SCHEMA_VERSION,
+  doctorSuccessOutput,
+  RUNTIME_IDS,
+  type RuntimeId,
+} from "@bayma/core";
 import {
   McpStdioClient,
   waitForSettledExec,
@@ -154,7 +159,47 @@ test.serial(
         "json",
       ]);
       expect(doctor.exitCode).toBe(0);
-      expect(doctor.stdout).toBe(doctorSuccessOutput(RUNTIME_IDS) + "\n");
+      // Without the options that let CRIU run, doctor names them.
+      expect(JSON.parse(doctor.stdout)).toEqual({
+        schemaVersion: DOCTOR_RESULT_SCHEMA_VERSION,
+        status: "passed",
+        runtimes: RUNTIME_IDS,
+        processSnapshots: {
+          available: false,
+          reason: expect.stringMatching(
+            /CRIU could not start \(.*EPERM\): .*; run bayma's container with --cap-add CHECKPOINT_RESTORE --cap-add SYS_PTRACE --security-opt seccomp=unconfined$/,
+          ),
+        },
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+test.serial(
+  "the image's doctor finds that REPL sessions can be snapshotted, run as the README says",
+  async () => {
+    const { home } = makeHome();
+    try {
+      const doctor = await run([
+        "docker",
+        "run",
+        "--rm",
+        ...userFlags(home),
+        ...SNAPSHOT_FLAGS,
+        IMAGE,
+        "doctor",
+        "--runtime",
+        "bun",
+        "--format",
+        "json",
+      ]);
+      expect(doctor.exitCode).toBe(0);
+      expect(doctor.stdout).toBe(
+        doctorSuccessOutput(["bun"], undefined) + "\n",
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

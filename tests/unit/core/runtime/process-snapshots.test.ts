@@ -10,9 +10,11 @@ import {
 import { join } from "node:path";
 import {
   BAYMA_VERSION,
+  criuEnding,
   CriuSnapshotter,
   processSnapshotter,
   restoreFailure,
+  snapshotsUnavailableReason,
   type ProcessSnapshot,
 } from "@bayma/core";
 import { withTempDir } from "../../../support/temp.ts";
@@ -127,9 +129,20 @@ test("a snapshot from another bayma or another boot cannot be restored", () => {
   ).toBe("the machine has restarted since it was taken");
 });
 
-test("a failed restore is explained by CRIU's errors", async () => {
+test("a failed restore is explained by how CRIU ended, what it printed, and its log's errors", async () => {
   await withTempDir((dir) => {
-    expect(restoreFailure(dir)).toBe("CRIU wrote no log");
+    expect(restoreFailure(dir, "CRIU exited with status 1", "")).toBe(
+      "CRIU exited with status 1",
+    );
+    expect(
+      restoreFailure(
+        dir,
+        "CRIU exited with status 1",
+        "Error (criu/crtools.c:1): unknown option\n",
+      ),
+    ).toBe(
+      "CRIU exited with status 1\nError (criu/crtools.c:1): unknown option",
+    );
 
     writeFileSync(
       join(dir, "restore.log"),
@@ -139,10 +152,47 @@ test("a failed restore is explained by CRIU's errors", async () => {
         "(00.000300) Restoring FAILED.",
       ].join("\n"),
     );
-    expect(restoreFailure(dir)).toBe(
-      "(00.000200) Error (criu/cr-restore.c:1): PID 4100 is taken",
+    expect(restoreFailure(dir, "CRIU exited with status 1", "")).toBe(
+      "CRIU exited with status 1\n(00.000200) Error (criu/cr-restore.c:1): PID 4100 is taken",
     );
   });
+});
+
+test("how CRIU ended says what kept it from running, and what changes that", () => {
+  const exited = { status: null, signal: null };
+  const failure = (code: string, message: string) =>
+    Object.assign(new Error(message), { code });
+
+  expect(criuEnding({ status: 1, signal: null })).toBe(
+    "CRIU exited with status 1",
+  );
+  expect(criuEnding({ status: null, signal: "SIGKILL" })).toBe(
+    "CRIU was killed by SIGKILL",
+  );
+  expect(
+    criuEnding({
+      ...exited,
+      error: failure("ENOENT", "spawnSync /opt/criu ENOENT"),
+    }),
+  ).toBe("CRIU could not start: spawnSync /opt/criu ENOENT");
+  // The kernel refuses to run CRIU, which holds capabilities, for a process
+  // whose bounding set lacks them, as a container's does without --cap-add.
+  expect(
+    criuEnding({
+      ...exited,
+      error: failure("EPERM", "spawnSync /opt/criu EPERM"),
+    }),
+  ).toBe(
+    "CRIU could not start (spawnSync /opt/criu EPERM): the capabilities it runs with are not all in this process's bounding set; run bayma's container with --cap-add CHECKPOINT_RESTORE --cap-add SYS_PTRACE --security-opt seccomp=unconfined",
+  );
+  // As spawnSync reports a run its timeout ended.
+  expect(
+    criuEnding({
+      error: failure("ETIMEDOUT", "spawnSync /opt/criu ETIMEDOUT"),
+      status: null,
+      signal: "SIGTERM",
+    }),
+  ).toBe("CRIU did not finish within 120000 ms");
 });
 
 test("a dump records what its restore needs, and a failed one leaves no images", async () => {
@@ -202,13 +252,87 @@ test("a dump records what its restore needs, and a failed one leaves no images",
           "/opt/advance-pids",
         ).dump(tree.pid, images, stdio),
       ).toThrow(
-        `process snapshot of ${tree.pid} failed:\n(00.1) Error (criu/cr-dump.c:1): simulated`,
+        `process snapshot of ${tree.pid} failed:\nCRIU exited with status 1\n(00.1) Error (criu/cr-dump.c:1): simulated`,
       );
       expect(existsSync(images)).toBe(false);
     } finally {
       tree.kill("SIGKILL");
       await tree.exited;
     }
+  });
+});
+
+test("a dump CRIU did not get to log says how CRIU ended and what it printed", async () => {
+  await withTempDir(async (dir) => {
+    const images = join(dir, "images");
+    const tree = Bun.spawn(["sleep", "30"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdio = [0, 1, 2].map((fd) =>
+      readlinkSync(`/proc/${tree.pid}/fd/${fd}`),
+    ) as [string, string, string];
+    const dump = (criu: string) => () =>
+      new CriuSnapshotter(criu, "/opt/advance-pids").dump(
+        tree.pid,
+        images,
+        stdio,
+      );
+    const notExecutable = join(dir, "not-executable");
+    writeFileSync(notExecutable, "#!/bin/sh\nexit 0\n");
+    try {
+      expect(dump(join(dir, "missing"))).toThrow(
+        /^process snapshot of \d+ failed:\nCRIU could not start: .*ENOENT/,
+      );
+      expect(dump(notExecutable)).toThrow(
+        /^process snapshot of \d+ failed:\nCRIU could not start: .*EACCES/,
+      );
+      expect(dump(writeScript(join(dir, "killed"), "kill -KILL $$"))).toThrow(
+        `process snapshot of ${tree.pid} failed:\nCRIU was killed by SIGKILL`,
+      );
+      // CRIU reports what fails before its log is open on stderr.
+      expect(
+        dump(
+          writeScript(
+            join(dir, "refused"),
+            "echo 'Error (criu/crtools.c:1): unknown option' >&2; exit 1",
+          ),
+        ),
+      ).toThrow(
+        `process snapshot of ${tree.pid} failed:\nCRIU exited with status 1\nError (criu/crtools.c:1): unknown option`,
+      );
+      expect(existsSync(images)).toBe(false);
+    } finally {
+      tree.kill("SIGKILL");
+      await tree.exited;
+    }
+  });
+});
+
+test("whether sessions can be snapshotted is found by dumping a process", async () => {
+  await withTempDir(async (dir) => {
+    expect(await snapshotsUnavailableReason(null)).toBe(
+      "criu and bayma-advance-pids are not both on PATH, as bayma's image puts them",
+    );
+    expect(
+      await snapshotsUnavailableReason(
+        new CriuSnapshotter(
+          fakeCriu(dir, "(00.1) Dumping finished", 0),
+          "/opt/advance-pids",
+        ),
+      ),
+    ).toBeUndefined();
+    // The process dumped is one of its own, with stdio of its own.
+    const args = readFileSync(join(dir, "criu-args"), "utf8").split("\n");
+    expect(args.slice(0, 2)).toEqual(["dump", "--tree"]);
+    expect(args).not.toContain("--external");
+    expect(
+      await snapshotsUnavailableReason(
+        new CriuSnapshotter(
+          writeScript(join(dir, "killed"), "kill -KILL $$"),
+          "/opt/advance-pids",
+        ),
+      ),
+    ).toMatch(/^process snapshot of \d+ failed:\nCRIU was killed by SIGKILL$/);
   });
 });
 

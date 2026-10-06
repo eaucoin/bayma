@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { chmodSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   assertDoctorProcessResult,
+  CriuSnapshotter,
+  DOCTOR_RESULT_SCHEMA_VERSION,
   doctorSuccessOutput,
   runDoctor,
   SessionCatalogStore,
@@ -55,27 +59,80 @@ test("doctor cleans only the session it creates in a shared state directory", as
 test("doctor process evidence is exact and runtime bound", () => {
   const success = {
     status: 0,
-    stdout: doctorSuccessOutput(["python"]) + "\n",
+    stdout: doctorSuccessOutput(["python"], undefined) + "\n",
     stderr: "",
   };
   const message = "doctor process did not emit its exact success record";
-  expect(() => assertDoctorProcessResult(["python"], success)).not.toThrow();
-  expect(() => assertDoctorProcessResult(["bun"], success)).toThrow(message);
-  expect(() => assertDoctorProcessResult(["python", "bun"], success)).toThrow(
+  expect(() =>
+    assertDoctorProcessResult(["python"], undefined, success),
+  ).not.toThrow();
+  expect(() => assertDoctorProcessResult(["bun"], undefined, success)).toThrow(
     message,
   );
   expect(() =>
-    assertDoctorProcessResult(["python"], {
+    assertDoctorProcessResult(["python", "bun"], undefined, success),
+  ).toThrow(message);
+  expect(() =>
+    assertDoctorProcessResult(["python"], "no CRIU", success),
+  ).toThrow(message);
+  expect(() =>
+    assertDoctorProcessResult(["python"], undefined, {
       ...success,
       stdout: success.stdout + "extra\n",
     }),
   ).toThrow(message);
   expect(() =>
-    assertDoctorProcessResult(["python"], { ...success, stderr: "warning\n" }),
+    assertDoctorProcessResult(["python"], undefined, {
+      ...success,
+      stderr: "warning\n",
+    }),
   ).toThrow(message);
   expect(() =>
-    assertDoctorProcessResult(["python"], { ...success, status: 1 }),
+    assertDoctorProcessResult(["python"], undefined, {
+      ...success,
+      status: 1,
+    }),
   ).toThrow(message);
+});
+
+test("doctor reports whether sessions can be snapshotted here, and why not", async () => {
+  await withTempDir(async (dir) => {
+    const criu = join(dir, "criu");
+    writeFileSync(
+      criu,
+      "#!/bin/sh\necho 'Error (criu/crtools.c:1): simulated' >&2\nexit 1\n",
+    );
+    chmodSync(criu, 0o755);
+    const printed: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((line: string) => {
+      printed.push(line);
+    });
+    try {
+      await runDoctor([bunAdapter], { cwd: dir, processSnapshotter: null });
+      await runDoctor([bunAdapter], {
+        cwd: dir,
+        outputFormat: "json",
+        processSnapshotter: new CriuSnapshotter(criu, "/opt/advance-pids"),
+      });
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(printed[0]).toBe(
+      "ok: Bayma passed for bun\nwarning: process snapshots do not work here, so sessions outlive the server through their checkpoints alone: criu and bayma-advance-pids are not both on PATH, as bayma's image puts them",
+    );
+    expect(JSON.parse(printed[1]!)).toEqual({
+      schemaVersion: DOCTOR_RESULT_SCHEMA_VERSION,
+      status: "passed",
+      runtimes: ["bun"],
+      processSnapshots: {
+        available: false,
+        reason: expect.stringMatching(
+          /^process snapshot of \d+ failed:\nCRIU exited with status 1\nError \(criu\/crtools.c:1\): simulated$/,
+        ),
+      },
+    });
+  });
 });
 
 test("doctor cleanup failures retain their nested diagnostics", async () => {

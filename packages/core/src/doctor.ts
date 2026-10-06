@@ -5,36 +5,58 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { aggregateFailure } from "./errors.ts";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import type { RuntimeId } from "./runtime/id.ts";
+import {
+  processSnapshotter,
+  snapshotsUnavailableReason,
+  type ProcessSnapshotter,
+} from "./runtime/process-snapshots.ts";
 import { createEngine, type Engine } from "./engine.ts";
 import { inSpan } from "./telemetry/record.ts";
 
 // `doctor` proves that every selected runtime can create a session and
-// execute its probe, through the same engine the servers use.
+// execute its probe, through the same engine the servers use, and reports
+// whether sessions can be snapshotted here, which they need not be: without
+// process snapshots, sessions outlive the server through their checkpoints.
 
 export interface DoctorOptions {
   cwd: string;
   stateDir?: string;
   outputFormat?: "text" | "json";
+  /** The environment's snapshotter unless given; null for none. */
+  processSnapshotter?: ProcessSnapshotter | null;
 }
 
 export const DOCTOR_RESULT_SCHEMA_VERSION = 1 as const;
 const PROBE_TIMEOUT_MS = 60_000;
 
-export function doctorSuccessOutput(runtimeIds: readonly RuntimeId[]): string {
+/**
+ * The record of a doctor that passed `runtimeIds`, where process snapshots
+ * are unavailable for `snapshotsUnavailable`, or available if undefined.
+ */
+export function doctorSuccessOutput(
+  runtimeIds: readonly RuntimeId[],
+  snapshotsUnavailable: string | undefined,
+): string {
   return JSON.stringify({
     schemaVersion: DOCTOR_RESULT_SCHEMA_VERSION,
     status: "passed",
     runtimes: runtimeIds,
+    processSnapshots:
+      snapshotsUnavailable === undefined
+        ? { available: true }
+        : { available: false, reason: snapshotsUnavailable },
   });
 }
 
 export function assertDoctorProcessResult(
   runtimeIds: readonly RuntimeId[],
+  snapshotsUnavailable: string | undefined,
   result: { status: number; stdout: string; stderr: string },
 ): void {
   if (
     result.status !== 0 ||
-    result.stdout !== doctorSuccessOutput(runtimeIds) + "\n" ||
+    result.stdout !==
+      doctorSuccessOutput(runtimeIds, snapshotsUnavailable) + "\n" ||
     result.stderr !== ""
   ) {
     throw new Error("doctor process did not emit its exact success record");
@@ -90,6 +112,18 @@ async function probeRuntime(
   throw new Error(`${adapter.runtimeId} doctor exec timed out`);
 }
 
+/**
+ * Why sessions cannot be snapshotted here, or undefined if they can, as the
+ * span `bayma.doctor.snapshots`.
+ */
+function checkSnapshots(
+  snapshotter: ProcessSnapshotter | null,
+): Promise<string | undefined> {
+  return inSpan("bayma.doctor.snapshots", {}, () =>
+    snapshotsUnavailableReason(snapshotter),
+  );
+}
+
 /** Runs doctor as the span `bayma.doctor`. */
 export async function runDoctor(
   adapters: readonly RuntimeAdapter[],
@@ -111,6 +145,7 @@ async function diagnose(
   let engine: Engine | undefined;
   let engineShutdownSucceeded = false;
   const doctorSessionIds: string[] = [];
+  let snapshotsUnavailable: string | undefined;
   let operationError: unknown;
   try {
     engine = await createEngine(
@@ -129,6 +164,11 @@ async function diagnose(
         await probe(engine, adapter, actorId, resolve(options.cwd)),
       );
     }
+    snapshotsUnavailable = await checkSnapshots(
+      options.processSnapshotter !== undefined
+        ? options.processSnapshotter
+        : processSnapshotter(),
+    );
   } catch (error) {
     operationError = error;
   }
@@ -174,7 +214,12 @@ async function diagnose(
     throw aggregateFailure("doctor cleanup failed", cleanupFailures);
   console.log(
     options.outputFormat === "json"
-      ? doctorSuccessOutput(runtimeIds)
-      : `ok: Bayma passed for ${runtimeIds.join(", ")}`,
+      ? doctorSuccessOutput(runtimeIds, snapshotsUnavailable)
+      : [
+          `ok: Bayma passed for ${runtimeIds.join(", ")}`,
+          snapshotsUnavailable === undefined
+            ? "ok: process snapshots work here"
+            : `warning: process snapshots do not work here, so sessions outlive the server through their checkpoints alone: ${snapshotsUnavailable}`,
+        ].join("\n"),
   );
 }

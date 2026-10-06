@@ -104,7 +104,8 @@ Commands:
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
-      executing code in it; a named runtime must be available
+      executing code in it; a named runtime must be available; and report
+      whether sessions can be snapshotted here, and if not, why
   help
       show this help
 

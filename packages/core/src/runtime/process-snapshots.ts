@@ -1,13 +1,17 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { failureMessage } from "../errors.ts";
 import { BAYMA_VERSION } from "../version.ts";
 
 /**
@@ -94,6 +98,12 @@ const COMMON_OPTIONS = [
   "--ext-unix-sk",
 ];
 const GHOST_LIMIT = "1G";
+// What bayma's container is run with for CRIU to run in it, as the README's
+// command runs it.
+const CONTAINER_OPTIONS =
+  "--cap-add CHECKPOINT_RESTORE --cap-add SYS_PTRACE --security-opt seccomp=unconfined";
+// How much of what CRIU printed a failure's message keeps, as of its log.
+const FAILURE_LINES = 6;
 
 function onPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
   for (const directory of (env.PATH ?? "").split(delimiter)) {
@@ -150,16 +160,63 @@ function heldAt(
   }) as [number, number, number];
 }
 
-/** CRIU's errors from `log`, for a failure's message. */
-function criuErrors(directory: string, log: string): string {
-  let lines: string[];
+/** How a run of CRIU ended, as `spawnSync` reports it. */
+export interface CriuExit {
+  /** Why it did not run to its end: it could not start, or ran out of time. */
+  error?: Error;
+  status: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+/**
+ * How a run of CRIU that failed ended, and, where the environment kept it
+ * from running, what changes that.
+ */
+export function criuEnding({ error, status, signal }: CriuExit): string {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  // Only dumps run with a timeout.
+  if (code === "ETIMEDOUT")
+    return `CRIU did not finish within ${DUMP_TIMEOUT_MS} ms`;
+  // CRIU's binary holds the capabilities it runs with, and the kernel refuses
+  // to execute it for a process whose bounding set lacks any of them.
+  if (code === "EPERM")
+    return `CRIU could not start (${error!.message}): the capabilities it runs with are not all in this process's bounding set; run bayma's container with ${CONTAINER_OPTIONS}`;
+  if (error) return `CRIU could not start: ${error.message}`;
+  if (signal) return `CRIU was killed by ${signal}`;
+  return `CRIU exited with status ${status}`;
+}
+
+/** The last lines of `text`, for a failure's message. */
+function lastLines(text: string): string {
+  return text.trim().split("\n").slice(-FAILURE_LINES).join("\n");
+}
+
+/** CRIU's errors from `log`, or undefined if it wrote none. */
+function criuErrors(directory: string, log: string): string | undefined {
+  let text: string;
   try {
-    lines = readFileSync(join(directory, log), "utf8").split("\n");
+    text = readFileSync(join(directory, log), "utf8");
   } catch {
-    return "CRIU wrote no log";
+    return undefined;
   }
-  const errors = lines.filter((line) => line.includes("Error"));
-  return (errors.length > 0 ? errors : lines).slice(-6).join("\n");
+  const errors = text.split("\n").filter((line) => line.includes("Error"));
+  return errors.length > 0 ? lastLines(errors.join("\n")) : lastLines(text);
+}
+
+/**
+ * Why a run of CRIU failed, for a failure's message: how it `ended`, what it
+ * printed, where it reports what fails before its log is open, and the errors
+ * in its log.
+ */
+function criuFailure(
+  ended: string,
+  output: string,
+  directory: string,
+  log: string,
+): string {
+  return [ended, lastLines(output), criuErrors(directory, log)]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** The external-socket option for each of `stdio` that is a Unix socket. */
@@ -203,10 +260,20 @@ export class CriuSnapshotter implements ProcessSnapshotter {
         ...externalSockets(stdio),
         ...COMMON_OPTIONS,
       ],
-      { stdio: "ignore", timeout: DUMP_TIMEOUT_MS },
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        encoding: "utf8",
+        timeout: DUMP_TIMEOUT_MS,
+      },
     );
     if (result.status !== 0) {
-      const failure = criuErrors(directory, DUMP_LOG);
+      const failure = criuFailure(
+        criuEnding(result),
+        // There is no output when CRIU could not start.
+        result.stderr ?? "",
+        directory,
+        DUMP_LOG,
+      );
       rmSync(directory, { recursive: true, force: true });
       throw new Error(`process snapshot of ${pid} failed:\n${failure}`);
     }
@@ -278,9 +345,16 @@ export class CriuSnapshotter implements ProcessSnapshotter {
   }
 }
 
-/** Why a restore that ended without a restored tree failed, from its log. */
-export function restoreFailure(directory: string): string {
-  return criuErrors(directory, RESTORE_LOG);
+/**
+ * Why a restore from `directory` ended without a restored tree: how it
+ * `ended`, what CRIU printed, its `output`, and the errors in its log.
+ */
+export function restoreFailure(
+  directory: string,
+  ended: string,
+  output: string,
+): string {
+  return criuFailure(ended, output, directory, RESTORE_LOG);
 }
 
 function detectSnapshotter(env: NodeJS.ProcessEnv): ProcessSnapshotter | null {
@@ -304,4 +378,33 @@ export function processSnapshotter(
   if (env !== process.env) return detectSnapshotter(env);
   if (detected === undefined) detected = detectSnapshotter(env);
   return detected;
+}
+
+/**
+ * Why `snapshotter` cannot snapshot sessions here, or undefined if it can:
+ * found by dumping a process started for it, as a session's tree is dumped
+ * when the server stops.
+ */
+export async function snapshotsUnavailableReason(
+  snapshotter: ProcessSnapshotter | null,
+): Promise<string | undefined> {
+  if (!snapshotter)
+    return `${CRIU} and ${ADVANCE_PIDS} are not both on PATH, as bayma's image puts them`;
+  const directory = mkdtempSync(join(tmpdir(), "bayma-snapshots-"));
+  // Leading a session of its own, as a session's runtime does.
+  const tree = spawn("sleep", ["60"], { stdio: "ignore", detached: true });
+  try {
+    await once(tree, "spawn");
+    const stdio = [0, 1, 2].map((fd) =>
+      readlinkSync(`/proc/${tree.pid}/fd/${fd}`),
+    ) as [string, string, string];
+    snapshotter.dump(tree.pid!, join(directory, "images"), stdio);
+    return undefined;
+  } catch (error) {
+    return failureMessage(error);
+  } finally {
+    // A dump ends the tree; a failed one leaves it.
+    tree.kill("SIGKILL");
+    rmSync(directory, { recursive: true, force: true });
+  }
 }

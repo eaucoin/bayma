@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { readlinkSync } from "node:fs";
+import { chmodSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   aggregateFailure,
@@ -298,6 +299,83 @@ test("a snapshot hands the dump the stdio its runtime started with, wherever the
   } finally {
     await transport.shutdown();
   }
+});
+
+test("a restore that fails says how CRIU ended, what it printed, and its log's errors", async () => {
+  await withTempDir(async (dir) => {
+    const restore = async (criu: string) => {
+      const transport = new ProcessTransport({
+        platformId: "test",
+        promptRe: /READY> /g,
+        command: () => ({ file: "/bin/false", args: [] }),
+        snapshotter: {
+          dump: () => {
+            throw new Error("this transport only restores");
+          },
+          restoreCommand: () => ({ file: criu, args: [] }),
+          restoredPid: () => undefined,
+          unrestorableReason: () => undefined,
+          advancePidsPast: () => undefined,
+        },
+      });
+      try {
+        await transport.snapshots!.restore(
+          {
+            sessionId: "sess_unrestored",
+            title: "unrestored",
+            cwd: process.cwd(),
+            cols: 80,
+            rows: 24,
+            scratchDir: tmpdir(),
+          },
+          {
+            pid: 4_100,
+            maxPid: 4_100,
+            stdio: ["pipe:[1]", "pipe:[2]", "pipe:[3]"],
+            stdioFds: [0, 1, 2],
+            bootId: "boot",
+            baymaVersion: "0.0.0",
+            createdAtMs: 0,
+          },
+          dir,
+        );
+      } finally {
+        await transport.shutdown();
+      }
+    };
+    const script = (name: string, body: string) => {
+      const path = join(dir, name);
+      writeFileSync(path, `#!/bin/sh\n${body}\n`);
+      chmodSync(path, 0o755);
+      return path;
+    };
+    const notExecutable = join(dir, "not-executable");
+    writeFileSync(notExecutable, "#!/bin/sh\nexit 0\n");
+
+    await expect(restore(join(dir, "missing"))).rejects.toThrow(
+      /^restoring session sess_unrestored failed:\nCRIU could not start: .*ENOENT/,
+    );
+    await expect(restore(notExecutable)).rejects.toThrow(
+      /^restoring session sess_unrestored failed:\nCRIU could not start: .*EACCES/,
+    );
+    await expect(restore(script("killed", "kill -KILL $$"))).rejects.toThrow(
+      "restoring session sess_unrestored failed:\nCRIU was killed by SIGKILL",
+    );
+    await expect(
+      restore(
+        script(
+          "refused",
+          [
+            "echo 'Warn (criu/kerndat.c:1): no kerndat cache' >&2",
+            `echo '(00.1) Error (criu/cr-restore.c:1): PID 4100 is taken' > ${JSON.stringify(join(dir, "restore.log"))}`,
+            "exit 1",
+          ].join("\n"),
+        ),
+      ),
+    ).rejects.toThrow(
+      "restoring session sess_unrestored failed:\nCRIU exited with status 1\nWarn (criu/kerndat.c:1): no kerndat cache\n(00.1) Error (criu/cr-restore.c:1): PID 4100 is taken",
+    );
+  });
 });
 
 test("stale transport handles cannot affect a replacement child", async () => {

@@ -6,8 +6,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure } from "../errors.ts";
 import {
+  criuEnding,
   processSnapshotter,
   restoreFailure,
+  type CriuExit,
   type ProcessSnapshot,
   type ProcessSnapshotter,
 } from "./process-snapshots.ts";
@@ -181,6 +183,18 @@ function appendRecentOutput(state: BrokerState, bytes: Uint8Array): void {
     state.rawChunks[0] = first.slice(excess);
     state.rawByteLength -= excess;
   }
+}
+
+/** The end of what the process printed most recently, for a failure's message. */
+function recentOutput(state: BrokerState): string {
+  return stripAnsi(
+    Buffer.concat(
+      state.rawChunks.map((chunk) => Buffer.from(chunk)),
+      state.rawByteLength,
+    ).toString("utf8"),
+  )
+    .trim()
+    .slice(-4000);
 }
 
 export class ProcessTransport implements RuntimeTransport {
@@ -365,18 +379,9 @@ export class ProcessTransport implements RuntimeTransport {
       for (const waiter of [...state.waiters]) {
         clearTimeout(waiter.timeout);
         state.waiters.delete(waiter);
-        const recentOutput = stripAnsi(
-          Buffer.concat(
-            state.rawChunks.map((chunk) => Buffer.from(chunk)),
-            state.rawByteLength,
-          ).toString("utf8"),
-        )
-          .trim()
-          .slice(-4000);
+        const output = recentOutput(state);
         waiter.reject(
-          recentOutput.length > 0
-            ? new Error(`${error.message}\n${recentOutput}`)
-            : error,
+          output.length > 0 ? new Error(`${error.message}\n${output}`) : error,
         );
       }
       for (const waiter of [...state.readinessWaiters]) {
@@ -498,18 +503,41 @@ export class ProcessTransport implements RuntimeTransport {
   ): Promise<TransportSessionHandle> {
     this.assertNewSession(input.sessionId);
     const command = snapshotter.restoreCommand(snapshot, directory);
-    const state = this.launch(input, command.file, command.args, process.env);
+    const failed = (ended: string, output = "") =>
+      new Error(
+        `restoring session ${input.sessionId} failed:\n${restoreFailure(directory, ended, output)}`,
+      );
+    let state: BrokerState;
+    try {
+      state = this.launch(input, command.file, command.args, process.env);
+    } catch (error) {
+      // Node throws the spawn errors it does not expect, EPERM among them,
+      // rather than emitting them.
+      throw failed(
+        criuEnding({ error: error as Error, status: null, signal: null }),
+      );
+    }
+    // How CRIU ended, should it end before the tree is restored.
+    let ended: CriuExit | undefined;
+    state.child.once("error", (error) => {
+      ended ??= { error, status: null, signal: null };
+    });
+    state.child.once("exit", (status, signal) => {
+      ended ??= { status, signal };
+    });
     const deadline = Date.now() + RESTORE_TIMEOUT_MS;
     let restored = snapshotter.restoredPid(directory);
     while (restored === undefined) {
       if (state.terminalError || Date.now() > deadline) {
-        const failure = state.terminalError
-          ? restoreFailure(directory)
-          : `CRIU did not finish restoring within ${RESTORE_TIMEOUT_MS} ms`;
-        await this.terminate(state.handle);
-        throw new Error(
-          `restoring session ${input.sessionId} failed:\n${failure}`,
+        const failure = failed(
+          ended
+            ? criuEnding(ended)
+            : (state.terminalError?.message ??
+                `CRIU did not finish restoring within ${RESTORE_TIMEOUT_MS} ms`),
+          recentOutput(state),
         );
+        await this.terminate(state.handle);
+        throw failure;
       }
       await sleep(RESTORE_POLL_MS);
       restored = snapshotter.restoredPid(directory);
