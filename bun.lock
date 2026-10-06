@@ -43,7 +43,7 @@
       },
     },
     "packages/cli": {
-      "name": "bayma",
+      "name": "bayma-repl",
       "version": "0.12.1",
       "bin": {
         "bayma": "dist/bayma.js",
@@ -200,7 +200,7 @@
 
     "anynum": ["anynum@1.0.1", "", {}, "sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A=="],
 
-    "bayma": ["bayma@workspace:packages/cli"],
+    "bayma-repl": ["bayma-repl@workspace:packages/cli"],
 
     "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
 
