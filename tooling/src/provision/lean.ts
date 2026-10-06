@@ -1,5 +1,6 @@
 import { chmodSync, copyFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { LEAN } from "../platforms.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { ensureDir } from "../shared/files.ts";
@@ -12,6 +13,7 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 
 // The Lean payload: Lean's release as it is, with bayma-lean-host built from
@@ -23,15 +25,26 @@ const NATIVE_DIR = join("packages", "runtime-lean", "native");
 const HOST_SOURCES = ["BaymaLeanHost.lean", "lakefile.toml", "lean-toolchain"];
 const HOST = "bayma-lean-host";
 
+export const LEAN_TOOLCHAIN: Toolchain = {
+  name: "lean",
+  directory: join("lean", "payload"),
+  identity: (repoRoot) =>
+    [
+      LEAN.sha256,
+      ...HOST_SOURCES.map((file) =>
+        sha256File(join(repoRoot, NATIVE_DIR, file)),
+      ),
+    ].join(":"),
+  pins: LEAN,
+  module: fileURLToPath(import.meta.url),
+};
+
 export async function provisionLean(
   context: ProvisionContext,
 ): Promise<RuntimePayload> {
-  const root = join(context.workDir, "lean", "payload");
+  const root = join(context.workDir, LEAN_TOOLCHAIN.directory);
   const native = join(context.repoRoot, NATIVE_DIR);
-  const identity = [
-    LEAN.sha256,
-    ...HOST_SOURCES.map((file) => sha256File(join(native, file))),
-  ].join(":");
+  const identity = LEAN_TOOLCHAIN.identity(context.repoRoot);
   if (!isProvisioned(context, root, identity)) {
     resetDirectory(root);
     ensureDir(root);

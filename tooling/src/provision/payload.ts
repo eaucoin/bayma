@@ -31,6 +31,23 @@ export interface ProvisionContext {
 }
 
 /**
+ * What one provisioner leaves in the work directory for the payload: a
+ * directory, relative to the work directory, reused while its marker names
+ * `identity`, the digests of the pins and sources it is built from.
+ */
+export interface Toolchain {
+  name: string;
+  directory: string;
+  /** Other directories it leaves that tests build with, kept along with it. */
+  alongside?: string[];
+  identity(repoRoot: string): string;
+  /** The platform's pins its provisioner reads. */
+  pins: unknown;
+  /** The module that provisions it. */
+  module: string;
+}
+
+/**
  * Provisioners are idempotent: `identity` names the pins that produced a
  * directory, and a directory whose marker matches is reused as is.
  */

@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   compareVersionPrecedence,
   isValidVersion,
@@ -23,6 +24,7 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 
 // A pinned .NET SDK plus the dotnet-script global tool installed into it. The
@@ -30,7 +32,13 @@ import {
 // host, the shared framework, the SDK and reference packs for the tool's own
 // target framework, and the tool itself.
 
-const IDENTITY = `${DOTNET.sha256}:dotnet-script@${DOTNET.scriptVersion}`;
+export const DOTNET_TOOLCHAIN: Toolchain = {
+  name: "dotnet-script",
+  directory: "dotnet",
+  identity: () => `${DOTNET.sha256}:dotnet-script@${DOTNET.scriptVersion}`,
+  pins: DOTNET,
+  module: fileURLToPath(import.meta.url),
+};
 
 function highestMatchingVersion(root: string, prefix: string): string | null {
   if (!existsSync(root)) return null;
@@ -88,8 +96,9 @@ export function selectSdkEntries(
 export async function provisionDotnet(
   context: ProvisionContext,
 ): Promise<RuntimePayload> {
-  const directory = join(context.workDir, "dotnet");
+  const directory = join(context.workDir, DOTNET_TOOLCHAIN.directory);
   const root = join(directory, "payload");
+  const identity = DOTNET_TOOLCHAIN.identity(context.repoRoot);
   const toolsRoot = join(root, "tools");
   const sdkEnv = {
     DOTNET_CLI_HOME: directory,
@@ -97,7 +106,7 @@ export async function provisionDotnet(
     DOTNET_NOLOGO: "1",
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
   };
-  if (!isProvisioned(context, directory, IDENTITY)) {
+  if (!isProvisioned(context, directory, identity)) {
     resetDirectory(directory);
     // The full SDK is only needed to install the tool; the payload keeps the
     // subset dotnet-script uses at runtime.
@@ -133,7 +142,7 @@ export async function provisionDotnet(
     } finally {
       rmSync(sdkRoot, { recursive: true, force: true });
     }
-    markProvisioned(directory, IDENTITY);
+    markProvisioned(directory, identity);
   }
   const version = (
     await runOrThrow([join(root, "tools", "dotnet-script"), "--version"], {

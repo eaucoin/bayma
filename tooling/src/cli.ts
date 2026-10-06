@@ -8,6 +8,7 @@ import { pinRelease } from "./release.ts";
 import { run } from "./shared/process.ts";
 import { bunJUnitReport, runTests } from "./shared/tests.ts";
 import { inCommand, startTelemetry, stopTelemetry } from "./telemetry/index.ts";
+import { ensureToolchains, pullToolchains } from "./toolchains.ts";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
 const distDir = join(repoRoot, "dist");
@@ -21,6 +22,12 @@ function usage(): never {
   pin DIGEST             pin the bayma command to the image of DIGEST, as a
                          release does once it has pushed the image
   provision              download and verify every pinned toolchain into .work
+  toolchains pull        restore every toolchain into .work from its image on
+                         GitHub's container registry, as provision leaves
+                         them; fails, building none, if an image is missing
+  toolchains ensure      push an image of every toolchain the registry lacks,
+                         provisioned from the images of the rest, and prune
+                         each one's older versions; GITHUB_TOKEN writes them
   payload                assemble dist/payload
   image                  build and tag the image from dist and the Dockerfile
   test [ARGS...]         bun test with ARGS
@@ -69,6 +76,25 @@ const COMMANDS: Record<string, (args: string[]) => Promise<number>> = {
       console.log(`${runtimeId}: ${payload.root}`);
     }
     return 0;
+  },
+  async toolchains([action, ...rest]) {
+    if (rest.length > 0) usage();
+    if (action === "pull") {
+      const pinned = await pullToolchains(repoRoot, workDir);
+      for (const [name, image] of Object.entries(pinned))
+        console.log(`${name}: ${image}`);
+      return 0;
+    }
+    if (action === "ensure") {
+      const token = process.env.GITHUB_TOKEN;
+      if (!token)
+        throw new Error("GITHUB_TOKEN must name a token that writes packages");
+      const outcomes = await ensureToolchains(repoRoot, workDir, token);
+      for (const [name, outcome] of Object.entries(outcomes))
+        console.log(`${name}: ${outcome}`);
+      return 0;
+    }
+    usage();
   },
   async payload() {
     console.log(assemblePayload(repoRoot, requireProvision(), distDir));

@@ -8,8 +8,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { TOOLBELT_DIR, type RuntimeId } from "@bayma/core";
-import { UV } from "../platforms.ts";
+import { BUN, DOTNET, PYTHON, RUST, UV } from "../platforms.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { walkFiles } from "../shared/files.ts";
 import { sha256File } from "../shared/hashing.ts";
@@ -21,6 +22,7 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 
 // The toolbelt: the repository's `toolbelt/` package with its Bun, Python,
@@ -48,6 +50,26 @@ const NOT_SHIPPED = [
   "bayma_toolbelt.egg-info",
   ".ruff_cache",
 ];
+
+/**
+ * The stage the payload's toolbelt is built in. It is installed with, and its
+ * tests prove it against, the payload's Bun, Python, .NET SDK, and Rust.
+ */
+export const TOOLBELT_TOOLCHAIN: Toolchain = {
+  name: "toolbelt",
+  directory: "toolbelt",
+  identity: (repoRoot) =>
+    [
+      UV.sha256,
+      BUN.sha256,
+      PYTHON.sha256,
+      DOTNET.sha256,
+      sha256File(join(repoRoot, SKILL)),
+      ...walkFiles(join(repoRoot, SOURCE)).map(sha256File),
+    ].join(":"),
+  pins: { UV, BUN, PYTHON, DOTNET, RUST },
+  module: fileURLToPath(import.meta.url),
+};
 
 async function provisionUv(context: ProvisionContext): Promise<string> {
   const directory = join(context.workDir, "uv");
@@ -127,7 +149,6 @@ export async function provisionToolbelt(
   context: ProvisionContext,
   runtimes: Record<RuntimeId, RuntimePayload>,
 ): Promise<string> {
-  const uv = await provisionUv(context);
   const bun = runtimeFile(runtimes.bun, "BAYMA_BUN_BIN");
   const python = runtimeFile(runtimes.python, "BAYMA_PYTHON_BIN");
   const cargo = runtimeFile(runtimes.rust, "BAYMA_CARGO_BIN");
@@ -140,19 +161,12 @@ export async function provisionToolbelt(
   const source = join(context.repoRoot, SOURCE);
   // The stage mirrors the payload: the toolbelt beside a `python` that is the
   // payload's interpreter, and the skill where the toolbelt's tests read it.
-  const stage = join(context.workDir, "toolbelt");
+  const stage = join(context.workDir, TOOLBELT_TOOLCHAIN.directory);
   const toolbelt = join(stage, TOOLBELT_DIR);
-  const identity = [
-    UV.sha256,
-    runtimes.bun.pins.sha256,
-    runtimes.python.pins.sha256,
-    runtimes.rust.pins.toolbeltLockSha256,
-    runtimes["dotnet-script"].pins.sdkSha256,
-    sha256File(join(context.repoRoot, SKILL)),
-    ...walkFiles(source).map(sha256File),
-  ].join(":");
+  const identity = TOOLBELT_TOOLCHAIN.identity(context.repoRoot);
   if (isProvisioned(context, stage, identity)) return toolbelt;
 
+  const uv = await provisionUv(context);
   resetDirectory(stage);
   mkdirSync(join(stage, dirname(SKILL)), { recursive: true });
   symlinkSync(runtimes.python.root, join(stage, "python"));

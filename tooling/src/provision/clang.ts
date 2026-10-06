@@ -23,6 +23,7 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 
 // The C and C++ payload, which both runtimes share: bayma-cpp-host, built from
@@ -509,22 +510,36 @@ async function smokeTest(root: string): Promise<void> {
   }
 }
 
+/**
+ * The runtime directory; of what builds the host, the LLVM release's parts
+ * and the sysroot, with which tests build libraries for sessions to load.
+ */
+export const CLANG_TOOLCHAIN: Toolchain = {
+  name: "clang",
+  directory: join("clang", "runtime"),
+  alongside: [join("clang", "llvm"), join("clang", "sysroot")],
+  identity: (repoRoot) =>
+    [
+      CLANG.llvm.sha256,
+      CLANG.llvmSource.sha256,
+      CLANG.zstd.sha256,
+      ...[...CLANG.sysroot.cells, ...CLANG.sysroot.build].map(
+        (pinned) => pinned.sha256,
+      ),
+      ...Object.values(CLANG.licenses).map((pinned) => pinned.sha256),
+      // The build recipe is this file.
+      sha256File(fileURLToPath(import.meta.url)),
+      ...walkFiles(join(repoRoot, NATIVE_DIR)).map(sha256File),
+    ].join(":"),
+  pins: CLANG,
+  module: fileURLToPath(import.meta.url),
+};
+
 export async function provisionClang(
   context: ProvisionContext,
 ): Promise<Record<"c" | "cpp", RuntimePayload>> {
-  const root = join(context.workDir, "clang", "runtime");
-  const identity = [
-    CLANG.llvm.sha256,
-    CLANG.llvmSource.sha256,
-    CLANG.zstd.sha256,
-    ...[...CLANG.sysroot.cells, ...CLANG.sysroot.build].map(
-      (pinned) => pinned.sha256,
-    ),
-    ...Object.values(CLANG.licenses).map((pinned) => pinned.sha256),
-    // The build recipe is this file.
-    sha256File(fileURLToPath(import.meta.url)),
-    ...walkFiles(join(context.repoRoot, NATIVE_DIR)).map(sha256File),
-  ].join(":");
+  const root = join(context.workDir, CLANG_TOOLCHAIN.directory);
+  const identity = CLANG_TOOLCHAIN.identity(context.repoRoot);
   if (!isProvisioned(context, root, identity)) {
     const llvm = await provisionLlvm(context);
     const sysroot = await provisionSysroot(context);

@@ -11,6 +11,7 @@
     "build": "bun --env-file=otel.env tooling/src/cli.ts build",
     "pin": "bun --env-file=otel.env tooling/src/cli.ts pin",
     "provision": "bun --env-file=otel.env tooling/src/cli.ts provision",
+    "toolchains": "bun --env-file=otel.env tooling/src/cli.ts toolchains",
     "payload": "bun --env-file=otel.env tooling/src/cli.ts payload",
     "image": "bun --env-file=otel.env tooling/src/cli.ts image",
     "test": "bun --env-file=otel.env tooling/src/cli.ts test tests/unit tests/integration tests/tooling",

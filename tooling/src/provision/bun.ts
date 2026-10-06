@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { BUN } from "../platforms.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { runOrThrow } from "../shared/process.ts";
@@ -10,17 +11,27 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 
 // The Bun runtime runs its sessions in a Bun REPL. The payload carries the
 // pinned Bun for this platform, not whatever Bun built the payload.
 
+export const BUN_TOOLCHAIN: Toolchain = {
+  name: "bun",
+  directory: "bun",
+  identity: () => BUN.sha256,
+  pins: BUN,
+  module: fileURLToPath(import.meta.url),
+};
+
 export async function provisionBun(
   context: ProvisionContext,
 ): Promise<RuntimePayload> {
-  const directory = join(context.workDir, "bun");
+  const directory = join(context.workDir, BUN_TOOLCHAIN.directory);
   const executable = join(directory, "bun");
-  if (!isProvisioned(context, directory, BUN.sha256)) {
+  const identity = BUN_TOOLCHAIN.identity(context.repoRoot);
+  if (!isProvisioned(context, directory, identity)) {
     resetDirectory(directory);
     mkdirSync(directory, { recursive: true });
     const archive = await fetchPinned(BUN, context.downloadsDir, "Bun");
@@ -28,7 +39,7 @@ export async function provisionBun(
     if (!existsSync(executable))
       throw new Error(`Bun archive did not contain ${executable}`);
     chmodSync(executable, 0o755);
-    markProvisioned(directory, BUN.sha256);
+    markProvisioned(directory, identity);
   }
   const version = (await runOrThrow([executable, "--version"])).stdout.trim();
   if (version !== BUN.version)

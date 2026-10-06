@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PYTHON } from "../platforms.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { runOrThrow } from "../shared/process.ts";
@@ -9,18 +10,28 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 
 // A relocatable CPython from python-build-standalone. The archive unpacks to
 // `python/`, which is the payload root as is.
 
+export const PYTHON_TOOLCHAIN: Toolchain = {
+  name: "python",
+  directory: "python",
+  identity: () => PYTHON.sha256,
+  pins: PYTHON,
+  module: fileURLToPath(import.meta.url),
+};
+
 export async function provisionPython(
   context: ProvisionContext,
 ): Promise<RuntimePayload> {
-  const directory = join(context.workDir, "python");
+  const directory = join(context.workDir, PYTHON_TOOLCHAIN.directory);
   const root = join(directory, "python");
   const executable = join(root, "bin", "python3");
-  if (!isProvisioned(context, directory, PYTHON.sha256)) {
+  const identity = PYTHON_TOOLCHAIN.identity(context.repoRoot);
+  if (!isProvisioned(context, directory, identity)) {
     resetDirectory(directory);
     mkdirSync(directory, { recursive: true });
     const archive = await fetchPinned(
@@ -32,7 +43,7 @@ export async function provisionPython(
     if (!existsSync(executable)) {
       throw new Error(`portable Python archive did not contain ${executable}`);
     }
-    markProvisioned(directory, PYTHON.sha256);
+    markProvisioned(directory, identity);
   }
   const version = (await runOrThrow([executable, "--version"])).stdout.trim();
   if (version !== `Python ${PYTHON.version}`) {

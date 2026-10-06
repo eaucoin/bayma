@@ -12,6 +12,7 @@ import {
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CARGO_SEED_ID } from "@bayma/runtime-rust";
 import { RUST, ZIG } from "../platforms.ts";
 
@@ -31,6 +32,7 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 import { provisionZig, zigTarget } from "./zig.ts";
 
@@ -348,31 +350,39 @@ function verifyCargoSeed(cargoHome: string, lockPaths: string[]): void {
   }
 }
 
+const SUPPORT_DIR = join(NATIVE_DIR, "bayma-rust-support");
+
+/** The payload; the toolchain and linker it is built with stay behind. */
+export const RUST_TOOLCHAIN: Toolchain = {
+  name: "rust",
+  directory: join("rust", "payload"),
+  identity: (repoRoot) =>
+    [
+      TOOLCHAIN_IDENTITY,
+      ZIG.sha256,
+      RUST.supportSeedLockSha256,
+      sha256File(join(repoRoot, TOOLBELT_LOCK)),
+      sha256File(join(repoRoot, NATIVE_DIR, "Cargo.lock")),
+      ...walkFiles(join(repoRoot, NATIVE_DIR, "bayma-rust-host", "src")).map(
+        sha256File,
+      ),
+      // The host is built from these EVcxR sources too.
+      ...walkFiles(join(repoRoot, NATIVE_DIR, "evcxr")).map(sha256File),
+      ...walkFiles(join(repoRoot, SUPPORT_DIR)).map(sha256File),
+    ].join(":"),
+  pins: { RUST, ZIG, target: zigTarget() },
+  module: fileURLToPath(import.meta.url),
+};
+
 export async function provisionRust(
   context: ProvisionContext,
 ): Promise<RuntimePayload> {
-  const toolchain = await provisionToolchain(context);
-  const linker = await provisionLinker(context);
-  const root = join(context.workDir, "rust", "payload");
-  const supportSource = join(
-    context.repoRoot,
-    NATIVE_DIR,
-    "bayma-rust-support",
-  );
-  const identity = [
-    TOOLCHAIN_IDENTITY,
-    ZIG.sha256,
-    RUST.supportSeedLockSha256,
-    sha256File(join(context.repoRoot, TOOLBELT_LOCK)),
-    sha256File(join(context.repoRoot, NATIVE_DIR, "Cargo.lock")),
-    ...walkFiles(
-      join(context.repoRoot, NATIVE_DIR, "bayma-rust-host", "src"),
-    ).map(sha256File),
-    // The host is built from these EVcxR sources too.
-    ...walkFiles(join(context.repoRoot, NATIVE_DIR, "evcxr")).map(sha256File),
-    ...walkFiles(supportSource).map(sha256File),
-  ].join(":");
+  const root = join(context.workDir, RUST_TOOLCHAIN.directory);
+  const supportSource = join(context.repoRoot, SUPPORT_DIR);
+  const identity = RUST_TOOLCHAIN.identity(context.repoRoot);
   if (!isProvisioned(context, root, identity)) {
+    const toolchain = await provisionToolchain(context);
+    const linker = await provisionLinker(context);
     resetDirectory(root);
     ensureDir(join(root, "host"));
     copyTree(toolchain, join(root, "toolchain"));

@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { GO, ZIG } from "../platforms.ts";
 import { fetchPinned } from "../shared/download.ts";
 import { copyTree, walkFiles } from "../shared/files.ts";
@@ -11,6 +12,7 @@ import {
   resetDirectory,
   type ProvisionContext,
   type RuntimePayload,
+  type Toolchain,
 } from "./payload.ts";
 import { provisionZig, zigTarget } from "./zig.ts";
 
@@ -21,16 +23,25 @@ import { provisionZig, zigTarget } from "./zig.ts";
 const NATIVE_DIR = join("packages", "runtime-go", "native");
 const HOST = "bayma-go-host";
 
+export const GO_TOOLCHAIN: Toolchain = {
+  name: "go",
+  directory: join("go", "payload"),
+  identity: (repoRoot) =>
+    [
+      GO.sha256,
+      ZIG.sha256,
+      ...walkFiles(join(repoRoot, NATIVE_DIR)).map(sha256File),
+    ].join(":"),
+  pins: { GO, ZIG, target: zigTarget() },
+  module: fileURLToPath(import.meta.url),
+};
+
 export async function provisionGo(
   context: ProvisionContext,
 ): Promise<RuntimePayload> {
-  const root = join(context.workDir, "go", "payload");
+  const root = join(context.workDir, GO_TOOLCHAIN.directory);
   const native = join(context.repoRoot, NATIVE_DIR);
-  const identity = [
-    GO.sha256,
-    ZIG.sha256,
-    ...walkFiles(native).map(sha256File),
-  ].join(":");
+  const identity = GO_TOOLCHAIN.identity(context.repoRoot);
   if (!isProvisioned(context, root, identity)) {
     resetDirectory(root);
     mkdirSync(join(root, "bin"), { recursive: true });
