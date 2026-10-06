@@ -14,9 +14,9 @@ import { runOrThrow } from "../../tooling/src/shared/process.ts";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
 
-test("the bayma command is published as `bayma`, at the server's version, with no dependencies", () => {
+test("the bayma command is published as `bayma-repl`, at the server's version, with no dependencies", () => {
   const manifest = cliManifest(repoRoot);
-  expect(manifest.name).toBe("bayma");
+  expect(manifest.name).toBe("bayma-repl");
   expect(manifest.private).toBeUndefined();
   expect(manifest.bin).toEqual({ bayma: "dist/bayma.js" });
   expect(join(CLI_PACKAGE_DIR, "dist", "bayma.js")).toBe(CLI_BUNDLE);

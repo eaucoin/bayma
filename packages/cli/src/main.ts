@@ -8,11 +8,11 @@ import { setUp } from "./setup.ts";
 import { showStatus } from "./status.ts";
 import { uninstall } from "./uninstall.ts";
 
-// The `bayma` command of the npm package: it sets bayma up on this machine,
-// and launches bayma's servers and doctor in bayma's image.
+// The `bayma` command of the npm package bayma-repl: it sets bayma up on this
+// machine, and launches bayma's servers and doctor in bayma's image.
 
 function usage(): string {
-  return `Usage: npx bayma <command>
+  return `Usage: npx bayma-repl <command>
 
 bayma is a durable engine for REPL sessions, served to agents by its MCP
 servers. This command sets it up on Linux (x64) with Docker, and runs it in
@@ -25,7 +25,7 @@ Commands:
       and Codex, as an MCP server they launch over stdio
   upgrade
       set up this version of bayma in place of the one set up now; run it
-      as npx bayma@latest upgrade
+      as npx bayma-repl@latest upgrade
   status
       show what is set up of bayma here, and what of it would not work
   mcp-stdio [OPTIONS]
@@ -74,7 +74,7 @@ async function launch(
 function expectArgs(command: string, args: string[], allowed: string[]): void {
   const unknown = args.find((arg) => !allowed.includes(arg));
   if (unknown !== undefined)
-    throw new Error(`${command} takes no ${unknown}; see npx bayma help`);
+    throw new Error(`${command} takes no ${unknown}; see npx bayma-repl help`);
 }
 
 /** This process's context: who runs it, from where, with what. */

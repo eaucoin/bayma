@@ -9,8 +9,8 @@ import { readJson } from "./shared/files.ts";
 import { runOrThrow } from "./shared/process.ts";
 import { recordArtifact } from "./telemetry/index.ts";
 
-// The bayma command, packages/cli, published to npm as `bayma`: one file run
-// by whatever Node 22 or later npx runs, with nothing installed beside it.
+// The bayma command, packages/cli, published to npm as `bayma-repl`: one file
+// run by whatever Node 22 or later npx runs, with nothing installed beside it.
 // It runs bayma's image of its own version, so its version is the server's.
 
 export const CLI_PACKAGE_DIR = "packages/cli";

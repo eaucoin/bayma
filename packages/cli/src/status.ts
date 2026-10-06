@@ -111,7 +111,7 @@ export function renderStatus(status: Status): string {
     lines.push(
       problem === undefined
         ? `${client}: ${command}`
-        : `${client}: ${command}, which is broken: ${problem}; npx bayma init registers bayma again`,
+        : `${client}: ${command}, which is broken: ${problem}; npx bayma-repl init registers bayma again`,
     );
   }
   return lines.join("\n");

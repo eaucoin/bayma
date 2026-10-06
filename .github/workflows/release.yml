@@ -2,7 +2,7 @@ name: release
 
 # On demand only, from the version tag being released: publishes bayma's
 # image to GitHub's container registry, attested, and the bayma command,
-# pinned to the image by digest, to npm as the package `bayma`, with
+# pinned to the image by digest, to npm as the package `bayma-repl`, with
 # provenance. npm takes the token the NPM_TOKEN secret holds.
 on:
   workflow_dispatch:
@@ -86,8 +86,8 @@ jobs:
       # Tolerates a re-run over a version npm has already.
       - working-directory: packages/cli
         run: |
-          if npm view "bayma@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
-            echo "bayma ${GITHUB_REF_NAME#v} is on npm already"
+          if npm view "bayma-repl@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+            echo "bayma-repl ${GITHUB_REF_NAME#v} is on npm already"
           else
             npm publish --provenance --access public
           fi
@@ -97,6 +97,6 @@ jobs:
       - run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --title "bayma ${GITHUB_REF_NAME#v}" --generate-notes \
-              --notes "Set it up, on Linux (x64) with Docker and Node 22 or later: \`npx bayma@${GITHUB_REF_NAME#v} init\`"
+              --notes "Set it up, on Linux (x64) with Docker and Node 22 or later: \`npx bayma-repl@${GITHUB_REF_NAME#v} init\`"
         env:
           GH_TOKEN: ${{ github.token }}

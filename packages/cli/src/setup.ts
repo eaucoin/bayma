@@ -169,7 +169,7 @@ export async function setUp(
   if (doctor !== 0)
     say(
       context,
-      `warning: bayma doctor failed with status ${doctor}, so a runtime its report above names as failing does not work here; bayma is registered all the same, for the runtimes that do. npx bayma doctor checks them again.`,
+      `warning: bayma doctor failed with status ${doctor}, so a runtime its report above names as failing does not work here; bayma is registered all the same, for the runtimes that do. npx bayma-repl doctor checks them again.`,
     );
   return failed ? 1 : 0;
 }

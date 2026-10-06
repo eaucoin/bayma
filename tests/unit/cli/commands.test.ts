@@ -318,7 +318,7 @@ test("status reads each client's registration, and says which would not start ba
       },
     ]);
     expect(renderStatus(status)).toContain(
-      `Codex: /gone/node ${cli} mcp-stdio, which is broken: /gone/node is not there to run; npx bayma init registers bayma again`,
+      `Codex: /gone/node ${cli} mcp-stdio, which is broken: /gone/node is not there to run; npx bayma-repl init registers bayma again`,
     );
   });
 });

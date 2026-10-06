@@ -65,7 +65,7 @@ async function expectNoContainers(home: string): Promise<void> {
 }
 
 test.serial(
-  "npx bayma sets bayma up, launches its stdio server, checks it, and takes it off again",
+  "npx bayma-repl sets bayma up, launches its stdio server, checks it, and takes it off again",
   async () => {
     const home = mkdtempSync(join(tmpdir(), "bayma-cli-"));
     try {

@@ -35,7 +35,7 @@ export function baymaImage(
 /** The image is here; why not, with what to do, when it is not. */
 export function missingImage(image: BaymaImage): string {
   return image.pinned
-    ? `bayma's image ${image.reference} is not here: run npx bayma@${VERSION} init`
+    ? `bayma's image ${image.reference} is not here: run npx bayma-repl@${VERSION} init`
     : `${IMAGE_OVERRIDE} names ${image.reference}, which Docker does not have`;
 }
 

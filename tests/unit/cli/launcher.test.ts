@@ -223,7 +223,7 @@ test("a launcher whose image is missing says to run init, and never pulls", asyn
       stdio().streams,
     ),
   ).rejects.toThrow(
-    "bayma's image ghcr.io/eaucoin/bayma@sha256:1234 is not here: run npx bayma@",
+    "bayma's image ghcr.io/eaucoin/bayma@sha256:1234 is not here: run npx bayma-repl@",
   );
   expect(fake.calls("POST", "/images/create")).toEqual([]);
 });

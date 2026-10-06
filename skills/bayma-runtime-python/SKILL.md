@@ -96,7 +96,7 @@ Prefer direct Python APIs over shelling out when an equivalent API exists. The s
 
 # Python Toolbelt
 
-bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Python sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where `npx bayma init` and `npx bayma upgrade` install it from bayma's image; a server that finds it missing or out of date installs it in the background, so it can then take a few minutes to appear there. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Python sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where `npx bayma-repl init` and `npx bayma-repl upgrade` install it from bayma's image; a server that finds it missing or out of date installs it in the background, so it can then take a few minutes to appear there. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, type information, and documentation behind the Python `toolbelt` namespace are under:
 
