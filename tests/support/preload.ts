@@ -1,7 +1,8 @@
 // Registered in bunfig.toml: every test runs the runtimes from the payload
 // `bun run payload` assembled, which is what bayma's image carries.
 import { afterAll } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -40,5 +41,8 @@ if (process.env.BAYMA_PAYLOAD_DIR)
 // A preload's afterAll runs once, after every test file.
 afterAll(async () => {
   await stopTelemetry();
-  rmSync(dataHome, { recursive: true, force: true });
+  // The installed toolbelt is tens of thousands of files, which take seconds
+  // to remove, and on a busy disk longer than a hook may take; a process of
+  // their own removes them, which outlives the test runner if it must.
+  spawn("rm", ["-rf", dataHome], { detached: true, stdio: "ignore" }).unref();
 });
