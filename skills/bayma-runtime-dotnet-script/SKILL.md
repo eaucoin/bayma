@@ -95,7 +95,7 @@ Prefer direct .NET APIs over shelling out when an equivalent API exists. Keep se
 
 # C# Toolbelt
 
-bayma bundles a toolbelt of pinned Roslyn assemblies, referenced by path as ordinary assemblies with no namespace of the toolbelt's own, that C# sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image as it starts. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned Roslyn assemblies, referenced by path as ordinary assemblies with no namespace of the toolbelt's own, that C# sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image, in the background as a server first starts on a new version, so it can take a few minutes to appear there. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The assemblies and XML documentation behind C# source and type inspection are under:
 

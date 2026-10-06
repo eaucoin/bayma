@@ -3,14 +3,20 @@ import { readFileSync } from "node:fs";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
-import { preparePayload } from "./runtime/payload.ts";
+import { requirePayloadDir } from "./runtime/payload.ts";
+import {
+  installToolbelt,
+  startToolbeltInstall,
+  toolbeltPath,
+  type ToolbeltInstall,
+} from "./runtime/toolbelt.ts";
 import { runDoctor } from "./doctor.ts";
 import { serveMcpHttp } from "./mcp/http.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
 import { defaultStateDir } from "./paths.ts";
-import { failureDetail } from "./errors.ts";
+import { failureDetail, failureMessage } from "./errors.ts";
 import { startTelemetry, stopTelemetry } from "./telemetry/index.ts";
-import { log, SeverityNumber } from "./telemetry/record.ts";
+import { log, report, SeverityNumber } from "./telemetry/record.ts";
 import { BAYMA_VERSION } from "./version.ts";
 import type { DurabilityMode } from "./session/model.ts";
 
@@ -106,6 +112,11 @@ Commands:
       report which runtimes this machine can run and prove each one by
       executing code in it; a named runtime must be available; and report
       whether sessions can be snapshotted here, and if not, why
+  install-toolbelt
+      install the toolbelt bundled with bayma where the runtime skills name
+      it, unless the toolbelt there is already this version's; a server
+      installs it in the background as it starts, and doctor before it
+      reports
   help
       show this help
 
@@ -129,6 +140,31 @@ async function startCommandTelemetry(): Promise<void> {
     "service.version": BAYMA_VERSION,
     "service.instance.id": randomUUID(),
   });
+}
+
+/** Tells the operator how installing the toolbelt goes, on stderr. */
+function reportInstall(message: string): void {
+  report(message, {}, SeverityNumber.INFO);
+}
+
+/**
+ * Serve from the payload, with its environment, while its toolbelt installs
+ * in the background: a server answers its clients at once, however long the
+ * copy takes, and stops the install as it shuts down, or as it fails to
+ * start.
+ */
+async function serveInstallingToolbelt(
+  serve: (toolbelt: ToolbeltInstall) => Promise<never>,
+): Promise<never> {
+  const payload = requirePayloadDir();
+  const toolbelt = startToolbeltInstall(payload, process.env, reportInstall);
+  applyPayloadEnvironment(payload);
+  try {
+    return await serve(toolbelt);
+  } catch (error) {
+    await toolbelt.stop();
+    throw error;
+  }
 }
 
 export async function runCli(
@@ -155,11 +191,10 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
       return;
     }
     case "mcp-stdio": {
+      const config = serverConfig(parseCliOptions(args, SERVER_OPTIONS));
       await startCommandTelemetry();
-      applyPayloadEnvironment(preparePayload());
-      await serveMcpStdio(
-        adapters,
-        serverConfig(parseCliOptions(args, SERVER_OPTIONS)),
+      await serveInstallingToolbelt((toolbelt) =>
+        serveMcpStdio(adapters, { ...config, toolbelt }),
       );
       return;
     }
@@ -174,27 +209,29 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
       ]);
       const tokenFile = parsed.get("--token-file");
       await startCommandTelemetry();
-      applyPayloadEnvironment(preparePayload());
-      await serveMcpHttp(adapters, {
-        host: option(parsed, "--host", "127.0.0.1"),
-        port: Number(option(parsed, "--port", "7290")),
-        path: option(parsed, "--path", "/mcp"),
-        // A client that exits without ending its MCP session, as Claude Code
-        // does, leaves the session behind; this closes it. Its leases are
-        // open to takeover well before, so the timeout only bounds how long
-        // an abandoned session is kept, and five minutes spares a client
-        // that holds no stream open its MCP session across ordinary pauses.
-        clientIdleTimeoutMs: Number(
-          option(parsed, "--client-idle-timeout-ms", "300000"),
-        ),
-        // The token is read from a file so it stays out of the process's
-        // arguments and environment, which other processes can read.
-        bearerToken:
-          tokenFile === undefined
-            ? undefined
-            : readFileSync(tokenFile, "utf8").trimEnd(),
-        ...serverConfig(parsed),
-      });
+      await serveInstallingToolbelt((toolbelt) =>
+        serveMcpHttp(adapters, {
+          host: option(parsed, "--host", "127.0.0.1"),
+          port: Number(option(parsed, "--port", "7290")),
+          path: option(parsed, "--path", "/mcp"),
+          // A client that exits without ending its MCP session, as Claude Code
+          // does, leaves the session behind; this closes it. Its leases are
+          // open to takeover well before, so the timeout only bounds how long
+          // an abandoned session is kept, and five minutes spares a client
+          // that holds no stream open its MCP session across ordinary pauses.
+          clientIdleTimeoutMs: Number(
+            option(parsed, "--client-idle-timeout-ms", "300000"),
+          ),
+          // The token is read from a file so it stays out of the process's
+          // arguments and environment, which other processes can read.
+          bearerToken:
+            tokenFile === undefined
+              ? undefined
+              : readFileSync(tokenFile, "utf8").trimEnd(),
+          ...serverConfig(parsed),
+          toolbelt,
+        }),
+      );
       return;
     }
     case "doctor": {
@@ -218,12 +255,33 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
       if (selected.length === 0)
         throw new Error(`runtime is unavailable: ${requested}`);
       await startCommandTelemetry();
-      applyPayloadEnvironment(preparePayload());
+      const payload = requirePayloadDir();
+      // Unlike a server, doctor finishes with the toolbelt installed, so an
+      // image built by running it carries the toolbelt in place.
+      await installToolbelt(payload, process.env, reportInstall);
+      applyPayloadEnvironment(payload);
       await runDoctor(selected, {
         cwd: option(parsed, "--cwd", process.cwd()),
         stateDir: parsed.get("--state-dir"),
         outputFormat,
       });
+      return;
+    }
+    case "install-toolbelt": {
+      parseCliOptions(args, []);
+      await startCommandTelemetry();
+      const payload = requirePayloadDir();
+      let installed: boolean;
+      try {
+        installed = await installToolbelt(payload, process.env, reportInstall);
+      } catch (error) {
+        throw new Error(
+          `installing the toolbelt at ${toolbeltPath()} failed: ${failureMessage(error)}`,
+          { cause: error },
+        );
+      }
+      if (!installed)
+        reportInstall(`bayma: the toolbelt at ${toolbeltPath()} is current`);
       return;
     }
     case "help":

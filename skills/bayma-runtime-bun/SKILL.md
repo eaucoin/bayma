@@ -94,7 +94,7 @@ If imports fail, the session may simply be pointed at the wrong package tree; th
 
 # Bun Toolbelt
 
-bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Bun sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image as it starts. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned packages, gathered into one `toolbelt` namespace, that Bun sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image, in the background as a server first starts on a new version, so it can take a few minutes to appear there. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, types, and documentation behind the Bun `toolbelt` namespace are under:
 

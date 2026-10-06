@@ -10,6 +10,7 @@ import {
 import { isInitializeRequest } from "@modelcontextprotocol/server";
 import { aggregateFailure, failureDetail } from "../errors.ts";
 import type { RuntimeAdapter } from "../runtime/adapter.ts";
+import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
 import { createEngine } from "../engine.ts";
 import type { SessionManagerOptions } from "../session/session-manager.ts";
 import { createMcpApplication, type McpApplication } from "./application.ts";
@@ -38,6 +39,8 @@ export interface McpHttpConfig extends Pick<
   clientIdleTimeoutMs: number;
   /** When given, every request must carry it as `Authorization: Bearer`. */
   bearerToken?: string;
+  /** The toolbelt's install, which the server stops as it shuts down. */
+  toolbelt?: ToolbeltInstall;
 }
 
 interface HttpClientSession {
@@ -490,6 +493,7 @@ export async function serveMcpHttp(
     if (shuttingDown) return;
     shuttingDown = true;
     shutdownAndExit(async () => {
+      const toolbeltStopped = config.toolbelt?.stop();
       const serverClosed = new Promise<void>((resolveClose, rejectClose) => {
         server.close((error) => {
           if (error) {
@@ -514,6 +518,7 @@ export async function serveMcpHttp(
       } catch (error) {
         failures.push(error);
       }
+      await toolbeltStopped;
       if (failures.length > 0) {
         throw aggregateFailure("HTTP MCP shutdown failed", failures);
       }

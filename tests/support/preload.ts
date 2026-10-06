@@ -35,7 +35,7 @@ if (existsSync(join(payloadDir, PAYLOAD_MANIFEST))) {
 const dataHome = mkdtempSync(join(tmpdir(), "bayma-data-"));
 process.env.XDG_DATA_HOME = dataHome;
 if (process.env.BAYMA_PAYLOAD_DIR)
-  installToolbelt(process.env.BAYMA_PAYLOAD_DIR);
+  await installToolbelt(process.env.BAYMA_PAYLOAD_DIR);
 
 // A preload's afterAll runs once, after every test file.
 afterAll(async () => {

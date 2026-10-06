@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PathEnvironment } from "../paths.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
-import { installToolbelt } from "./toolbelt.ts";
 
 /**
  * bayma runs every runtime from its payload: the pinned toolchains and the
@@ -20,21 +19,13 @@ export function payloadDir(env: PathEnvironment = process.env): string {
   return directory;
 }
 
-/**
- * The payload directory, with its toolbelt installed where the runtime skills
- * name it.
- */
-export function preparePayload(
-  env: PathEnvironment = process.env,
-  report: (message: string) => void = (message) =>
-    process.stderr.write(message + "\n"),
-): string {
+/** The payload directory, which must hold a payload. */
+export function requirePayloadDir(env: PathEnvironment = process.env): string {
   const directory = payloadDir(env);
   if (!existsSync(join(directory, PAYLOAD_MANIFEST))) {
     throw new Error(
       `BAYMA_PAYLOAD_DIR holds no ${PAYLOAD_MANIFEST}: ${directory}`,
     );
   }
-  installToolbelt(directory, env, report);
   return directory;
 }

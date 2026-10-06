@@ -1,136 +1,18 @@
 import { expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import {
   hostPlatformId,
   payloadDir,
-  preparePayload,
   readPayloadManifest,
+  requirePayloadDir,
   resolvePayloadEnvironment,
   RUNTIME_IDS,
   TOOLBELT_DIR,
-  TOOLBELT_VERSION_FILE,
   toolbeltPath,
-  type PayloadManifest,
 } from "@bayma/core";
+import { writePayload } from "../../../support/payload.ts";
 import { withTempDir } from "../../../support/temp.ts";
-
-/** A payload on disk whose files exist, so path resolution can be exercised. */
-function writePayload(
-  root: string,
-  edit: (manifest: PayloadManifest) => void = () => undefined,
-): string {
-  const manifest: PayloadManifest = {
-    schemaVersion: 1,
-    version: "9.9.9",
-    platform: hostPlatformId(),
-    runtimes: {
-      bun: {
-        root: "bun",
-        env: {},
-        envPaths: { BAYMA_BUN_BIN: "bun" },
-        pathEnvPrepend: { PATH: ["."] },
-        pins: { version: "1.4.2" },
-      },
-      python: {
-        root: "python",
-        env: {},
-        envPaths: { BAYMA_PYTHON_BIN: "bin/python3" },
-        pathEnvPrepend: { PATH: ["bin"] },
-        pins: {},
-      },
-      "dotnet-script": {
-        root: "dotnet-script",
-        env: {},
-        envPaths: {
-          DOTNET_ROOT: ".",
-          BAYMA_DOTNET_ROOT: ".",
-          BAYMA_DOTNET_SCRIPT_BIN: "tools/dotnet-script",
-          BAYMA_DOTNET_SCRIPT_LIB_DIR: "lib",
-        },
-        pathEnvPrepend: { PATH: ["."] },
-        pins: {},
-      },
-      rust: {
-        root: "rust",
-        env: { BAYMA_RUST_VERSION: "1.97.1" },
-        envPaths: {
-          BAYMA_RUST_HOST_BIN: "host/bayma-rust-host",
-          BAYMA_RUSTC_BIN: "toolchain/bin/rustc",
-          BAYMA_CARGO_BIN: "toolchain/bin/cargo",
-          BAYMA_RUST_SUPPORT_DIR: "support",
-          BAYMA_RUST_CARGO_SEED_DIR: "cargo-seed",
-        },
-        pathEnvPrepend: { PATH: ["toolchain/bin"] },
-        pins: {},
-      },
-      // C and C++ share one host, in one payload directory.
-      c: {
-        root: "clang",
-        env: {},
-        envPaths: { BAYMA_C_HOST_BIN: "bin/bayma-cpp-host" },
-        pathEnvPrepend: { PATH: ["bin"] },
-        pins: {},
-      },
-      cpp: {
-        root: "clang",
-        env: {},
-        envPaths: { BAYMA_CPP_HOST_BIN: "bin/bayma-cpp-host" },
-        pathEnvPrepend: { PATH: ["bin"] },
-        pins: {},
-      },
-      lean: {
-        root: "lean",
-        env: { BAYMA_LEAN_VERSION: "4.34.0" },
-        envPaths: {
-          BAYMA_LEAN_HOST_BIN: "bin/bayma-lean-host",
-          BAYMA_LAKE_BIN: "bin/lake",
-        },
-        pathEnvPrepend: { PATH: ["bin"] },
-        pins: {},
-      },
-      go: {
-        root: "go",
-        env: {},
-        envPaths: {
-          BAYMA_GO_HOST_BIN: "bin/bayma-go-host",
-          BAYMA_GO_BIN: "go/bin/go",
-          BAYMA_GO_CC: "bin/cc",
-        },
-        pathEnvPrepend: { PATH: ["go/bin"] },
-        pins: {},
-      },
-    },
-  };
-  edit(manifest);
-  for (const runtime of Object.values(manifest.runtimes)) {
-    for (const entries of Object.values(runtime.pathEnvPrepend)) {
-      for (const entry of entries)
-        mkdirSync(join(root, runtime.root, entry), { recursive: true });
-    }
-    for (const relative of Object.values(runtime.envPaths)) {
-      const path = join(root, runtime.root, relative);
-      // A directory-valued path (a root) is made as one; a file is touched.
-      if (relative === "." || relative.endsWith("/")) {
-        mkdirSync(path, { recursive: true });
-        continue;
-      }
-      mkdirSync(join(path, ".."), { recursive: true });
-      if (!existsSync(path)) writeFileSync(path, "");
-    }
-  }
-  writeFileSync(
-    join(root, "payload.json"),
-    JSON.stringify(manifest, null, 2) + "\n",
-  );
-  return root;
-}
 
 test("the manifest describes exactly the runtimes bayma hosts", async () => {
   await withTempDir(async (dir) => {
@@ -264,7 +146,7 @@ test("the payload is the one BAYMA_PAYLOAD_DIR names, and there is none without 
   );
 });
 
-test("preparing the payload installs its toolbelt", async () => {
+test("the payload BAYMA_PAYLOAD_DIR names is required to hold one", async () => {
   await withTempDir((dir) => {
     const root = writePayload(join(dir, "payload"));
     mkdirSync(join(root, TOOLBELT_DIR));
@@ -272,29 +154,12 @@ test("preparing the payload installs its toolbelt", async () => {
       BAYMA_PAYLOAD_DIR: root,
       XDG_DATA_HOME: join(dir, "data"),
     };
-    const reports: string[] = [];
 
-    expect(preparePayload(env, (message) => reports.push(message))).toBe(root);
-
-    expect(
-      readFileSync(join(toolbeltPath(env), TOOLBELT_VERSION_FILE), "utf8"),
-    ).toBe("9.9.9\n");
-    expect(reports).toEqual([
-      `bayma: installed the 9.9.9 toolbelt at ${toolbeltPath(env)}`,
-    ]);
-  });
-});
-
-test("a BAYMA_PAYLOAD_DIR that holds no payload is refused", async () => {
-  await withTempDir((dir) => {
-    const env = {
-      BAYMA_PAYLOAD_DIR: join(dir, "empty"),
-      XDG_DATA_HOME: join(dir, "data"),
-    };
-
-    expect(() => preparePayload(env)).toThrow(
-      `BAYMA_PAYLOAD_DIR holds no payload.json: ${join(dir, "empty")}`,
-    );
+    expect(requirePayloadDir(env)).toBe(root);
+    // The toolbelt is installed by whoever needs it, in the background or not.
     expect(existsSync(toolbeltPath(env))).toBe(false);
+    expect(() =>
+      requirePayloadDir({ BAYMA_PAYLOAD_DIR: join(dir, "empty") }),
+    ).toThrow(`BAYMA_PAYLOAD_DIR holds no payload.json: ${join(dir, "empty")}`);
   });
 });

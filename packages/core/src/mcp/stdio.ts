@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { aggregateFailure, failureDetail } from "../errors.ts";
 import type { RuntimeAdapter } from "../runtime/adapter.ts";
+import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
 import { createEngine } from "../engine.ts";
 import type { SessionManagerOptions } from "../session/session-manager.ts";
 import { createMcpApplication } from "./application.ts";
@@ -21,6 +22,8 @@ export interface McpStdioConfig extends Pick<
   snapshotTokenLimit: number;
   defaultCols: number;
   defaultRows: number;
+  /** The toolbelt's install, which the server stops as it shuts down. */
+  toolbelt?: ToolbeltInstall;
 }
 
 const STDIO_ACTOR_ID = "actor_mcp_stdio";
@@ -69,11 +72,18 @@ export async function serveMcpStdio(
   let exiting = false;
   // The server ends when its client closes stdio, or when it is told to stop:
   // `docker stop` sends SIGTERM. Either way it shuts down once, which is when
-  // it snapshots its sessions.
+  // it snapshots its sessions and stops installing the toolbelt.
   const exit = () => {
     if (exiting) return;
     exiting = true;
-    shutdownAndExit(engine.shutdown);
+    shutdownAndExit(async () => {
+      const toolbeltStopped = config.toolbelt?.stop();
+      try {
+        await engine.shutdown();
+      } finally {
+        await toolbeltStopped;
+      }
+    });
   };
   application.server.server.onclose = () => {
     closeObserved = true;
