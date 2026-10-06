@@ -71,27 +71,28 @@ function otherVersions(paths: PathEnvironment): string[] {
   return readdirSync(root).filter((version) => version !== VERSION);
 }
 
-/** Runs one of the image's commands to its end, as the launcher would; throws unless it succeeds. */
-async function runInImage(
+/** Runs one of the image's commands to its end, as the launcher would: its status. */
+function runInImage(
   context: Context,
   engine: DockerEngine,
   image: BaymaImage,
   command: "install-toolbelt" | "doctor",
   output: Context["stdio"]["stdout"],
-): Promise<void> {
-  const status = await runContainer(
+): Promise<number> {
+  return runContainer(
     engine,
     image,
     containerSpec(image.reference, command, [], context),
     { ...context.stdio, stdout: output },
   );
-  if (status !== 0)
-    throw new Error(
-      `bayma ${command} failed with status ${status}, as it says above; bayma is not registered`,
-    );
 }
 
-/** `init`, or `upgrade` when `upgrade`: sets bayma up at this version. */
+/**
+ * `init`, or `upgrade` when `upgrade`: sets bayma up at this version. It
+ * fails when bayma cannot run here at all; a runtime the doctor finds broken
+ * leaves the others to use, so bayma is registered all the same, with a
+ * warning at the end.
+ */
 export async function setUp(
   context: Context,
   upgrade: boolean,
@@ -119,15 +120,25 @@ export async function setUp(
   say(context, `image ${image.reference}: ${pulled}`);
 
   say(context, "installing the toolbelt bundled with bayma");
-  await runInImage(
+  const installed = await runInImage(
     context,
     engine,
     image,
     "install-toolbelt",
     context.stdio.stderr,
   );
+  if (installed !== 0)
+    throw new Error(
+      `bayma install-toolbelt failed with status ${installed}, as it says above; bayma is not registered`,
+    );
   say(context, "checking each runtime with bayma doctor");
-  await runInImage(context, engine, image, "doctor", context.stdio.stdout);
+  const doctor = await runInImage(
+    context,
+    engine,
+    image,
+    "doctor",
+    context.stdio.stdout,
+  );
 
   const cli = installCli(paths, context.bundle);
   say(context, `installed bayma ${VERSION} at ${cli}`);
@@ -155,5 +166,10 @@ export async function setUp(
     }
   }
   say(context, `For any other MCP client:\n${mcpServersJson(launch)}`);
+  if (doctor !== 0)
+    say(
+      context,
+      `warning: bayma doctor failed with status ${doctor}, so a runtime its report above names as failing does not work here; bayma is registered all the same, for the runtimes that do. npx bayma doctor checks them again.`,
+    );
   return failed ? 1 : 0;
 }

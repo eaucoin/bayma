@@ -35,8 +35,8 @@ export interface FakeEngineOptions {
   images?: Record<string, ImageSummary>;
   /** The lines a pull answers with, after its status. */
   pull?: { status: number; lines: string[] };
-  /** The status a container exits with when its stdin ends. */
-  exitStatus?: number;
+  /** The status a container exits with when its stdin ends, or, without stdin, once started; by its command, when a function. */
+  exitStatus?: number | ((command: string) => number);
 }
 
 const SIGNAL_NUMBERS: Record<string, number> = {
@@ -219,7 +219,7 @@ export class FakeDockerEngine {
         this.attached.get(found.id)?.write(frame(2, "started\n"));
         // Without stdin, it has nothing to wait for.
         if (!found.spec.OpenStdin)
-          this.exits.get(found.id)?.(this.options.exitStatus ?? 0);
+          this.exits.get(found.id)?.(this.exitStatus(found));
         return;
       case "kill": {
         const signal = request.query.signal ?? "SIGKILL";
@@ -230,6 +230,13 @@ export class FakeDockerEngine {
       }
     }
     respond(socket, 404, { message: `no route ${method} ${path}` });
+  }
+
+  private exitStatus(container: FakeContainer): number {
+    const { exitStatus = 0 } = this.options;
+    return typeof exitStatus === "number"
+      ? exitStatus
+      : exitStatus(container.spec.Cmd[0]!);
   }
 
   private attach(container: FakeContainer, socket: Socket): void {
@@ -251,6 +258,6 @@ export class FakeDockerEngine {
       container.stdin += chunk.toString("utf8");
       socket.write(frame(1, chunk.toString("utf8")));
     });
-    socket.on("end", () => exit(this.options.exitStatus ?? 0));
+    socket.on("end", () => exit(this.exitStatus(container)));
   }
 }

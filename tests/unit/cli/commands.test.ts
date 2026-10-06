@@ -205,6 +205,49 @@ test("init installs the toolbelt, runs the doctor, installs this command, and re
   });
 });
 
+test("init registers bayma when its doctor fails, and warns of it last", async () => {
+  const fake = await FakeDockerEngine.start({
+    images: {
+      [IMAGE]: { Id: "sha256:image", RepoTags: [IMAGE], RepoDigests: null },
+    },
+    exitStatus: (command) => (command === "doctor" ? 1 : 0),
+  });
+  engines.push(fake);
+  await withTempDir(async (home) => {
+    const data = join(home, "data");
+    const context = testContext(home, fake.socketPath, { XDG_DATA_HOME: data });
+    expect(await setUp(context, false)).toBe(0);
+
+    // The containers find the toolbelt where this command looks for it.
+    for (const { spec } of fake.containers.values())
+      expect(spec.Env).toContain(`XDG_DATA_HOME=${data}`);
+    const cli = installedCli({ HOME: home, XDG_DATA_HOME: data }, VERSION);
+    expect(cli.startsWith(join(data, "bayma", "cli"))).toBe(true);
+    expect(fakeMcpClientRuns(join(home, "clients.log"))).toHaveLength(4);
+    expect(context.output().trimEnd().split("\n").at(-1)).toStartWith(
+      "warning: bayma doctor failed with status 1, so a runtime its report above names as failing does not work here; bayma is registered all the same",
+    );
+  });
+});
+
+test("init stops before it registers anything when the toolbelt cannot be installed", async () => {
+  const fake = await FakeDockerEngine.start({
+    images: {
+      [IMAGE]: { Id: "sha256:image", RepoTags: [IMAGE], RepoDigests: null },
+    },
+    exitStatus: (command) => (command === "install-toolbelt" ? 1 : 0),
+  });
+  engines.push(fake);
+  await withTempDir(async (home) => {
+    const context = testContext(home, fake.socketPath);
+    await expect(setUp(context, false)).rejects.toThrow(
+      "bayma install-toolbelt failed with status 1, as it says above; bayma is not registered",
+    );
+    expect(existsSync(installedCli({ HOME: home }, VERSION))).toBe(false);
+    expect(fakeMcpClientRuns(join(home, "clients.log"))).toEqual([]);
+  });
+});
+
 test("init without an image BAYMA_IMAGE names refuses before it changes anything", async () => {
   const fake = await engineWith({});
   await withTempDir(async (home) => {
