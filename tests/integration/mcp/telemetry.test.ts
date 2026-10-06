@@ -9,7 +9,11 @@ import {
   McpStdioClient,
   processEnvironment,
 } from "../../support/mcp-stdio-client.ts";
-import { OtlpSink, type ReceivedSpan } from "../../support/otlp-sink.ts";
+import {
+  OtlpSink,
+  type ReceivedMetric,
+  type ReceivedSpan,
+} from "../../support/otlp-sink.ts";
 
 // A server configured to export telemetry records its requests and its
 // sessions' work, continuing the trace each client propagates, and tells no
@@ -52,13 +56,26 @@ async function received(trace: string, name: string): Promise<ReceivedSpan> {
   throw new Error(`the sink received no ${name} in trace ${trace}`);
 }
 
+/** The first reading of the metric named `name`, once the sink has one. */
+async function readingOf(name: string): Promise<ReceivedMetric> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const metric = sink.metrics.find(
+      (candidate) => candidate.name === name && candidate.points.length > 0,
+    );
+    if (metric) return metric;
+    await sleep(50);
+  }
+  throw new Error(`the sink received no reading of ${name}`);
+}
+
 test(
   "a server over stdio records each request in its client's trace, and its sessions' work within it",
   async () => {
     const client = await McpStdioClient.connect({
       env: exporting({
         TRACEPARENT: `00-${PROCESS_TRACE}-${PROCESS_SPAN}-01`,
-        // Often enough for the session gauge to be read while sessions live.
+        // Often enough that the session below is not held open for long.
         OTEL_METRIC_EXPORT_INTERVAL: "100",
       }),
     });
@@ -87,6 +104,11 @@ test(
           executed.structuredContent as { stdout_text: string }
         ).stdout_text.trim(),
       ).toBe("0");
+      // The session gauge is read only at an export, and a session can open
+      // and close between two, so this one stays open until it is read.
+      expect((await readingOf("bayma.session.count")).points).toContainEqual(
+        expect.objectContaining({ "bayma.runtime": "bun" }),
+      );
       await client.client.callTool({
         name: "session.close",
         arguments: { session_id: sessionId },
@@ -137,7 +159,6 @@ test(
       "mcp.server.session.duration",
       "bayma.exec.duration",
       "bayma.runtime.start.duration",
-      "bayma.session.count",
     ])
       expect(names).toContain(name);
   },
