@@ -39,7 +39,18 @@ COPY packages/core/native/advance-pids.c /tmp/advance-pids.c
 RUN gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/bayma-advance-pids /tmp/advance-pids.c \
  && rm /tmp/advance-pids.c
 
-COPY dist/payload /opt/bayma/payload
+# The payload, a layer to each of its directories, so that they are pushed
+# and pulled side by side. `bun run image` refuses a payload with more or
+# fewer than these.
+COPY dist/payload/bun /opt/bayma/payload/bun
+COPY dist/payload/python /opt/bayma/payload/python
+COPY dist/payload/dotnet-script /opt/bayma/payload/dotnet-script
+COPY dist/payload/rust /opt/bayma/payload/rust
+COPY dist/payload/clang /opt/bayma/payload/clang
+COPY dist/payload/lean /opt/bayma/payload/lean
+COPY dist/payload/go /opt/bayma/payload/go
+COPY dist/payload/toolbelt /opt/bayma/payload/toolbelt
+COPY dist/payload/payload.json /opt/bayma/payload/payload.json
 COPY dist/bayma.js /opt/bayma/bayma.js
 ENV BAYMA_PAYLOAD_DIR=/opt/bayma/payload
 

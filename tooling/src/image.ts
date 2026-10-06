@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUNDLE, packageManifest } from "./build.ts";
 import { PAYLOAD_MANIFEST, type PayloadManifest } from "./payload.ts";
@@ -31,6 +31,20 @@ export function imageBuildCommand(repoRoot: string, tags: string[]): string[] {
   ];
 }
 
+/** What `dockerfile` copies of the payload, each entry a layer of its own. */
+export function payloadLayers(dockerfile: string): string[] {
+  return Array.from(
+    dockerfile.matchAll(
+      /^COPY dist\/payload\/(\S+) \/opt\/bayma\/payload\/(\S+)$/gm,
+    ),
+    ([, source, destination]) => {
+      if (source !== destination)
+        throw new Error(`the Dockerfile copies ${source} to ${destination}`);
+      return source!;
+    },
+  );
+}
+
 /**
  * Build the image from dist's bundle and payload, which must be this
  * version's; returns its tags.
@@ -57,6 +71,15 @@ export async function buildImage(
   if (assembled !== version)
     throw new Error(
       `the payload is ${assembled}, not ${version}; run \`bun run payload\``,
+    );
+  // The image must carry the whole payload, and only it.
+  const layers = payloadLayers(
+    readFileSync(join(repoRoot, "Dockerfile"), "utf8"),
+  ).sort();
+  const entries = readdirSync(join(distDir, "payload")).sort();
+  if (layers.join("\n") !== entries.join("\n"))
+    throw new Error(
+      `the Dockerfile copies ${layers.join(", ")} of the payload, which holds ${entries.join(", ")}`,
     );
   const tags = imageTags(version);
   await runOrThrow(imageBuildCommand(repoRoot, tags), {
