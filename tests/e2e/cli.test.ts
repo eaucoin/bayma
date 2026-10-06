@@ -72,8 +72,13 @@ test.serial(
       const bin = join(home, "bin");
       writeFakeMcpClients(bin);
       const log = join(home, "clients.log");
+      // The preload's XDG_DATA_HOME lies outside this home, which is all
+      // bayma's container is given, so bayma's places here are HOME's.
       const env = {
         ...processEnvironment(),
+        XDG_DATA_HOME: "",
+        XDG_STATE_HOME: "",
+        XDG_CACHE_HOME: "",
         HOME: home,
         PATH: `${bin}:${process.env.PATH}`,
         BAYMA_IMAGE: IMAGE,

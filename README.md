@@ -35,8 +35,9 @@ and restart your MCP clients: a REPL session snapshotted by another version
 comes back from its checkpoints rather than live. `npx bayma uninstall` takes
 bayma off again, and with `--purge`, REPL sessions' state too.
 
-REPL sessions are kept under `~/.local/state/bayma`, one directory per project
-directory the client launched from. When bayma stops, it snapshots each idle
+REPL sessions are kept under `~/.local/state/bayma`, or `$XDG_STATE_HOME/bayma`
+when that is set under your home, one directory per project directory the
+client launched from. When bayma stops, it snapshots each idle
 REPL session, its whole process and everything it holds, and a later bayma
 restores it where it left off; after a reboot, a REPL session comes back from
 its own checkpoints instead.

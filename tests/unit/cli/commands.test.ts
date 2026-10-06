@@ -16,6 +16,7 @@ import {
   cacheRoot,
   dataRoot,
   installedCli,
+  pathEnvironment,
   stateRoot,
   TOOLBELT_VERSION_FILE,
   toolbeltDir,
@@ -82,13 +83,38 @@ async function engineWith(
   return fake;
 }
 
-test("bayma's places here are those its container sees, HOME's XDG defaults", () => {
+test("bayma's places here are those its container sees, by core's rules", () => {
   const home = "/home/ada";
-  expect(dataRoot(home)).toBe(coreDataRoot({ HOME: home }));
-  expect(stateRoot(home)).toBe(coreStateRoot({ HOME: home }));
-  expect(cacheRoot(home)).toBe(coreCacheRoot({ HOME: home }));
-  expect(toolbeltDir(home)).toBe(toolbeltPath({ HOME: home }));
+  const environments: Record<string, string>[] = [
+    { HOME: home },
+    {
+      HOME: home,
+      XDG_DATA_HOME: "/home/ada/data",
+      XDG_STATE_HOME: "/home/ada/.state",
+      XDG_CACHE_HOME: "/home/ada/tmp/cache",
+    },
+  ];
+  for (const env of environments) {
+    const paths = pathEnvironment(home, env);
+    expect(paths).toEqual(env);
+    expect(dataRoot(paths)).toBe(coreDataRoot(env));
+    expect(stateRoot(paths)).toBe(coreStateRoot(env));
+    expect(cacheRoot(paths)).toBe(coreCacheRoot(env));
+    expect(toolbeltDir(paths)).toBe(toolbeltPath(env));
+  }
   expect(TOOLBELT_VERSION_FILE).toBe(CORE_TOOLBELT_VERSION_FILE);
+});
+
+test("an XDG base directory set to nothing is unset, and one outside HOME is refused", () => {
+  expect(pathEnvironment("/home/ada", { XDG_DATA_HOME: "" })).toEqual({
+    HOME: "/home/ada",
+  });
+  for (const value of ["/data", "/home/adam/data", "data", "/home/ada/../bob"])
+    expect(() =>
+      pathEnvironment("/home/ada", { XDG_STATE_HOME: value }),
+    ).toThrow(
+      `XDG_STATE_HOME is ${value}, outside HOME (/home/ada), the one directory bayma's container is given`,
+    );
 });
 
 test("a pull's progress is a line rewritten on a terminal, and a line a layer elsewhere", () => {
@@ -157,7 +183,7 @@ test("init installs the toolbelt, runs the doctor, installs this command, and re
     const commands = [...fake.containers.values()].map(({ spec }) => spec.Cmd);
     expect(commands).toEqual([["install-toolbelt"], ["doctor"]]);
     expect(fake.calls("POST", "/images/create")).toEqual([]);
-    const cli = installedCli(home, VERSION);
+    const cli = installedCli({ HOME: home }, VERSION);
     expect(readFileSync(cli, "utf8")).toBe("// the bayma command\n");
     expect(fakeMcpClientRuns(join(home, "clients.log"))).toEqual([
       "claude mcp remove --scope user bayma",
@@ -187,7 +213,7 @@ test("init without an image BAYMA_IMAGE names refuses before it changes anything
       "BAYMA_IMAGE names bayma:0.0.0, which Docker does not have",
     );
     expect(fake.calls("POST", "/images/create")).toEqual([]);
-    expect(existsSync(installedCli(home, VERSION))).toBe(false);
+    expect(existsSync(installedCli({ HOME: home }, VERSION))).toBe(false);
     expect(fakeMcpClientRuns(join(home, "clients.log"))).toEqual([]);
   });
 });
@@ -200,11 +226,14 @@ test("status reads each client's registration, and says which would not start ba
     const context = testContext(home, fake.socketPath, {
       CODEX_HOME: join(home, "codex"),
     });
-    const cli = installedCli(home, VERSION);
+    const cli = installedCli({ HOME: home }, VERSION);
     mkdirSync(join(cli, ".."), { recursive: true });
     writeFileSync(cli, "");
-    mkdirSync(toolbeltDir(home), { recursive: true });
-    writeFileSync(join(toolbeltDir(home), TOOLBELT_VERSION_FILE), "0.0.0\n");
+    mkdirSync(toolbeltDir({ HOME: home }), { recursive: true });
+    writeFileSync(
+      join(toolbeltDir({ HOME: home }), TOOLBELT_VERSION_FILE),
+      "0.0.0\n",
+    );
     writeFileSync(
       join(home, ".claude.json"),
       JSON.stringify({
@@ -229,7 +258,7 @@ test("status reads each client's registration, and says which would not start ba
       version: VERSION,
       docker: { socket: fake.socketPath, version: "29.0.0" },
       image: { image: { reference: IMAGE, pinned: false }, present: true },
-      toolbelt: { path: toolbeltDir(home), version: "0.0.0" },
+      toolbelt: { path: toolbeltDir({ HOME: home }), version: "0.0.0" },
       installed: [VERSION],
     });
     expect(status.registrations).toEqual([
@@ -271,10 +300,10 @@ test("uninstall removes registrations, commands, pulled images, the toolbelt, an
   await withTempDir(async (home) => {
     const context = testContext(home, fake.socketPath);
     for (const directory of [
-      join(installedCli(home, VERSION), ".."),
-      toolbeltDir(home),
-      cacheRoot(home),
-      join(stateRoot(home), "0123456789abcdef"),
+      join(installedCli({ HOME: home }, VERSION), ".."),
+      toolbeltDir({ HOME: home }),
+      cacheRoot({ HOME: home }),
+      join(stateRoot({ HOME: home }), "0123456789abcdef"),
     ])
       mkdirSync(directory, { recursive: true });
 
@@ -285,13 +314,13 @@ test("uninstall removes registrations, commands, pulled images, the toolbelt, an
     ]);
     // What BAYMA_IMAGE names was never pulled, so it stays.
     expect(fake.removedImages).toEqual([pulled]);
-    expect(existsSync(dataRoot(home))).toBe(false);
-    expect(existsSync(cacheRoot(home))).toBe(false);
-    expect(existsSync(stateRoot(home))).toBe(true);
+    expect(existsSync(dataRoot({ HOME: home }))).toBe(false);
+    expect(existsSync(cacheRoot({ HOME: home }))).toBe(false);
+    expect(existsSync(stateRoot({ HOME: home }))).toBe(true);
     expect(context.output()).toContain("uninstall --purge removes it");
 
     expect(await uninstall(context, true)).toBe(0);
-    expect(existsSync(stateRoot(home))).toBe(false);
+    expect(existsSync(stateRoot({ HOME: home }))).toBe(false);
     expect(context.output()).toContain(
       "removing REPL sessions' state, of the 1 directory MCP clients launched bayma from",
     );

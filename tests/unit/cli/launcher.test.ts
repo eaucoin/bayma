@@ -18,6 +18,8 @@ const INVOCATION: Invocation = {
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
     OTEL_SERVICE_NAME: "bayma-ada",
     OTEL_EXPORTER_OTLP_HEADERS: "",
+    XDG_STATE_HOME: "/home/ada/.state",
+    XDG_CACHE_HOME: "",
   },
 };
 
@@ -37,6 +39,7 @@ test("mcp-stdio runs as docker run -i --rm did, as the user, in their home, able
     User: "1000:1001",
     Env: [
       "HOME=/home/ada",
+      "XDG_STATE_HOME=/home/ada/.state",
       "OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318",
       "OTEL_SERVICE_NAME=bayma-ada",
     ],
@@ -76,6 +79,17 @@ test("mcp-http and the doctor share the machine's network too, and read no stdin
   expect(doctor.HostConfig.NetworkMode).toBe("host");
   expect(doctor.OpenStdin).toBe(false);
   expect(doctor.HostConfig.Binds).toEqual(["/home/ada:/home/ada"]);
+});
+
+test("a launcher refuses an XDG base directory its container could not reach", () => {
+  expect(() =>
+    containerSpec("bayma:0.0.0", "mcp-stdio", [], {
+      ...INVOCATION,
+      env: { XDG_DATA_HOME: "/srv/data" },
+    }),
+  ).toThrow(
+    "XDG_DATA_HOME is /srv/data, outside HOME (/home/ada), the one directory bayma's container is given: unset it, or set it to a directory under HOME",
+  );
 });
 
 const engines: FakeDockerEngine[] = [];

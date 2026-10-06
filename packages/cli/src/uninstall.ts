@@ -7,6 +7,7 @@ import {
   cacheRoot,
   cliRoot,
   dataRoot,
+  pathEnvironment,
   stateRoot,
   toolbeltDir,
 } from "./paths.ts";
@@ -48,6 +49,7 @@ export async function uninstall(
   context: Context,
   purge: boolean,
 ): Promise<number> {
+  const paths = pathEnvironment(context.home, context.env);
   let docker: { engine: DockerEngine; images: string[] } | undefined;
   try {
     const engine = connectDocker(context);
@@ -89,13 +91,13 @@ export async function uninstall(
       await docker.engine.removeImage(reference);
       say(context, `removed the image ${reference}`);
     }
-  remove(context, cliRoot(context.home), "bayma's commands for MCP clients");
-  remove(context, toolbeltDir(context.home), "the toolbelt bundled with bayma");
-  remove(context, cacheRoot(context.home), "bayma's cache");
-  const data = dataRoot(context.home);
+  remove(context, cliRoot(paths), "bayma's commands for MCP clients");
+  remove(context, toolbeltDir(paths), "the toolbelt bundled with bayma");
+  remove(context, cacheRoot(paths), "bayma's cache");
+  const data = dataRoot(paths);
   if (existsSync(data) && readdirSync(data).length === 0) rmdirSync(data);
 
-  const state = stateRoot(context.home);
+  const state = stateRoot(paths);
   if (!existsSync(state)) return 0;
   if (!purge) {
     say(

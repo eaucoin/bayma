@@ -23,7 +23,12 @@ import {
   pullReporter,
 } from "./image.ts";
 import { containerSpec, runContainer } from "./launcher.ts";
-import { cliRoot, installedCli } from "./paths.ts";
+import {
+  cliRoot,
+  installedCli,
+  type PathEnvironment,
+  pathEnvironment,
+} from "./paths.ts";
 import { VERSION } from "./release.ts";
 
 // Setting bayma up, or up again at another version: its image, the toolbelt
@@ -31,8 +36,8 @@ import { VERSION } from "./release.ts";
 // clients launch it from, registered with those found here.
 
 /** Copies this command's bundle to where MCP clients launch it from. */
-export function installCli(home: string, bundle: string): string {
-  const target = installedCli(home, VERSION);
+export function installCli(paths: PathEnvironment, bundle: string): string {
+  const target = installedCli(paths, VERSION);
   mkdirSync(dirname(target), { recursive: true });
   // Copied beside it and renamed into place, so a client starting now never
   // runs half of it.
@@ -60,8 +65,8 @@ export function mcpServersJson(launch: LaunchCommand): string {
 }
 
 /** The versions of this command installed here, but this one. */
-function otherVersions(home: string): string[] {
-  const root = cliRoot(home);
+function otherVersions(paths: PathEnvironment): string[] {
+  const root = cliRoot(paths);
   if (!existsSync(root)) return [];
   return readdirSync(root).filter((version) => version !== VERSION);
 }
@@ -91,8 +96,9 @@ export async function setUp(
   context: Context,
   upgrade: boolean,
 ): Promise<number> {
+  const paths = pathEnvironment(context.home, context.env);
   if (upgrade) {
-    const others = otherVersions(context.home);
+    const others = otherVersions(paths);
     say(
       context,
       `Upgrading to bayma ${VERSION}${others.length > 0 ? ` from ${others.join(", ")}` : ""}. MCP clients running now keep their bayma until they restart; once they do, a REPL session another version snapshotted is restored from its checkpoints rather than resumed live, since a process snapshot is restored only by the version that took it.`,
@@ -123,7 +129,7 @@ export async function setUp(
   say(context, "checking each runtime with bayma doctor");
   await runInImage(context, engine, image, "doctor", context.stdio.stdout);
 
-  const cli = installCli(context.home, context.bundle);
+  const cli = installCli(paths, context.bundle);
   say(context, `installed bayma ${VERSION} at ${cli}`);
   const launch = launchCommand(context.node, cli);
   let failed = false;

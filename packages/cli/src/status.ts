@@ -7,7 +7,12 @@ import {
 } from "./clients.ts";
 import { connectDocker, type Context, say } from "./context.ts";
 import { type BaymaImage, baymaImage, missingImage } from "./image.ts";
-import { cliRoot, TOOLBELT_VERSION_FILE, toolbeltDir } from "./paths.ts";
+import {
+  cliRoot,
+  pathEnvironment,
+  TOOLBELT_VERSION_FILE,
+  toolbeltDir,
+} from "./paths.ts";
 import { VERSION } from "./release.ts";
 
 // What is set up of bayma here, and what of it would not work.
@@ -33,13 +38,14 @@ function message(error: unknown): string {
 }
 
 export async function readStatus(context: Context): Promise<Status> {
+  const paths = pathEnvironment(context.home, context.env);
   const status: Status = {
     version: VERSION,
     docker: {},
     image: {},
-    toolbelt: { path: toolbeltDir(context.home) },
-    installed: existsSync(cliRoot(context.home))
-      ? readdirSync(cliRoot(context.home)).sort()
+    toolbelt: { path: toolbeltDir(paths) },
+    installed: existsSync(cliRoot(paths))
+      ? readdirSync(cliRoot(paths)).sort()
       : [],
     registrations: MCP_CLIENTS.map((client) => {
       const launch = client.registered(context.home, context.env);

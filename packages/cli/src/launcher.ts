@@ -8,6 +8,7 @@ import {
   DockerError,
 } from "./docker.ts";
 import { type BaymaImage, missingImage } from "./image.ts";
+import { pathEnvironment } from "./paths.ts";
 
 // bayma's image, run as its servers and commands are: as the invoking user,
 // with their home mounted at its own path and the directory they launched
@@ -59,7 +60,12 @@ export function containerSpec(
     Image: image,
     Cmd: [command, ...args],
     User: `${invocation.uid}:${invocation.gid}`,
-    Env: [`HOME=${invocation.home}`, ...telemetryEnvironment(invocation.env)],
+    Env: [
+      ...Object.entries(pathEnvironment(invocation.home, invocation.env)).map(
+        ([name, value]) => `${name}=${value}`,
+      ),
+      ...telemetryEnvironment(invocation.env),
+    ],
     WorkingDir: invocation.cwd,
     AttachStdin: stdin,
     AttachStdout: true,
