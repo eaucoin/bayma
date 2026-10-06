@@ -53,17 +53,25 @@ jobs:
           test "v$(bun -p 'require("./packages/cli/package.json").version')" = "$GITHUB_REF_NAME"
       - run: bun install --frozen-lockfile
       - run: bun run build
-      # The payload, what provisions it, and the image built from it take more
-      # disk than a runner starts with free.
-      - run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      - run: bun run provision
-      - run: bun run payload
-      - run: bun run image
+      # The payload and the image built from it take more disk than some
+      # runners start with free.
+      - run: |
+          [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -ge 40 ] ||
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      # The toolchains are the images the ci workflow pushed for this commit,
+      # and tested; a release builds none, and fails if one is missing. The
+      # summary names each by its digest.
+      - run: |
+          set -o pipefail
+          bun run toolchains pull | tee "$RUNNER_TEMP/toolchains.txt"
+          { echo "### Toolchains"; echo; echo '```'; grep "@sha256:" "$RUNNER_TEMP/toolchains.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - run: bun run payload
+      - run: bun run image
       - id: push
         run: |
           version="${GITHUB_REF_NAME#v}"
