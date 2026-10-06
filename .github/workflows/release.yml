@@ -3,7 +3,8 @@ name: release
 # On demand only, from the version tag being released: publishes bayma's
 # image to GitHub's container registry, attested, and the bayma command,
 # pinned to the image by digest, to npm as the package `bayma-repl`, with
-# provenance. npm takes the token the NPM_TOKEN secret holds.
+# provenance. This workflow is the package's trusted publisher on npm, which
+# takes the run's OpenID Connect token from GitHub, so no npm token is kept.
 on:
   workflow_dispatch:
 
@@ -44,9 +45,8 @@ jobs:
           bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
+          # Its npm, 11.5.1 or later, publishes as a trusted publisher.
           node-version: 24
-          # Writes an .npmrc that authenticates to npm with NODE_AUTH_TOKEN.
-          registry-url: https://registry.npmjs.org
       # The image and the bayma command are released at the tag's version.
       - run: |
           test "v$(bun -p 'require("./packages/server/package.json").version')" = "$GITHUB_REF_NAME"
@@ -83,16 +83,15 @@ jobs:
           bun run build
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-      # Tolerates a re-run over a version npm has already.
+      # Published with provenance, as trusted publishing does by itself;
+      # tolerates a re-run over a version npm has already.
       - working-directory: packages/cli
         run: |
           if npm view "bayma-repl@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
             echo "bayma-repl ${GITHUB_REF_NAME#v} is on npm already"
           else
-            npm publish --provenance --access public
+            npm publish --access public
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Tolerates a re-run over an existing release.
       - run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
