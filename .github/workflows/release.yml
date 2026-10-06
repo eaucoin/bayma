@@ -1,6 +1,9 @@
 name: release
 
-# On demand only, from the version tag being released.
+# On demand only, from the version tag being released: publishes bayma's
+# image to GitHub's container registry, attested, and the bayma command,
+# pinned to the image by digest, to npm as the package `bayma`, with
+# provenance. npm takes the token the NPM_TOKEN secret holds.
 on:
   workflow_dispatch:
 
@@ -39,7 +42,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: test "v$(bun -p 'require("./packages/server/package.json").version')" = "$GITHUB_REF_NAME"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          # Writes an .npmrc that authenticates to npm with NODE_AUTH_TOKEN.
+          registry-url: https://registry.npmjs.org
+      # The image and the bayma command are released at the tag's version.
+      - run: |
+          test "v$(bun -p 'require("./packages/server/package.json").version')" = "$GITHUB_REF_NAME"
+          test "v$(bun -p 'require("./packages/cli/package.json").version')" = "$GITHUB_REF_NAME"
       - run: bun install --frozen-lockfile
       - run: bun run build
       # The payload, what provisions it, and the image built from it take more
@@ -66,9 +77,26 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      # The bayma command runs the image just pushed, by its digest.
+      - run: |
+          bun run pin "$DIGEST"
+          bun run build
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+      # Tolerates a re-run over a version npm has already.
+      - working-directory: packages/cli
+        run: |
+          if npm view "bayma@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+            echo "bayma ${GITHUB_REF_NAME#v} is on npm already"
+          else
+            npm publish --provenance --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Tolerates a re-run over an existing release.
       - run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --title "bayma ${GITHUB_REF_NAME#v}" --generate-notes
+            gh release create "$GITHUB_REF_NAME" --title "bayma ${GITHUB_REF_NAME#v}" --generate-notes \
+              --notes "Set it up, on Linux (x64) with Docker and Node 22 or later: \`npx bayma@${GITHUB_REF_NAME#v} init\`"
         env:
           GH_TOKEN: ${{ github.token }}
