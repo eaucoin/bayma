@@ -158,7 +158,13 @@ test("a container is created, attached, watched, and started; its stdin half-clo
     OpenStdin: true,
     StdinOnce: true,
     Tty: false,
-    HostConfig: { AutoRemove: true, Binds: [], CapAdd: [], SecurityOpt: [] },
+    HostConfig: {
+      AutoRemove: true,
+      Binds: [],
+      CapAdd: [],
+      SecurityOpt: [],
+      NetworkMode: "host",
+    },
   });
   const socket = await engine.attachContainer(id, true);
   const exit = await engine.watchExit(id);

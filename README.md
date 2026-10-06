@@ -20,8 +20,9 @@ takes to keep REPL sessions on disk. It installs the toolbelt, checks with
 bayma's doctor that each runtime works, and adds bayma as an MCP server to
 Claude Code and to Codex, where they are installed, printing what any other
 MCP client takes. Your MCP clients then launch bayma in a container of its
-own, running as you, with your home directory at its own path, and allowed
-to snapshot REPL sessions within it. `npx bayma status` shows what is set up,
+own, running as you, with your home directory at its own path, on your
+machine's network, so `localhost` is your machine, and allowed to snapshot
+REPL sessions within it. `npx bayma status` shows what is set up,
 and `npx bayma doctor` checks each runtime again.
 
 To move to the latest bayma, run
@@ -43,8 +44,7 @@ its own checkpoints instead.
 bayma exports OpenTelemetry traces, metrics, and logs of its own work, over
 OTLP's HTTP protocols, to wherever `OTEL_EXPORTER_OTLP_ENDPOINT` and
 OpenTelemetry's other standard variables say, as set where your MCP client
-launches it; with none set, it exports nothing. It reads them within its
-container, so `localhost` there is the container itself. Each MCP
+launches it; with none set, it exports nothing. Each MCP
 request is a span that continues the trace its client propagated, in the
 request's `_meta` or its `traceparent` header, with spans for the execs,
 runtimes, and REPL sessions it concerns. A REPL session is never told where

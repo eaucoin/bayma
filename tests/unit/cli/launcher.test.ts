@@ -52,11 +52,12 @@ test("mcp-stdio runs as docker run -i --rm did, as the user, in their home, able
       Binds: ["/home/ada:/home/ada"],
       CapAdd: ["CHECKPOINT_RESTORE", "SYS_PTRACE"],
       SecurityOpt: ["seccomp=unconfined"],
+      NetworkMode: "host",
     },
   });
 });
 
-test("mcp-http shares the machine's network and reads no stdin; the doctor neither", () => {
+test("mcp-http and the doctor share the machine's network too, and read no stdin", () => {
   const http = containerSpec(
     "bayma:0.0.0",
     "mcp-http",
@@ -72,7 +73,7 @@ test("mcp-http shares the machine's network and reads no stdin; the doctor neith
   ]);
 
   const doctor = containerSpec("bayma:0.0.0", "doctor", [], INVOCATION);
-  expect(doctor.HostConfig.NetworkMode).toBeUndefined();
+  expect(doctor.HostConfig.NetworkMode).toBe("host");
   expect(doctor.OpenStdin).toBe(false);
   expect(doctor.HostConfig.Binds).toEqual(["/home/ada:/home/ada"]);
 });

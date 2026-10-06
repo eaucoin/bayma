@@ -11,9 +11,9 @@ import { type BaymaImage, missingImage } from "./image.ts";
 
 // bayma's image, run as its servers and commands are: as the invoking user,
 // with their home mounted at its own path and the directory they launched
-// from as its working directory, with the capabilities and seccomp profile
-// CRIU needs to snapshot REPL sessions within the container, and removed
-// once it exits. This command forwards its stdio and signals to the
+// from as its working directory, on the machine's network, with the
+// capabilities and seccomp profile CRIU needs to snapshot REPL sessions
+// within the container, and removed once it exits. This command forwards its stdio and signals to the
 // container and exits with its status, as `docker run -i --rm` would.
 
 /** The image's commands this command runs. */
@@ -72,11 +72,12 @@ export function containerSpec(
       Binds: [`${invocation.home}:${invocation.home}`],
       CapAdd: SNAPSHOT_CAPABILITIES,
       SecurityOpt: SNAPSHOT_SECURITY,
-      // An HTTP server shares the machine's network, so the address it
-      // listens on means what it says here: 127.0.0.1, its default, is
-      // this machine's loopback, reachable from nowhere else, and its port
-      // is this machine's, with nothing to publish.
-      ...(command === "mcp-http" ? { NetworkMode: "host" as const } : {}),
+      // bayma runs as the user with their home mounted, so a network of its
+      // own would isolate nothing; on the machine's, localhost is this
+      // machine to REPL sessions and OTLP endpoints, and an HTTP server's
+      // 127.0.0.1, its default, is this machine's loopback, with no port to
+      // publish.
+      NetworkMode: "host",
     },
   };
 }

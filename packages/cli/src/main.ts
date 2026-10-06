@@ -31,7 +31,8 @@ Commands:
   mcp-stdio [OPTIONS]
       serve MCP over stdio, as MCP clients launch bayma
   mcp-http [OPTIONS]
-      serve MCP over Streamable HTTP, on this machine's own network
+      serve MCP over Streamable HTTP; its default host, 127.0.0.1, is this
+      machine's loopback
   doctor [OPTIONS]
       check that each runtime works here
   uninstall [--purge]

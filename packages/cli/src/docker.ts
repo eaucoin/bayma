@@ -101,7 +101,7 @@ export interface ContainerCreate {
     Binds: string[];
     CapAdd: string[];
     SecurityOpt: string[];
-    NetworkMode?: "host";
+    NetworkMode: "host";
   };
 }
 
