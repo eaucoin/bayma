@@ -10,6 +10,7 @@ import {
   installToolbelt,
   PAYLOAD_MANIFEST,
 } from "@bayma/core";
+import { SHUTDOWN_TIMEOUT_MS } from "@bayma/core/telemetry";
 import {
   startTelemetry,
   stopTelemetry,
@@ -38,11 +39,14 @@ process.env.XDG_DATA_HOME = dataHome;
 if (process.env.BAYMA_PAYLOAD_DIR)
   await installToolbelt(process.env.BAYMA_PAYLOAD_DIR);
 
-// A preload's afterAll runs once, after every test file.
+// A preload's afterAll runs once, after every test file. Exporting what is
+// left gives up after SHUTDOWN_TIMEOUT_MS, which a backend that cannot be
+// reached takes, so the hook may take that long, and a moment more.
 afterAll(async () => {
   await stopTelemetry();
-  // The installed toolbelt is tens of thousands of files, which take seconds
-  // to remove, and on a busy disk longer than a hook may take; a process of
-  // their own removes them, which outlives the test runner if it must.
+  // The installed toolbelt is tens of thousands of files, which take
+  // seconds to remove, and on a busy disk longer than a hook may take; a
+  // process of their own removes them, which outlives the test runner if
+  // it must.
   spawn("rm", ["-rf", dataHome], { detached: true, stdio: "ignore" }).unref();
-});
+}, SHUTDOWN_TIMEOUT_MS + 1_000);

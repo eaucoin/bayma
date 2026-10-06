@@ -24,7 +24,7 @@ export {
 // environment configures it (see config.ts), loading the SDK then.
 
 /** How long stopping may take to export what is left before giving up. */
-const SHUTDOWN_TIMEOUT_MS = 30_000;
+export const SHUTDOWN_TIMEOUT_MS = 30_000;
 
 interface Running {
   shutdown: () => Promise<void>;
