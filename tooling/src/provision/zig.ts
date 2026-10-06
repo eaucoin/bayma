@@ -13,11 +13,27 @@ import {
 // The pinned zig, unpacked once for every provisioner that compiles or links
 // against the glibc floor.
 
-export async function provisionZig(
+/** Each zig directory's provisioning, which provisioners running at once share. */
+const provisioning = new Map<string, Promise<string>>();
+
+export function provisionZig(
   context: ProvisionContext,
   pin: PlatformPins["zig"],
 ): Promise<string> {
   const directory = join(context.workDir, "zig");
+  let provisioned = provisioning.get(directory);
+  if (!provisioned) {
+    provisioned = unpackZig(context, directory, pin);
+    provisioning.set(directory, provisioned);
+  }
+  return provisioned;
+}
+
+async function unpackZig(
+  context: ProvisionContext,
+  directory: string,
+  pin: PlatformPins["zig"],
+): Promise<string> {
   if (isProvisioned(context, directory, pin.sha256)) return directory;
   resetDirectory(directory);
   mkdirSync(directory, { recursive: true });
