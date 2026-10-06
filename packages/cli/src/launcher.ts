@@ -1,4 +1,5 @@
 import type { Socket } from "node:net";
+import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
 import {
   type ContainerCreate,
@@ -14,8 +15,9 @@ import { pathEnvironment } from "./paths.ts";
 // with their home mounted at its own path and the directory they launched
 // from as its working directory, on the machine's network, with the
 // capabilities and seccomp profile CRIU needs to snapshot REPL sessions
-// within the container, and removed once it exits. This command forwards its stdio and signals to the
-// container and exits with its status, as `docker run -i --rm` would.
+// within the container, and removed once it exits. This command forwards its
+// stdio and signals to the container and exits with its status, as
+// `docker run -i --rm` would.
 
 /** The image's commands this command runs. */
 export type ImageCommand =
@@ -108,51 +110,82 @@ export async function runContainer(
   spec: ContainerCreate,
   stdio: Stdio,
 ): Promise<number> {
-  let id: string;
-  try {
-    id = await engine.createContainer(spec);
-  } catch (error) {
-    if (error instanceof DockerError && error.status === 404)
-      throw new Error(missingImage(image));
-    throw error;
-  }
-  let socket: Socket | undefined;
-  let exit: ContainerExit | undefined;
-  try {
-    // Attached and watched before it starts, so none of its output, nor its
-    // exit, is missed.
-    socket = await engine.attachContainer(id, spec.OpenStdin);
-    exit = await engine.watchExit(id);
-    await engine.startContainer(id);
-  } catch (error) {
-    socket?.destroy();
-    exit?.status.catch(() => undefined);
-    // What is reported is why it did not start, not how removing it went.
-    await engine.removeContainer(id).catch(() => undefined);
-    throw error;
-  }
-  return forwardUntilExit(engine, id, socket, exit, spec.OpenStdin, stdio);
-}
-
-async function forwardUntilExit(
-  engine: DockerEngine,
-  id: string,
-  socket: Socket,
-  exit: ContainerExit,
-  stdin: boolean,
-  stdio: Stdio,
-): Promise<number> {
-  const forward = (signal: NodeJS.Signals) => {
+  // Signals are listened for from the first: one that comes before the
+  // container runs cancels it, so none is left behind, created but never
+  // started; one that comes after is forwarded to it.
+  let running: string | undefined;
+  let cancelled: NodeJS.Signals | undefined;
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (running === undefined) {
+      cancelled ??= signal;
+      return;
+    }
     engine
-      .killContainer(id, signal)
+      .killContainer(running, signal)
       .catch((error: unknown) =>
         stdio.stderr.write(
           `bayma: could not forward ${signal}: ${error instanceof Error ? error.message : String(error)}\n`,
         ),
       );
   };
-  for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);
+  for (const signal of FORWARDED_SIGNALS) process.on(signal, onSignal);
+  try {
+    let id: string;
+    try {
+      id = await engine.createContainer(spec);
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404)
+        throw new Error(missingImage(image));
+      throw error;
+    }
+    let socket: Socket | undefined;
+    let exit: ContainerExit | undefined;
+    let started = false;
+    try {
+      // Attached and watched before it starts, so none of its output, nor
+      // its exit, is missed.
+      socket = await engine.attachContainer(id, spec.OpenStdin);
+      exit = await engine.watchExit(id);
+      if (cancelled === undefined) {
+        await engine.startContainer(id);
+        started = true;
+      }
+    } catch (error) {
+      await discard(engine, id, socket, exit);
+      throw error;
+    }
+    if (!started) {
+      await discard(engine, id, socket, exit);
+      return 128 + constants.signals[cancelled!];
+    }
+    running = id;
+    // A signal that came while it was starting is forwarded once it runs.
+    if (cancelled !== undefined) onSignal(cancelled);
+    return await forwardUntilExit(socket, exit, spec.OpenStdin, stdio);
+  } finally {
+    for (const signal of FORWARDED_SIGNALS) process.off(signal, onSignal);
+  }
+}
 
+/** Removes a container that never ran, letting go of what watched it. */
+async function discard(
+  engine: DockerEngine,
+  id: string,
+  socket: Socket | undefined,
+  exit: ContainerExit | undefined,
+): Promise<void> {
+  socket?.destroy();
+  exit?.status.catch(() => undefined);
+  // What is reported is why it did not run, not how removing it went.
+  await engine.removeContainer(id).catch(() => undefined);
+}
+
+async function forwardUntilExit(
+  socket: Socket,
+  exit: ContainerExit,
+  stdin: boolean,
+  stdio: Stdio,
+): Promise<number> {
   const frames = demultiplexer();
   const output = new Promise<void>((resolve) => {
     socket.on("data", (chunk: Buffer) => {
@@ -177,7 +210,6 @@ async function forwardUntilExit(
     const [status] = await Promise.all([exit.status, output]);
     return status;
   } finally {
-    for (const signal of FORWARDED_SIGNALS) process.off(signal, forward);
     if (stdin) stdio.stdin.unpipe(socket);
     socket.destroy();
   }

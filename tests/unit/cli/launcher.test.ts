@@ -177,6 +177,36 @@ test("the launcher forwards SIGTERM to the container, and exits with the status 
   expect(process.listenerCount("SIGTERM")).toBe(listeners);
 });
 
+test("a signal before the container starts cancels it, leaving no container behind", async () => {
+  const fake = await FakeDockerEngine.start({
+    images: {
+      "bayma:0.0.0": {
+        Id: "sha256:image",
+        RepoTags: ["bayma:0.0.0"],
+        RepoDigests: null,
+      },
+    },
+  });
+  engines.push(fake);
+  const listeners = process.listenerCount("SIGTERM");
+  const running = runContainer(
+    new DockerEngine(fake.socketPath),
+    IMAGE,
+    containerSpec("bayma:0.0.0", "mcp-stdio", [], INVOCATION),
+    stdio().streams,
+  );
+  process.emit("SIGTERM", "SIGTERM");
+  expect(await running).toBe(143);
+  expect(
+    [...fake.containers.values()].map(({ started, removed, signals }) => ({
+      started,
+      removed,
+      signals,
+    })),
+  ).toEqual([{ started: false, removed: true, signals: [] }]);
+  expect(process.listenerCount("SIGTERM")).toBe(listeners);
+});
+
 test("a launcher whose image is missing says to run init, and never pulls", async () => {
   const fake = await FakeDockerEngine.start();
   engines.push(fake);
