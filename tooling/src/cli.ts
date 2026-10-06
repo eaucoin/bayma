@@ -8,6 +8,7 @@ import { pinRelease } from "./release.ts";
 import { run } from "./shared/process.ts";
 import { bunJUnitReport, runTests } from "./shared/tests.ts";
 import { inCommand, startTelemetry, stopTelemetry } from "./telemetry/index.ts";
+import { testShards } from "./test-shards.ts";
 import { ensureToolchains, pullToolchains } from "./toolchains.ts";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
@@ -31,6 +32,8 @@ function usage(): never {
   payload                assemble dist/payload
   image                  build and tag the image from dist and the Dockerfile
   test [ARGS...]         bun test with ARGS
+  test-shard NAME        bun test with one shard of what bun run test runs:
+                         unit, checkpoint, or integration
   typecheck              type-check every TypeScript project
   format [--check]       format the repository, or check that it is formatted
 
@@ -112,6 +115,12 @@ const COMMANDS: Record<string, (args: string[]) => Promise<number>> = {
       { cwd: repoRoot, echo: true },
     );
     return status;
+  },
+  async "test-shard"([name, ...rest]) {
+    const shards = testShards(repoRoot);
+    if (name === undefined || !Object.hasOwn(shards, name) || rest.length > 0)
+      usage();
+    return COMMANDS.test!(shards[name]!);
   },
   async typecheck() {
     return runEach([
