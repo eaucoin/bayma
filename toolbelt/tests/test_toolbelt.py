@@ -81,7 +81,7 @@ class ActivateEnvironmentTest(unittest.TestCase):
             self.assertRaisesRegex(
                 RuntimeError,
                 r"this session is using Python .*Expected the toolbelt environment.*"
-                r"restart bayma, which installs it again",
+                r"run npx bayma init, which installs it again",
             ),
         ):
             subject.open_toolbelt(cwd=Path(__file__))
@@ -118,7 +118,10 @@ class InterpreterContractTest(unittest.TestCase):
             expected_minor,
         )
         self.assertIn(f".venv/lib/python{expected_minor}/site-packages", skill)
-        self.assertIn("where bayma installs it from its image as it starts", skill)
+        self.assertIn(
+            "where `npx bayma init` and `npx bayma upgrade` install it from bayma's image",
+            skill,
+        )
 
     def test_documented_python_quickstart_executes_verbatim(self) -> None:
         skill = SKILL_DOC.read_text(encoding="utf-8")

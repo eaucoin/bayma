@@ -26,9 +26,9 @@ from bayma_toolbelt_process import (
 SUPPORTED_PYTHON = (3, 12)
 SUPPORTED_PYTHON_SPEC = ">=3.12,<3.13"
 TOOLBELT_ROOT = Path(__file__).resolve().parent
-# bayma installs the toolbelt as it starts, when it has none of its version,
-# so bayma is also how to repair it.
-REPAIR = f"Remove {TOOLBELT_ROOT} and restart bayma, which installs it again."
+# bayma installs the toolbelt when it has none of its version, as `npx bayma
+# init` does, so bayma is also how to repair it.
+REPAIR = f"Remove {TOOLBELT_ROOT} and run npx bayma init, which installs it again."
 
 _DISTRIBUTIONS = {
     "ast_grep": "ast-grep-py",

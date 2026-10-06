@@ -99,7 +99,7 @@ Use ordinary Rust and Cargo semantics within bayma's declared boundaries. Keep s
 
 # Rust Toolbelt
 
-bayma bundles a toolbelt of pinned crates, declared directly, that Rust sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where bayma installs it from its image, in the background as a server first starts on a new version, so it can take a few minutes to appear there. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
+bayma bundles a toolbelt of pinned crates, declared directly, that Rust sessions can use. They are optional: use them when they help, and leave them aside when they don't. The toolbelt itself, its code, lockfiles, and installed packages, lives in `~/.local/share/bayma/toolbelt` (under `$XDG_DATA_HOME/bayma/toolbelt` when that is set), where `npx bayma init` and `npx bayma upgrade` install it from bayma's image; a server that finds it missing or out of date installs it in the background, so it can then take a few minutes to appear there. The listing below shows where their source, types, and documentation live, so code written against them, or executed interactively with them, is correct.
 
 The source, types, and documentation behind the Rust package set are under:
 
