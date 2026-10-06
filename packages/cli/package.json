@@ -1,6 +1,6 @@
 {
   "name": "bayma",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Set up bayma, a durable engine for REPL sessions, and launch its MCP servers in Docker: npx bayma init",
   "type": "module",
   "license": "MIT",
