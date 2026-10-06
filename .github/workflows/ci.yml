@@ -1,12 +1,16 @@
 name: ci
 
-# On demand only: every run provisions and tests the whole payload, and builds
-# and tests the image from it.
+# On demand only: every run tests the whole payload, and builds and tests the
+# image from it. The payload's toolchains come from their images on GitHub's
+# container registry; the toolchains job first provisions and pushes any the
+# registry lacks (tooling/src/toolchains.ts). The tests run in shards, side
+# by side with the image's.
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  packages: read
 
 # Development telemetry goes where the repository's secrets and variables of
 # these OpenTelemetry names say; with none set, nothing is exported. See
@@ -23,9 +27,9 @@ env:
   OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_EXPORTER_OTLP_PROTOCOL }}
 
 jobs:
-  linux:
+  checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -37,16 +41,94 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run format:check
-      - run: bun run build
-      # The payload, what provisions it, and the image built from it take more
-      # disk than a runner starts with free.
-      - run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: actions/cache@v4
+
+  toolchains:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          path: .work
-          key: payload-linux-x64-${{ hashFiles('tooling/src/platforms.ts', 'tooling/src/provision/clang.ts', 'packages/runtime-rust/native/**', 'packages/runtime-cpp/native/**', 'packages/runtime-lean/native/**', 'packages/runtime-go/native/**', 'toolbelt/**', 'skills/bayma-runtime-python/**') }}
-      - run: bun run provision
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      # The payload, what provisions it, and the image built from it take
+      # more disk than some runners start with free.
+      - run: |
+          [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -ge 40 ] ||
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: bun run toolchains ensure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  test:
+    needs: toolchains
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [unit, checkpoint, integration]
+    name: test (${{ matrix.shard }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      # The payload, what provisions it, and the image built from it take
+      # more disk than some runners start with free.
+      - run: |
+          [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -ge 40 ] ||
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: bun run toolchains pull
       - run: bun run payload
-      - run: bun run test
+      - run: bun run test:shard ${{ matrix.shard }}
+
+  image:
+    needs: toolchains
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      # The payload, what provisions it, and the image built from it take
+      # more disk than some runners start with free.
+      - run: |
+          [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -ge 40 ] ||
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: bun run toolchains pull
+      - run: bun run payload
       - run: bun run image
       - run: bun run test:e2e
