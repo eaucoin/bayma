@@ -1,8 +1,10 @@
 import { join, resolve } from "node:path";
 import { build } from "./build.ts";
+import { buildCli } from "./cli-package.ts";
 import { buildImage } from "./image.ts";
 import { assemblePayload } from "./payload.ts";
 import { provision, readProvisionRecord } from "./provision/index.ts";
+import { pinRelease } from "./release.ts";
 import { run } from "./shared/process.ts";
 import { bunJUnitReport, runTests } from "./shared/tests.ts";
 import { inCommand, startTelemetry, stopTelemetry } from "./telemetry/index.ts";
@@ -14,7 +16,10 @@ const workDir = join(repoRoot, ".work");
 function usage(): never {
   console.error(`usage: bun tooling/src/cli.ts <command>
 
-  build                  bundle the server for Node into dist
+  build                  bundle the server for Node into dist, and the bayma
+                         command into packages/cli/dist
+  pin DIGEST             pin the bayma command to the image of DIGEST, as a
+                         release does once it has pushed the image
   provision              download and verify every pinned toolchain into .work
   payload                assemble dist/payload
   image                  build and tag the image from dist and the Dockerfile
@@ -49,6 +54,13 @@ const COMMANDS: Record<string, (args: string[]) => Promise<number>> = {
   async build() {
     const result = await build(repoRoot, distDir);
     console.log(`built ${result.bundle}`);
+    const cli = await buildCli(repoRoot);
+    console.log(`built ${cli.bundle}`);
+    return 0;
+  },
+  async pin([digest, ...rest]) {
+    if (digest === undefined || rest.length > 0) usage();
+    console.log(`pinned ${digest} in ${pinRelease(repoRoot, digest)}`);
     return 0;
   },
   async provision() {

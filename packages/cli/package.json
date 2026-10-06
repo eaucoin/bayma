@@ -1,0 +1,22 @@
+{
+  "name": "bayma",
+  "version": "0.11.0",
+  "description": "Set up bayma, a durable engine for REPL sessions, and launch its MCP servers in Docker: npx bayma init",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "bayma": "dist/bayma.js"
+  },
+  "files": [
+    "dist/bayma.js"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eaucoin/bayma.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/eaucoin/bayma"
+}

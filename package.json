@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "build": "bun --env-file=otel.env tooling/src/cli.ts build",
+    "pin": "bun --env-file=otel.env tooling/src/cli.ts pin",
     "provision": "bun --env-file=otel.env tooling/src/cli.ts provision",
     "payload": "bun --env-file=otel.env tooling/src/cli.ts payload",
     "image": "bun --env-file=otel.env tooling/src/cli.ts image",
