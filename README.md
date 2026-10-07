@@ -6,6 +6,8 @@ bayma REPL session works like a Jupyter notebook, presented to it as an MCP
 server whose function calls look similar to other "code mode" execution
 interfaces.
 
+It supports eight REPL runtimes, including Bun, Python, Lean, and Go.
+
 ## Get Started
 
 On Linux (x64), with Docker and Node 22 or later, set bayma up:
@@ -42,15 +44,6 @@ its whole process and everything it holds, and a later bayma restores it where
 it left off; after a reboot, a REPL session comes back from its own
 checkpoints instead.
 
-bayma exports OpenTelemetry traces, metrics, and logs of its own work, over
-OTLP's HTTP protocols, to wherever `OTEL_EXPORTER_OTLP_ENDPOINT` and
-OpenTelemetry's other standard variables say, as set where your MCP client
-launches it; with none set, it exports nothing. Each MCP request is a span
-that continues the trace its client propagated, in the request's `_meta` or
-its `traceparent` header, with spans for the execs, runtimes, and REPL
-sessions it concerns. A REPL session is never told where
-bayma exports.
-
 Then you can use bayma. Each runtime has a skill, `bayma-runtime-*`, on how to
 work in that runtime with bayma. Within a REPL session, an agent executes code
 in that runtime, including against legacy software. For example, in the C++
@@ -77,10 +70,6 @@ Each of these is a `bayma-platform-*` skill: one per platform, meaning an
 application or service an agent drives through its API. The skill shows where
 that API's reference is, and keeps what the platform needs in its own folder
 rather than being bundled with bayma.
-
-What code in a REPL session renders, such as a plot, a screenshot, or a
-frame, it can show the agent as an image beside the exec's output; each
-runtime's skill names the helper that shows one.
 
 Within each of the two namespaces, the skills share a similar structure, which
 makes it easier to add new runtimes and platforms.
