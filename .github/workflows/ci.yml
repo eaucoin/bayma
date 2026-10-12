@@ -1,10 +1,11 @@
 name: ci
 
 # On demand only: every run tests the whole payload, and builds and tests the
-# image from it. The payload's toolchains come from their images on GitHub's
-# container registry; the toolchains job first provisions and pushes any the
-# registry lacks (tooling/src/toolchains.ts). The tests run in shards, side
-# by side with the image's.
+# image from it, also in a gVisor sandbox saved and restored whole. The
+# payload's toolchains come from their images on GitHub's container
+# registry; the toolchains job first provisions and pushes any the registry
+# lacks (tooling/src/toolchains.ts). The tests run in shards, side by side
+# with the image's.
 on:
   workflow_dispatch:
 
@@ -132,3 +133,55 @@ jobs:
       - run: bun run payload
       - run: bun run image
       - run: bun run test:e2e
+
+  # The image saved whole and restored by gVisor's runsc, as a host that runs
+  # bayma in sandboxes saves and restores it: alasio's fork of gVisor, at the
+  # release alasio pins (its cluster/node/pins.json).
+  sandbox:
+    needs: toolchains
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      GVISOR_RELEASE: 20260921.0-eaucoin.3
+      GVISOR_SHA512: ab59ce25025c28460cc07742e7a7e0679f8bda989513c113dca2a1b6215a791e6e2134022ed5bee33524f7132eb379eb0c83d6a8e796c15d4319dfd1b1a9647b
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      # The payload, what provisions it, and the image built from it take
+      # more disk than some runners start with free.
+      - run: |
+          [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -ge 40 ] ||
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: bun run toolchains pull
+      - run: bun run payload
+      - run: bun run image
+      # runsc and its shim beside Docker's: Docker starts the runtime runsc's
+      # sandboxes through the shim, and restores a container from a
+      # checkpoint only with its experimental features on. runsc's sandboxes
+      # make user namespaces, which Ubuntu's AppArmor refuses by default.
+      - run: |
+          curl -fsSL -o "$RUNNER_TEMP/gvisor.tar.zstd" \
+            "https://github.com/eaucoin/gvisor/releases/download/release-$GVISOR_RELEASE/gvisor-x86_64.tar.zstd"
+          echo "$GVISOR_SHA512  $RUNNER_TEMP/gvisor.tar.zstd" | sha512sum -c -
+          mkdir "$RUNNER_TEMP/gvisor"
+          zstd -dc "$RUNNER_TEMP/gvisor.tar.zstd" | tar -x -C "$RUNNER_TEMP/gvisor"
+          sudo cp -r "$RUNNER_TEMP/gvisor/runsc" "$RUNNER_TEMP/gvisor/containerd-shim-runsc-v1" \
+            "$RUNNER_TEMP/gvisor/gvisor-bin" /usr/local/bin/
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          { sudo cat /etc/docker/daemon.json 2>/dev/null || echo '{}'; } |
+            jq '. + {experimental: true, runtimes: {runsc: {runtimeType: "io.containerd.runsc.v1"}}}' |
+            sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - run: bun run test:sandbox

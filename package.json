@@ -17,6 +17,7 @@
     "test": "bun --env-file=otel.env tooling/src/cli.ts test tests/unit tests/integration tests/tooling",
     "test:shard": "bun --env-file=otel.env tooling/src/cli.ts test-shard",
     "test:e2e": "bun --env-file=otel.env tooling/src/cli.ts test tests/e2e",
+    "test:sandbox": "bun --env-file=otel.env tooling/src/cli.ts test tests/sandbox",
     "typecheck": "bun --env-file=otel.env tooling/src/cli.ts typecheck",
     "format": "bun --env-file=otel.env tooling/src/cli.ts format",
     "format:check": "bun --env-file=otel.env tooling/src/cli.ts format --check"
