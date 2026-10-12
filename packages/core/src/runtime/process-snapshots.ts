@@ -380,6 +380,28 @@ export function processSnapshotter(
   return detected;
 }
 
+const availability = new WeakMap<
+  ProcessSnapshotter,
+  Promise<string | undefined>
+>();
+
+/**
+ * Why `snapshotter` cannot snapshot sessions here, or undefined if it can, as
+ * `snapshotsUnavailableReason` finds it the first time it is asked. Where
+ * CRIU cannot run, as in a container without its capabilities or a gVisor
+ * sandbox, a server then dumps no session only to fail.
+ */
+export function snapshotsUnavailableHere(
+  snapshotter: ProcessSnapshotter,
+): Promise<string | undefined> {
+  let found = availability.get(snapshotter);
+  if (!found) {
+    found = snapshotsUnavailableReason(snapshotter);
+    availability.set(snapshotter, found);
+  }
+  return found;
+}
+
 /**
  * Why `snapshotter` cannot snapshot sessions here, or undefined if it can:
  * found by dumping a process started for it, as a session's tree is dumped

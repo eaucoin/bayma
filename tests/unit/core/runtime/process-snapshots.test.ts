@@ -14,6 +14,7 @@ import {
   CriuSnapshotter,
   processSnapshotter,
   restoreFailure,
+  snapshotsUnavailableHere,
   snapshotsUnavailableReason,
   type ProcessSnapshot,
 } from "@bayma/core";
@@ -333,6 +334,27 @@ test("whether sessions can be snapshotted is found by dumping a process", async 
         ),
       ),
     ).toMatch(/^process snapshot of \d+ failed:\nCRIU was killed by SIGKILL$/);
+  });
+});
+
+test("whether a snapshotter can snapshot sessions here is found once", async () => {
+  await withTempDir(async (dir) => {
+    const snapshotter = new CriuSnapshotter(
+      writeScript(
+        join(dir, "refusing"),
+        `echo refused >> ${join(dir, "runs")}; exit 1`,
+      ),
+      "/opt/advance-pids",
+    );
+    const reasons = [
+      await snapshotsUnavailableHere(snapshotter),
+      await snapshotsUnavailableHere(snapshotter),
+    ];
+    expect(reasons[0]).toMatch(
+      /^process snapshot of \d+ failed:\nCRIU exited with status 1/,
+    );
+    expect(reasons[1]).toBe(reasons[0]);
+    expect(readFileSync(join(dir, "runs"), "utf8")).toBe("refused\n");
   });
 });
 

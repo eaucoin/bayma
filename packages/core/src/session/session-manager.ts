@@ -266,6 +266,8 @@ export class SessionManager {
    * evicted ended, whichever was later.
    */
   private removedSessionsIdleSinceMs = Date.now();
+  /** Whether the server said that no process snapshot can be taken here. */
+  private snapshotsUnavailableReported = false;
 
   private readonly registry: RuntimeRegistry;
   private readonly catalogStore: SessionCatalogStore;
@@ -1777,6 +1779,15 @@ export class SessionManager {
       runtime.activeExec ||
       runtime.queue.length > 0
     ) {
+      return false;
+    }
+    const unavailable = await snapshots.unavailableReason();
+    if (unavailable) {
+      if (!this.snapshotsUnavailableReported)
+        report(
+          `sessions will come back from their checkpoints, as no process snapshot can be taken here: ${unavailable}`,
+        );
+      this.snapshotsUnavailableReported = true;
       return false;
     }
     const { sessionId } = session.record;

@@ -193,6 +193,32 @@ test("a session whose runtime fails to dump comes back from its checkpoint", asy
   });
 });
 
+test("where no snapshot can be taken, shutdown dumps no session, and says why once", async () => {
+  await withTempDir(async (dir) => {
+    const { catalogStore } = stores(dir);
+    const transport = new SnapshottingTransport();
+    transport.unavailable = "CRIU could not start";
+    const manager = managerFor(stores(dir), transport);
+    const sessions = [
+      await createCheckpointed(manager, dir),
+      await createCheckpointed(manager, dir),
+    ];
+
+    await manager.shutdown();
+
+    expect(transport.dumps).toEqual([]);
+    for (const sessionId of sessions) {
+      expect(catalogStore.read(sessionId)).toEqual(
+        expect.objectContaining({ status: "suspended" }),
+      );
+      expect(catalogStore.read(sessionId)?.processSnapshot).toBeUndefined();
+    }
+    expect(reports).toEqual([
+      "bayma: sessions will come back from their checkpoints, as no process snapshot can be taken here: CRIU could not start\n",
+    ]);
+  });
+});
+
 test("a session comes back from its process snapshot, not its checkpoint", async () => {
   await withTempDir(async (dir) => {
     const { catalogStore } = stores(dir);

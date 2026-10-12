@@ -43,6 +43,11 @@ export interface TransportSnapshots {
   ): Promise<TransportSessionHandle>;
   /** Why `snapshot` cannot be restored here, or undefined if it can. */
   unrestorableReason(snapshot: ProcessSnapshot): string | undefined;
+  /**
+   * Why no snapshot can be taken here, as a snapshot of a process started for
+   * it finds once, or undefined if one can: asked before a session is dumped.
+   */
+  unavailableReason(): Promise<string | undefined>;
 }
 
 export interface RuntimeTransport {

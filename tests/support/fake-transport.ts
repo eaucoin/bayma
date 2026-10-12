@@ -263,6 +263,8 @@ export class SnapshottingTransport extends FakeTransport {
   restoreFailure?: string;
   /** Set to make every snapshot unrestorable, for this reason. */
   unrestorable?: string;
+  /** Set to make snapshots impossible to take here, for this reason. */
+  unavailable?: string;
   /** What a restored runtime answers its doctor probe with. */
   probeAnswer = "42";
 
@@ -273,6 +275,7 @@ export class SnapshottingTransport extends FakeTransport {
     restore: (input, snapshot, directory) =>
       this.restore(input, snapshot, directory),
     unrestorableReason: () => this.unrestorable,
+    unavailableReason: async () => this.unavailable,
   };
 
   override async startSession(

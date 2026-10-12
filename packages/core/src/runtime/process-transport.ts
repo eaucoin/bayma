@@ -10,6 +10,7 @@ import {
   criuEnding,
   processSnapshotter,
   restoreFailure,
+  snapshotsUnavailableHere,
   type CriuExit,
   type ProcessSnapshot,
   type ProcessSnapshotter,
@@ -228,6 +229,7 @@ export class ProcessTransport implements RuntimeTransport {
           this.restore(snapshotter, input, snapshot, directory),
         unrestorableReason: (snapshot) =>
           snapshotter.unrestorableReason(snapshot),
+        unavailableReason: () => snapshotsUnavailableHere(snapshotter),
       };
     }
   }
