@@ -113,6 +113,8 @@ export class OtlpSink {
   readonly metrics: ReceivedMetric[] = [];
   /** Every path requested, in order. */
   readonly paths: string[] = [];
+  /** Every request's Authorization header, or null for none, in order. */
+  readonly authorizations: (string | null)[] = [];
   private readonly server: ReturnType<typeof Bun.serve>;
 
   constructor() {
@@ -121,6 +123,7 @@ export class OtlpSink {
       fetch: async (request) => {
         const path = new URL(request.url).pathname;
         this.paths.push(path);
+        this.authorizations.push(request.headers.get("authorization"));
         this.receive((await request.json()) as Payload);
         return Response.json({});
       },

@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   Client,
@@ -14,6 +17,7 @@ import {
   type ReceivedMetric,
   type ReceivedSpan,
 } from "../../support/otlp-sink.ts";
+import { launchSpec, runSandboxHookCommand } from "../../support/runtimes.ts";
 
 // A server configured to export telemetry records its requests and its
 // sessions' work, continuing the trace each client propagates, and tells no
@@ -193,6 +197,112 @@ test(
     expect(listed.parentSpanId).toBe(CLIENT_SPAN);
     expect(listed.attributes["network.transport"]).toBe("tcp");
     expect(listed.attributes["mcp.session.id"]).toBeString();
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a server records its sandbox's save and restore, exporting with the token its host gives it",
+  async () => {
+    const from = sink.authorizations.length;
+    const server = await launchMcpHttpServer({
+      env: exporting({
+        OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer%20from-environment",
+        OTEL_BSP_SCHEDULE_DELAY: "100",
+      }),
+      bearerToken: "first-token",
+      telemetryToken: true,
+    });
+    /** The span named `name`, once the sink has it from this server. */
+    const span = async (name: string): Promise<ReceivedSpan> => {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const found = sink.spans.find(
+          (candidate) =>
+            candidate.name === name &&
+            candidate.resource["process.pid"] === server.child.pid,
+        );
+        if (found) return found;
+        await sleep(50);
+      }
+      throw new Error(`the sink received no ${name} from the server`);
+    };
+    try {
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      await span("bayma.sandbox.save");
+      writeFileSync(server.tokenFile, "second-token\n");
+      expect(await runSandboxHookCommand(server.stateDir, "restore")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      const restored = await span("bayma.sandbox.restore");
+      expect(restored.attributes["bayma.sandbox.saved.duration"]).toBeNumber();
+    } finally {
+      await server.close();
+    }
+    const authorizations = sink.authorizations.slice(from);
+    expect(authorizations).toContain("Bearer first-token");
+    expect(authorizations.at(-1)).toBe("Bearer second-token");
+    expect(new Set(authorizations)).toEqual(
+      new Set(["Bearer first-token", "Bearer second-token"]),
+    );
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a server whose telemetry token is blank does not start, and one it cannot read again says so once",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "bayma-telemetry-token-"));
+    const tokenFile = join(root, "token");
+    const launch = launchSpec();
+    const serve = (env: Record<string, string>) =>
+      Bun.spawn(
+        [
+          launch.command,
+          ...launch.args,
+          "mcp-http",
+          "--port",
+          "0",
+          "--state-dir",
+          join(root, "state"),
+          "--telemetry-token-file",
+          tokenFile,
+        ],
+        { env: exporting(env), stdout: "ignore", stderr: "pipe" },
+      );
+    try {
+      writeFileSync(tokenFile, " \n");
+      const blank = serve({});
+      expect(await blank.exited).not.toBe(0);
+      expect(await new Response(blank.stderr).text()).toContain(
+        "telemetry bearer token must be non-empty, with no surrounding whitespace",
+      );
+
+      writeFileSync(tokenFile, "telemetry-token\n");
+      const from = sink.authorizations.length;
+      const server = serve({ OTEL_BSP_SCHEDULE_DELAY: "100" });
+      const deadline = Date.now() + 10_000;
+      while (
+        !sink.authorizations.slice(from).includes("Bearer telemetry-token") &&
+        Date.now() < deadline
+      )
+        await sleep(50);
+      expect(sink.authorizations.slice(from)).toContain(
+        "Bearer telemetry-token",
+      );
+      rmSync(tokenFile);
+      // Stopped as `docker stop` stops it, it exports what it holds.
+      server.kill("SIGTERM");
+      await server.exited;
+      const said = await new Response(server.stderr).text();
+      expect(said.split("bayma: telemetry: not exported: ").length).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   },
   TEST_TIMEOUT_MS,
 );

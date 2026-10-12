@@ -58,10 +58,13 @@ function diagnosticsLevel(name: string | undefined): DiagLogLevel | undefined {
  * Starts exporting what the environment configures, the process's resource
  * `attributes` beneath what the environment says; a signal configured that
  * bayma cannot export is named on stderr. A process started by one being
- * traced continues its trace, from TRACEPARENT and TRACESTATE.
+ * traced continues its trace, from TRACEPARENT and TRACESTATE. Given
+ * `bearerTokenFile`, every export carries the token it holds as
+ * `Authorization: Bearer`, read anew for each export.
  */
 export async function startTelemetry(
   attributes: Record<string, string>,
+  bearerTokenFile?: string,
 ): Promise<void> {
   if (running) return;
   const level = diagnosticsLevel(process.env.OTEL_LOG_LEVEL);
@@ -73,7 +76,7 @@ export async function startTelemetry(
   if (config.exports.length === 0) return;
   const { startSdk } = await import("./sdk.ts");
   running = {
-    shutdown: startSdk(config.exports, attributes),
+    shutdown: startSdk(config.exports, attributes, bearerTokenFile),
     parent: propagation.extract(ROOT_CONTEXT, {
       traceparent: process.env.TRACEPARENT,
       tracestate: process.env.TRACESTATE,

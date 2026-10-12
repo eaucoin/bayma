@@ -18,6 +18,7 @@ import {
 } from "./mcp/sandbox-hook.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
 import { defaultStateDir } from "./paths.ts";
+import { readTokenFile } from "./token-file.ts";
 import { failureDetail, failureMessage } from "./errors.ts";
 import { startTelemetry, stopTelemetry } from "./telemetry/index.ts";
 import { log, report, SeverityNumber } from "./telemetry/record.ts";
@@ -107,23 +108,29 @@ Commands:
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
       [--client-idle-timeout-ms N] [--token-file PATH]
+      [--telemetry-token-file PATH]
       serve MCP over Streamable HTTP; a client session with no request or
       stream open for the idle timeout, five minutes unless given, is
       closed; with --token-file, every request must carry the file's
-      token as Authorization: Bearer. GET /status answers, as JSON, how
-      many execs are running and queued in every session (execsRunning,
-      execsQueued) and, when none is, since when (idleSinceMs)
-  sandbox-hook [save|restore|resume] [--state-dir PATH]
+      token as Authorization: Bearer, read again once its sandbox is
+      restored, for its new host's token; with --telemetry-token-file,
+      each export of its telemetry carries that file's token as its
+      bearer, read for each export. GET /status answers, as JSON, how many execs are
+      running and queued in every session (execsRunning, execsQueued)
+      and, when none is, since when (idleSinceMs)
+  sandbox-hook [save|restore|resume] --state-dir PATH
       tell the server of the state directory that the sandbox it runs in
       is about to be saved whole, was restored, or runs on after a save, as
       a host that saves sandboxes runs it in the sandbox: gVisor's runsc
       checkpoint --save-restore-exec-argv, naming the mode in
       GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
-      committed on storage and holds clients' idle timeouts; a restore
-      reads the token file again, starts clients' reconnect grace and
-      idle timeouts again, and tells each live session's exec; a host
-      whose save fails runs resume. A gVisor sandbox's file locks hold
-      within it alone, so such a host runs one server per state directory
+      committed on storage, and holds requests and timeouts until the
+      restore or resume; a restore reads the token file again, starts
+      clients' reconnect grace and idle timeouts again, and tells each
+      live session's exec; a host whose save fails runs resume, and a
+      save neither follows within ten minutes is given up on. A gVisor
+      sandbox's file locks hold within it alone, so such a host runs one
+      server per state directory
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
@@ -148,15 +155,19 @@ standard variables say; with none set, nothing is exported.`);
 
 /**
  * Telemetry, for a command that does bayma's work, as the environment
- * configures it. It starts before the payload's environment, which REPL
- * sessions run with and which leaves telemetry settings out, is applied.
+ * configures it, with the token `bearerTokenFile` holds as its bearer if
+ * given. It starts before the payload's environment, which REPL sessions run
+ * with and which leaves telemetry settings out, is applied.
  */
-async function startCommandTelemetry(): Promise<void> {
-  await startTelemetry({
-    "service.name": "bayma",
-    "service.version": BAYMA_VERSION,
-    "service.instance.id": randomUUID(),
-  });
+async function startCommandTelemetry(bearerTokenFile?: string): Promise<void> {
+  await startTelemetry(
+    {
+      "service.name": "bayma",
+      "service.version": BAYMA_VERSION,
+      "service.instance.id": randomUUID(),
+    },
+    bearerTokenFile,
+  );
 }
 
 /** Tells the operator how installing the toolbelt goes, on stderr. */
@@ -222,9 +233,15 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         "--path",
         "--client-idle-timeout-ms",
         "--token-file",
+        "--telemetry-token-file",
         ...SERVER_OPTIONS,
       ]);
-      await startCommandTelemetry();
+      const telemetryTokenFile = parsed.get("--telemetry-token-file");
+      // Read once now, so that a server never starts with a token it cannot
+      // export with.
+      if (telemetryTokenFile !== undefined)
+        readTokenFile(telemetryTokenFile, "telemetry bearer token");
+      await startCommandTelemetry(telemetryTokenFile);
       await serveInstallingToolbelt((toolbelt) =>
         serveMcpHttp(adapters, {
           host: option(parsed, "--host", "127.0.0.1"),

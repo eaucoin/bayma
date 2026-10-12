@@ -33,6 +33,7 @@ import {
   BasicTracerProvider,
   BatchSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
+import { readTokenFile } from "../token-file.ts";
 import type { SignalExport } from "./config.ts";
 
 // The OpenTelemetry SDK, which only telemetry that is configured loads,
@@ -43,14 +44,43 @@ import type { SignalExport } from "./config.ts";
 // variables; see config.ts.
 
 /**
+ * The headers of an export carrying the token `file` holds as its bearer,
+ * read for each export. An export whose token cannot be read fails, which is
+ * said on stderr, once until a token is read again.
+ */
+function bearerHeaders(file: string): () => Promise<Record<string, string>> {
+  let failing = false;
+  return async () => {
+    try {
+      const token = readTokenFile(file, "the telemetry bearer token");
+      failing = false;
+      return { authorization: `Bearer ${token}` };
+    } catch (error) {
+      if (!failing)
+        process.stderr.write(
+          `bayma: telemetry: not exported: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      failing = true;
+      throw error;
+    }
+  };
+}
+
+/**
  * Starts the SDK for `exports`, with `attributes` as the resource beneath
- * what the environment and the host and process detectors say. Returns what
- * flushes and stops it.
+ * what the environment and the host and process detectors say, and with the
+ * token `bearerTokenFile` holds, when given, as every export's bearer, read
+ * for each export. Returns what flushes and stops it.
  */
 export function startSdk(
   exports: readonly SignalExport[],
   attributes: Record<string, string>,
+  bearerTokenFile?: string,
 ): () => Promise<void> {
+  const exporterOptions =
+    bearerTokenFile === undefined
+      ? {}
+      : { headers: bearerHeaders(bearerTokenFile) };
   const resource = defaultResource()
     .merge(resourceFromAttributes(attributes))
     .merge(
@@ -81,8 +111,8 @@ export function startSdk(
       spanProcessors: [
         new BatchSpanProcessor(
           json("traces")
-            ? new JsonTraceExporter()
-            : new ProtobufTraceExporter(),
+            ? new JsonTraceExporter(exporterOptions)
+            : new ProtobufTraceExporter(exporterOptions),
         ),
       ],
     });
@@ -97,8 +127,8 @@ export function startSdk(
       readers: [
         new PeriodicExportingMetricReader({
           exporter: json("metrics")
-            ? new JsonMetricExporter()
-            : new ProtobufMetricExporter(),
+            ? new JsonMetricExporter(exporterOptions)
+            : new ProtobufMetricExporter(exporterOptions),
           exportIntervalMillis,
           // An export may take no longer than the interval between two, as
           // the reader requires: the timeout is clamped to the interval.
@@ -118,8 +148,8 @@ export function startSdk(
       processors: [
         new BatchLogRecordProcessor({
           exporter: json("logs")
-            ? new JsonLogExporter()
-            : new ProtobufLogExporter(),
+            ? new JsonLogExporter(exporterOptions)
+            : new ProtobufLogExporter(exporterOptions),
         }),
       ],
     });

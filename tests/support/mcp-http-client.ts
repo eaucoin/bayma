@@ -245,6 +245,8 @@ export interface McpHttpServerOptions {
   clientIdleTimeoutMs?: number;
   /** Serve with --token-file, a file holding this token. */
   bearerToken?: string;
+  /** Serve with --telemetry-token-file naming the token's file too. */
+  telemetryToken?: boolean;
   /** The server's environment: this process's unless given. */
   env?: NodeJS.ProcessEnv;
 }
@@ -300,6 +302,7 @@ export async function launchMcpHttpServer(
         ? []
         : ["--client-idle-timeout-ms", String(options.clientIdleTimeoutMs)]),
       ...(options.bearerToken === undefined ? [] : ["--token-file", tokenFile]),
+      ...(options.telemetryToken ? ["--telemetry-token-file", tokenFile] : []),
     ],
     {
       detached: true,
