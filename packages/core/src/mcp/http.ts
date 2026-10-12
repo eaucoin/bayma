@@ -65,6 +65,9 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // was replaced or its connections were lost to a sandbox's restore.
 const CLIENT_RECONNECT_GRACE_MS = 10_000;
 const HTTP_ACTOR_ID_PREFIX = "actor_mcp_http_";
+// Where a host that runs bayma asks whether it has execs to run, to release
+// it once it has none: a GET answers the server's ExecActivity as JSON.
+const STATUS_PATH = "/status";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /**
@@ -182,6 +185,9 @@ export async function serveMcpHttp(
   ) {
     throw new Error("MCP HTTP path must be one absolute URL pathname");
   }
+  if (config.path === STATUS_PATH) {
+    throw new Error(`MCP HTTP path must not be ${STATUS_PATH}`);
+  }
   if (
     !Number.isSafeInteger(config.clientIdleTimeoutMs) ||
     config.clientIdleTimeoutMs < 1 ||
@@ -257,6 +263,17 @@ export async function serveMcpHttp(
     } catch {
       response.statusCode = 400;
       response.end("invalid request target");
+      return;
+    }
+    if (url.pathname === STATUS_PATH) {
+      if (request.method !== "GET") {
+        response.statusCode = 405;
+        response.setHeader("allow", "GET");
+        response.end();
+        return;
+      }
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(manager.execActivity()));
       return;
     }
     if (url.pathname !== config.path) {

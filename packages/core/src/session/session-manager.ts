@@ -42,6 +42,7 @@ import {
 } from "./checkpoint-store.ts";
 import type {
   DurabilityMode,
+  ExecActivity,
   SessionDetail,
   SessionRole,
   SessionStatus,
@@ -236,6 +237,11 @@ export class SessionManager {
   private catalogLoaded = false;
   private shuttingDown = false;
   private shutdownPromise?: Promise<void>;
+  /**
+   * When the server started, or the last exec of a session since closed or
+   * evicted ended, whichever was later.
+   */
+  private removedSessionsIdleSinceMs = Date.now();
 
   private readonly registry: RuntimeRegistry;
   private readonly catalogStore: SessionCatalogStore;
@@ -540,6 +546,36 @@ export class SessionManager {
 
   serverEvents(fromSeq = 1): SessionEventRecord[] {
     return this.serverEventLog.since(fromSeq);
+  }
+
+  /**
+   * How many execs clients submitted are running and queued in every
+   * session, and since when none has been. An exec counts from its
+   * submission to its end, whether or not a call still waits on it; bayma's
+   * own, which probe and recover sessions, are not counted.
+   */
+  execActivity(): ExecActivity {
+    let execsRunning = 0;
+    let execsQueued = 0;
+    let idleSinceMs = this.removedSessionsIdleSinceMs;
+    for (const { history } of this.sessions.values()) {
+      // A session runs its execs one at a time in the order they came, so
+      // those that have not ended are the last of its history.
+      for (let index = history.length - 1; index >= 0; index -= 1) {
+        const record = history[index]!;
+        if (record.status === "running") execsRunning += 1;
+        else if (record.status === "queued") execsQueued += 1;
+        else {
+          idleSinceMs = Math.max(idleSinceMs, record.finishedAtMs ?? 0);
+          break;
+        }
+      }
+    }
+    return {
+      execsRunning,
+      execsQueued,
+      idleSinceMs: execsRunning + execsQueued > 0 ? null : idleSinceMs,
+    };
   }
 
   checkpoint(sessionId: string): SessionCheckpoint | null {
@@ -1926,6 +1962,10 @@ export class SessionManager {
     }
 
     this.sessions.delete(session.record.sessionId);
+    this.removedSessionsIdleSinceMs = Math.max(
+      this.removedSessionsIdleSinceMs,
+      session.history.at(-1)?.finishedAtMs ?? 0,
+    );
     this.emitToActors(this.actorRecipients(session.record), {
       type: "session/closed",
       sessionId: session.record.sessionId,

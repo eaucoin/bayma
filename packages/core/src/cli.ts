@@ -106,7 +106,9 @@ Commands:
       serve MCP over Streamable HTTP; a client session with no request or
       stream open for the idle timeout, five minutes unless given, is
       closed; with --token-file, every request must carry the file's
-      token as Authorization: Bearer
+      token as Authorization: Bearer. GET /status answers, as JSON, how
+      many execs are running and queued in every session (execsRunning,
+      execsQueued) and, when none is, since when (idleSinceMs)
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by

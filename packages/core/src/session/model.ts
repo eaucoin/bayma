@@ -30,6 +30,20 @@ export interface SessionSummary {
   historyLength: number;
 }
 
+/**
+ * The execs clients submitted that have not ended, across every session: what
+ * a host that runs bayma releases it on, once none is left.
+ */
+export interface ExecActivity {
+  execsRunning: number;
+  execsQueued: number;
+  /**
+   * When the last exec ended, or the server started if none has since;
+   * null while any is running or queued.
+   */
+  idleSinceMs: number | null;
+}
+
 export interface SessionDetail extends SessionSummary {
   activeExecId?: string;
   queuedExecIds: string[];
