@@ -60,7 +60,9 @@ import type {
   ExecImage,
   ExecInterruptionReason,
   ExecMessageRecord,
+  ExecNotice,
   ExecRecord,
+  RecoverySource,
 } from "./exec-types.ts";
 import { execTimestampAtOrAfterHistory } from "./exec-types.ts";
 import { EventLog } from "./event-log.ts";
@@ -81,7 +83,6 @@ import {
   traceRestore,
   traceRuntimeStart,
   traceSnapshot,
-  type RecoverySource,
 } from "./telemetry.ts";
 
 export interface SessionRecord {
@@ -138,6 +139,8 @@ interface SessionEntry {
   cols: number;
   rows: number;
   recovery: RecoveryState;
+  /** How the session came back, for the next exec it runs to be told. */
+  notice?: ExecNotice;
   eventLog: EventLog;
   persistable?: boolean;
   catalogFailure?: {
@@ -904,6 +907,8 @@ export class SessionManager {
             ),
             messages: [],
           };
+          if (session.notice) record.notice = session.notice;
+          session.notice = undefined;
           rememberSubmission(record);
           session.history.push(record);
           this.touchSession(session);
@@ -1525,7 +1530,7 @@ export class SessionManager {
   /**
    * Bring a checkpointed session's runtime back after the server that ran it
    * stopped: whole from its process snapshot, or else from its checkpoint.
-   * Returns which.
+   * Returns which, as the session's next exec is told.
    */
   private async recoverRuntime(session: SessionEntry): Promise<RecoverySource> {
     const snapshot = session.record.processSnapshot;
@@ -1574,7 +1579,10 @@ export class SessionManager {
       sessionId: session.record.sessionId,
       status: "live_idle",
     });
-    return snapshot && !snapshotFailure ? "process_snapshot" : "checkpoint";
+    const source =
+      snapshot && !snapshotFailure ? "process_snapshot" : "checkpoint";
+    session.notice = { returnedFrom: source };
+    return source;
   }
 
   private async spawnRuntime(

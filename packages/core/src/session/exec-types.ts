@@ -48,6 +48,18 @@ export interface ExecMessageRecord {
   image?: ExecImage;
 }
 
+/**
+ * How a session came back after the server that ran it stopped: whole from
+ * its process snapshot, or from its checkpoint.
+ */
+export const RECOVERY_SOURCES = ["process_snapshot", "checkpoint"] as const;
+export type RecoverySource = (typeof RECOVERY_SOURCES)[number];
+
+/** What an exec is told of how its session came back before it ran. */
+export interface ExecNotice {
+  returnedFrom: RecoverySource;
+}
+
 export interface ExecRecord {
   execId: string;
   code: string;
@@ -57,6 +69,8 @@ export interface ExecRecord {
   finishedAtMs?: number;
   durationMs?: number;
   interruptionReason?: ExecInterruptionReason;
+  /** How the session came back, told to the first exec it runs since. */
+  notice?: ExecNotice;
   messages: ExecMessageRecord[];
 }
 

@@ -9,7 +9,7 @@ import {
   SeverityNumber,
 } from "../telemetry/record.ts";
 import type { SessionEvent } from "./events.ts";
-import type { ExecRecord } from "./exec-types.ts";
+import type { ExecRecord, RecoverySource } from "./exec-types.ts";
 import type { SessionSummary } from "./model.ts";
 
 // What the session manager records: a span for each part of its work that
@@ -23,9 +23,6 @@ interface SessionIdentity {
   sessionId: string;
   runtimeId?: string;
 }
-
-/** How a session came back: whole from its process snapshot, or from its checkpoint. */
-export type RecoverySource = "process_snapshot" | "checkpoint";
 
 /** Seconds, from a quick exec to an hour-long one. */
 const RUN_SECONDS = [

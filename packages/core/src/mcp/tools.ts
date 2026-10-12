@@ -62,6 +62,7 @@ const ExecSnapshotSchema = z.strictObject({
       uri: z.string(),
     }),
   ),
+  notice: z.string().optional(),
 });
 
 const YieldTimeSchema = z

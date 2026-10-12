@@ -3,6 +3,7 @@ import type { RuntimeId } from "../runtime/id.ts";
 import type {
   ExecImageMimeType,
   ExecMessageRecord,
+  ExecNotice,
   ExecStatus,
 } from "../session/exec-types.ts";
 import type { SessionManager } from "../session/session-manager.ts";
@@ -69,6 +70,8 @@ export interface ExecSnapshot {
   error_text: string;
   /** The images the exec showed, whose content follows the snapshot's text. */
   images: ExecSnapshotImage[];
+  /** How the session came back before the exec ran, which its text opens with. */
+  notice?: string;
 }
 
 export interface ExecSnapshotImage {
@@ -155,15 +158,27 @@ export function renderExecTextContent(rendered: RenderedExecText): string {
 export function renderExecSnapshotText(
   snapshot: Pick<
     ExecSnapshot,
-    "stdout_text" | "stderr_text" | "result_text" | "error_text"
+    "stdout_text" | "stderr_text" | "result_text" | "error_text" | "notice"
   >,
 ): string {
-  return renderExecTextContent({
+  const output = renderExecTextContent({
     stdoutText: snapshot.stdout_text,
     stderrText: snapshot.stderr_text,
     resultText: snapshot.result_text,
     errorText: snapshot.error_text,
   });
+  if (snapshot.notice === undefined) return output;
+  return output ? `${snapshot.notice}\n${output}` : snapshot.notice;
+}
+
+/** What an exec is told, in words, of how its session came back. */
+export function describeExecNotice(notice: ExecNotice): string {
+  switch (notice.returnedFrom) {
+    case "checkpoint":
+      return "bayma: this session came back from its checkpoint after the server it ran in stopped; only its checkpointed state survived, and the rest of its live state is gone.";
+    case "process_snapshot":
+      return "bayma: this session came back whole after the server it ran in stopped; its live state survived, but its network connections were closed.";
+  }
 }
 
 export function projectExecText(
@@ -266,6 +281,7 @@ export async function collectExecSnapshot(
           ]
         : [],
     ),
+    ...(exec.notice ? { notice: describeExecNotice(exec.notice) } : {}),
   };
 }
 

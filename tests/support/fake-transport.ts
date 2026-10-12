@@ -41,6 +41,11 @@ function markerFromFile(path: string): string {
 
 export class FakeTransport implements RuntimeTransport {
   readonly sessions = new Map<string, FakeTransportSession>();
+  /**
+   * Set for every exec to commit this as its checkpoint, as each exec of a
+   * checkpointed session must.
+   */
+  checkpointValue?: unknown;
 
   private readonly autoComplete: boolean;
 
@@ -202,6 +207,22 @@ export class FakeTransport implements RuntimeTransport {
       this.emit(
         sessionId,
         `${eventPrefix}${JSON.stringify({ kind: "result", text: result })}\n`,
+      );
+    }
+    if (this.checkpointValue !== undefined) {
+      this.emit(
+        sessionId,
+        `${eventPrefix}${JSON.stringify({
+          kind: "checkpoint",
+          checkpoint: {
+            runtimeId: "bun",
+            codecId: "json-v1",
+            codecVersion: 1,
+            payloadKind: "json-inline",
+            inlineJson: this.checkpointValue,
+            compatibility: {},
+          },
+        })}\n`,
       );
     }
     this.emit(sessionId, `${eventPrefix}{"kind":"done"}\n`);
