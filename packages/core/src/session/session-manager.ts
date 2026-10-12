@@ -1,9 +1,14 @@
 import { Buffer } from "node:buffer";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { execFile as execFileCallback } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { TextDecoder } from "node:util";
+import { promisify, TextDecoder } from "node:util";
 import { aggregateFailure, failureDetail, failureMessage } from "../errors.ts";
+import {
+  runningTimeout,
+  sleepRunning,
+  type RunningTimeout,
+} from "../sandbox.ts";
 import type { RuntimeId } from "../runtime/id.ts";
 import {
   processSnapshotter,
@@ -64,7 +69,7 @@ import type {
   ExecRecord,
   RecoverySource,
 } from "./exec-types.ts";
-import { execTimestampAtOrAfterHistory } from "./exec-types.ts";
+import { execTimestampAtOrAfterHistory, isPendingExec } from "./exec-types.ts";
 import { EventLog } from "./event-log.ts";
 import {
   appendExecMessage,
@@ -217,9 +222,25 @@ export function validateSessionManagerOptions(
   }
 }
 
+const execFile = promisify(execFileCallback);
+
 const PTY_DELTA_MAX_BYTES = 64 * 1024;
 // How long a runtime restored from a process snapshot has to answer a probe.
 const PROBE_TIMEOUT_MS = 30_000;
+
+/**
+ * What an exec is told of how its session came back, told `earlier` and now
+ * `notice`: a sandbox's latest restore, unless the session lost more than a
+ * restore of the sandbox loses.
+ */
+function noticeAfter(
+  earlier: ExecNotice | undefined,
+  notice: ExecNotice,
+): ExecNotice {
+  return earlier === undefined || earlier.returnedFrom === "sandbox_snapshot"
+    ? notice
+    : earlier;
+}
 
 function execFailed(record: ExecRecord): boolean {
   return record.status === "error";
@@ -566,12 +587,12 @@ export class SessionManager {
       // those that have not ended are the last of its history.
       for (let index = history.length - 1; index >= 0; index -= 1) {
         const record = history[index]!;
-        if (record.status === "running") execsRunning += 1;
-        else if (record.status === "queued") execsQueued += 1;
-        else {
+        if (!isPendingExec(record)) {
           idleSinceMs = Math.max(idleSinceMs, record.finishedAtMs ?? 0);
           break;
         }
+        if (record.status === "running") execsRunning += 1;
+        else execsQueued += 1;
       }
     }
     return {
@@ -739,7 +760,7 @@ export class SessionManager {
         holder && holder !== actorId
           ? (this.options.actorReconnectWindowMs?.(holder) ?? 0)
           : 0;
-      if (windowMs > 0) await sleep(windowMs);
+      if (windowMs > 0) await sleepRunning(windowMs);
     }
     return this.withSessionMutation(sessionId, async (session) => {
       if (role === "controller") {
@@ -1031,6 +1052,59 @@ export class SessionManager {
       } catch (error) {
         if (this.sessions.has(sessionId)) throw error;
       }
+    }
+  }
+
+  /**
+   * Waits until what every session committed, its state and the files of
+   * the directory it works in, is on storage: the sandbox bayma runs in is
+   * about to be saved, and if the save cannot be restored, its sessions come
+   * back from what storage holds. Checkpoints commit as their execs end, so
+   * none is ever half-written while this runs.
+   */
+  async syncToStorage(): Promise<void> {
+    const directories = [
+      this.catalogStore.rootDir,
+      ...new Set(
+        [...this.sessions.values()].map((session) => session.record.cwd),
+      ),
+    ].filter((directory) => existsSync(directory));
+    await execFile("sync", ["--file-system", ...directories]);
+  }
+
+  /**
+   * Tells each live session it came back whole with the sandbox bayma runs
+   * in, restored from a snapshot taken at `snapshotAtMs`: through the exec it
+   * is running or runs next, which a client still waits on, or else the next
+   * it runs. A restore after one told of earlier tells of itself instead; a
+   * session told it came back from its checkpoint, or its process snapshot,
+   * keeps what it was told.
+   */
+  sandboxRestored(snapshotAtMs: number): void {
+    const notice: ExecNotice = {
+      returnedFrom: "sandbox_snapshot",
+      snapshotAtMs,
+    };
+    const failures: unknown[] = [];
+    for (const session of this.sessions.values()) {
+      if (!session.runtime) continue;
+      const pending = session.history.find(isPendingExec);
+      if (!pending) {
+        session.notice = noticeAfter(session.notice, notice);
+        continue;
+      }
+      pending.notice = noticeAfter(pending.notice, notice);
+      try {
+        this.persist(session);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw aggregateFailure(
+        "sessions' notices of the sandbox's restore were not persisted",
+        failures,
+      );
     }
   }
 
@@ -1810,7 +1884,7 @@ export class SessionManager {
       submittedAtMs: Date.now(),
       messages: [],
     };
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: RunningTimeout | undefined;
     try {
       await Promise.race([
         this.runExec(session, record, {
@@ -1819,7 +1893,7 @@ export class SessionManager {
           checkpoint: this.checkpointStore.snapshot(session.record.sessionId),
         }),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
+          timer = runningTimeout(
             () =>
               reject(
                 new Error(
@@ -1831,7 +1905,7 @@ export class SessionManager {
         }),
       ]);
     } finally {
-      clearTimeout(timer);
+      timer?.clear();
     }
     doctor.assertSuccess(record);
   }
@@ -2628,7 +2702,7 @@ export class SessionManager {
     record: ExecRecord,
     error: unknown,
   ): Promise<void> {
-    if (record.status !== "queued" && record.status !== "running") return;
+    if (!isPendingExec(record)) return;
     const observedAtMs = Date.now();
     const messageText = failureDetail(error);
     if (session.runtime?.activeExec?.record.execId === record.execId) {

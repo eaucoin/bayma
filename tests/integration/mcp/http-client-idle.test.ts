@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  abandonSession,
   launchMcpHttpServer,
   type McpHttpClient,
 } from "../../support/mcp-http-client.ts";
@@ -11,34 +11,6 @@ const TEST_TIMEOUT_MS = 30_000;
 const RECONNECT_GRACE_MS = 10_000;
 const SHORT_IDLE_TIMEOUT_MS = 2_000;
 const LONG_IDLE_TIMEOUT_MS = 60_000;
-const ABANDONED_CLIENT = resolve(
-  import.meta.dir,
-  "../../support/mcp-http-abandoned-client.ts",
-);
-
-/** Run a client process that creates a session, then kill it. */
-async function abandonSession(
-  url: string,
-): Promise<{ sessionId: string; mcpSessionId: string }> {
-  const child = Bun.spawn([process.execPath, ABANDONED_CLIENT, url], {
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  try {
-    const reader = child.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    while (!output.includes("\n")) {
-      const { done, value } = await reader.read();
-      if (done) throw new Error("client exited before creating a session");
-      output += decoder.decode(value, { stream: true });
-    }
-    return JSON.parse(output.slice(0, output.indexOf("\n")));
-  } finally {
-    child.kill("SIGKILL");
-    await child.exited;
-  }
-}
 
 async function acquireController(
   client: McpHttpClient,

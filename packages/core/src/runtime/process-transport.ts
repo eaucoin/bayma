@@ -5,6 +5,7 @@ import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure } from "../errors.ts";
+import { runningTimeout, type RunningTimeout } from "../sandbox.ts";
 import {
   criuEnding,
   processSnapshotter,
@@ -26,7 +27,7 @@ interface PromptWaiter {
   seenPromptCount: number;
   resolve: () => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: RunningTimeout;
 }
 
 interface ReadinessWaiter {
@@ -35,7 +36,7 @@ interface ReadinessWaiter {
   acknowledged: boolean;
   resolve: () => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: RunningTimeout;
 }
 
 interface BrokerState {
@@ -328,7 +329,7 @@ export class ProcessTransport implements RuntimeTransport {
           state.promptCount += newPromptCount;
           for (const waiter of [...state.waiters]) {
             if (state.promptCount > waiter.seenPromptCount) {
-              clearTimeout(waiter.timeout);
+              waiter.timeout.clear();
               state.waiters.delete(waiter);
               waiter.resolve();
             }
@@ -355,7 +356,7 @@ export class ProcessTransport implements RuntimeTransport {
             );
           }
           if (countPromptMatches(scanWindow, this.config.promptRe) > 0) {
-            clearTimeout(waiter.timeout);
+            waiter.timeout.clear();
             state.readinessWaiters.delete(waiter);
             waiter.resolve();
             continue;
@@ -377,7 +378,7 @@ export class ProcessTransport implements RuntimeTransport {
       exitNotified = true;
       state.terminalError = error;
       for (const waiter of [...state.waiters]) {
-        clearTimeout(waiter.timeout);
+        waiter.timeout.clear();
         state.waiters.delete(waiter);
         const output = recentOutput(state);
         waiter.reject(
@@ -385,7 +386,7 @@ export class ProcessTransport implements RuntimeTransport {
         );
       }
       for (const waiter of [...state.readinessWaiters]) {
-        clearTimeout(waiter.timeout);
+        waiter.timeout.clear();
         state.readinessWaiters.delete(waiter);
         waiter.reject(error);
       }
@@ -641,7 +642,7 @@ export class ProcessTransport implements RuntimeTransport {
     if (state.terminalError) throw state.terminalError;
     if (state.promptCount > seenPromptCount) return;
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeout = runningTimeout(() => {
         state.waiters.delete(waiter);
         reject(
           new Error(`timed out waiting for prompt for ${handle.sessionId}`),
@@ -782,7 +783,7 @@ export class ProcessTransport implements RuntimeTransport {
   ): { promise: Promise<void>; cancel: () => void } {
     let waiter: ReadinessWaiter;
     const promise = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeout = runningTimeout(() => {
         state.readinessWaiters.delete(waiter);
         reject(
           new Error(
@@ -803,7 +804,7 @@ export class ProcessTransport implements RuntimeTransport {
     return {
       promise,
       cancel: () => {
-        clearTimeout(waiter.timeout);
+        waiter.timeout.clear();
         state.readinessWaiters.delete(waiter);
       },
     };

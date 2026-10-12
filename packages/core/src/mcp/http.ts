@@ -21,6 +21,14 @@ import { createOpaqueId } from "../ids.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
 import { report, SeverityNumber } from "../telemetry/record.ts";
+import { serveSandboxHook } from "./sandbox-hook.ts";
+import { readTokenFile } from "../token-file.ts";
+import {
+  resumesWithin,
+  runningTimeout,
+  sandboxSaved,
+  type RunningTimeout,
+} from "../sandbox.ts";
 
 export interface McpHttpConfig extends Pick<
   SessionManagerOptions,
@@ -37,8 +45,13 @@ export interface McpHttpConfig extends Pick<
   defaultRows: number;
   /** How long a client session with no request or stream open stays open. */
   clientIdleTimeoutMs: number;
-  /** When given, every request must carry it as `Authorization: Bearer`. */
-  bearerToken?: string;
+  /**
+   * When given, every request must carry the token this file holds as
+   * `Authorization: Bearer`. The file is read as the server starts, and
+   * again as its sandbox is restored, for a restored server to answer its
+   * new host's token alone.
+   */
+  tokenFile?: string;
   /** The toolbelt's install, which the server stops as it shuts down. */
   toolbelt?: ToolbeltInstall;
 }
@@ -53,6 +66,11 @@ interface HttpClientSession {
   live: () => boolean;
   /** How long until a client with no connection open is no longer live; 0 when it has one. */
   reconnectWindowMs: () => number;
+  /**
+   * Restarts the client's reconnect grace and idle timeout from now, as if
+   * its last connection had just ended, unless it has one open.
+   */
+  restartTimers: () => void;
   close: () => Promise<void>;
 }
 
@@ -65,23 +83,23 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // was replaced or its connections were lost to a sandbox's restore.
 const CLIENT_RECONNECT_GRACE_MS = 10_000;
 const HTTP_ACTOR_ID_PREFIX = "actor_mcp_http_";
+// The longest a request waits for a saved server to run on, of the time it
+// runs: long enough for a restored sandbox's hook to reach it.
+const REQUEST_HOLD_MS = 10_000;
 // Where a host that runs bayma asks whether it has execs to run, to release
 // it once it has none: a GET answers the server's ExecActivity as JSON.
 const STATUS_PATH = "/status";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /**
- * Whether a request carries the bearer token. Digests are compared, so the
- * comparison takes the same time whatever the token's length or contents.
+ * Whether a request carries the bearer token `tokenFile` holds. Digests are
+ * compared, so the comparison takes the same time whatever the token's
+ * length or contents.
  */
 function bearerAuthorization(
-  token: string,
+  tokenFile: string,
 ): (request: http.IncomingMessage) => boolean {
-  if (token.length === 0 || token !== token.trim()) {
-    throw new Error(
-      "MCP HTTP bearer token must be non-empty, with no surrounding whitespace",
-    );
-  }
+  const token = readTokenFile(tokenFile, "MCP HTTP bearer token");
   const digest = (value: string) => createHash("sha256").update(value).digest();
   const expected = digest(`Bearer ${token}`);
   return (request) => {
@@ -197,10 +215,9 @@ export async function serveMcpHttp(
       `MCP HTTP client idle timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`,
     );
   }
-  const authorizeRequest =
-    config.bearerToken === undefined
-      ? undefined
-      : bearerAuthorization(config.bearerToken);
+  const { tokenFile } = config;
+  let authorizeRequest =
+    tokenFile === undefined ? undefined : bearerAuthorization(tokenFile);
 
   const sessions = new Map<string, HttpClientSession>();
   const httpClientSession = (actorId: string): HttpClientSession | undefined =>
@@ -241,6 +258,15 @@ export async function serveMcpHttp(
     : undefined;
 
   const server = http.createServer(async (request, response) => {
+    // A restored server runs before it hears of the restore, which may
+    // replace its token; while it is saved, a request waits for it to run on,
+    // and one it does not in time is to be sent again.
+    if (sandboxSaved() && !(await resumesWithin(REQUEST_HOLD_MS))) {
+      response.statusCode = 503;
+      response.setHeader("Retry-After", "1");
+      response.end();
+      return;
+    }
     if (guardLoopbackRequest && !guardLoopbackRequest(request, response))
       return;
     if (authorizeRequest && !authorizeRequest(request)) {
@@ -326,12 +352,12 @@ export async function serveMcpHttp(
         let cleanupPromise: Promise<void> | undefined;
         let openResponses = 0;
         let lastResponseEndedAtMs = 0;
-        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        let idleTimer: RunningTimeout | undefined;
         const closeClientSession = (
           closingSessionId?: string,
         ): Promise<void> => {
           if (!closingSessionId) return Promise.resolve();
-          clearTimeout(idleTimer);
+          idleTimer?.clear();
           cleanupPromise ??= (async () => {
             sessions.delete(closingSessionId);
             await manager.releaseActor(actorIdForSession(closingSessionId));
@@ -375,6 +401,13 @@ export async function serveMcpHttp(
             }
           }
         };
+        const armIdleTimer = () => {
+          if (openResponses > 0 || cleanupPromise) return;
+          idleTimer = runningTimeout(
+            () => void closeIdleClientSession(),
+            config.clientIdleTimeoutMs,
+          );
+        };
         clientSession = {
           application,
           transport,
@@ -383,32 +416,39 @@ export async function serveMcpHttp(
             application.subscriptions,
           ),
           track: (trackedResponse) => {
-            clearTimeout(idleTimer);
+            idleTimer?.clear();
             openResponses += 1;
             // A response ends when it completes, and when its connection is
             // closed, reset, or fails, however cleanly or not.
             finished(trackedResponse, () => {
               openResponses -= 1;
               lastResponseEndedAtMs = Date.now();
-              if (openResponses > 0 || cleanupPromise) return;
-              idleTimer = setTimeout(
-                () => void closeIdleClientSession(),
-                config.clientIdleTimeoutMs,
-              );
+              armIdleTimer();
             });
           },
+          // A saved server's clients keep the grace they had, which starts
+          // again once it runs on.
           live: () =>
             openResponses > 0 ||
+            sandboxSaved() ||
             Date.now() - lastResponseEndedAtMs < CLIENT_RECONNECT_GRACE_MS,
           reconnectWindowMs: () =>
             openResponses > 0
               ? 0
-              : Math.max(
-                  0,
-                  lastResponseEndedAtMs +
-                    CLIENT_RECONNECT_GRACE_MS -
-                    Date.now(),
-                ),
+              : sandboxSaved()
+                ? CLIENT_RECONNECT_GRACE_MS
+                : Math.max(
+                    0,
+                    lastResponseEndedAtMs +
+                      CLIENT_RECONNECT_GRACE_MS -
+                      Date.now(),
+                  ),
+          restartTimers: () => {
+            idleTimer?.clear();
+            if (openResponses > 0) return;
+            lastResponseEndedAtMs = Date.now();
+            armIdleTimer();
+          },
           close: () => closeClientSession(transport.sessionId),
         };
         clientSession.track(response);
@@ -484,6 +524,7 @@ export async function serveMcpHttp(
     }
   });
 
+  let stopSandboxHook: () => Promise<void>;
   try {
     await new Promise<void>((resolveListen, rejectListen) => {
       const onError = (error: Error) => rejectListen(error);
@@ -493,13 +534,40 @@ export async function serveMcpHttp(
         resolveListen();
       });
     });
+    stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
+      save: () => manager.syncToStorage(),
+      restore: async (savedAtMs) => {
+        try {
+          // The restored sandbox may serve another host, with a token of
+          // its own; with no token it can read, it lets no request in.
+          if (tokenFile !== undefined) {
+            try {
+              authorizeRequest = bearerAuthorization(tokenFile);
+            } catch (error) {
+              authorizeRequest = () => false;
+              throw error;
+            }
+          }
+        } finally {
+          manager.sandboxRestored(savedAtMs);
+          // Clients lost their connections: each has its reconnect grace and
+          // idle timeout from now to come back in.
+          for (const session of sessions.values()) session.restartTimers();
+        }
+      },
+    });
   } catch (error) {
-    try {
-      await engine.shutdown();
-    } catch (shutdownError) {
+    const cleanup = await Promise.allSettled([
+      new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+      engine.shutdown(),
+    ]);
+    const failures = cleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length > 0) {
       throw aggregateFailure(
         "MCP HTTP listen failed and engine cleanup was incomplete",
-        [error, shutdownError],
+        [error, ...failures],
       );
     }
     throw error;
@@ -524,6 +592,7 @@ export async function serveMcpHttp(
       sessions.clear();
       const cleanup = await Promise.allSettled([
         serverClosed,
+        stopSandboxHook(),
         ...clients.map((session) => session.application.server.close()),
         ...clients.map((session) => session.close()),
       ]);

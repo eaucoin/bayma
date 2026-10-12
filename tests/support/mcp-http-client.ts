@@ -1,13 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/client";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { CallToolResultSchema } from "@modelcontextprotocol/core";
 import { launchSpec, MCP_RESOURCE_TIMEOUT_MS } from "./runtimes.ts";
+import { SOCKET_TEMP_ROOT } from "./temp.ts";
 
 const MCP_HTTP_CLOSE_TIMEOUT_MS = 1_000;
 interface ResourceUpdateWaiter {
@@ -206,6 +206,35 @@ async function withCloseTimeout<T>(
   }
 }
 
+const ABANDONED_CLIENT = join(import.meta.dir, "mcp-http-abandoned-client.ts");
+
+/**
+ * Runs a client process that creates a Bun session at `url`, then kills it,
+ * as a client that exits without ending its MCP session.
+ */
+export async function abandonSession(
+  url: string,
+): Promise<{ sessionId: string; mcpSessionId: string }> {
+  const child = Bun.spawn([process.execPath, ABANDONED_CLIENT, url], {
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  try {
+    const reader = child.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    while (!output.includes("\n")) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("client exited before creating a session");
+      output += decoder.decode(value, { stream: true });
+    }
+    return JSON.parse(output.slice(0, output.indexOf("\n")));
+  } finally {
+    child.kill("SIGKILL");
+    await child.exited;
+  }
+}
+
 export interface McpHttpServerOptions {
   /** Launch this binary instead of the source entrypoint. */
   binary?: string;
@@ -224,6 +253,8 @@ export interface McpHttpServer {
   child: ChildProcess;
   url: string;
   stateDir: string;
+  /** The file the server reads its token from, given a token. */
+  tokenFile: string;
   binary: string;
   spawnClient: () => Promise<McpHttpClient>;
   stop: () => Promise<void>;
@@ -237,7 +268,8 @@ export async function launchMcpHttpServer(
     ? { command: options.binary, args: [], binaryLabel: options.binary }
     : launchSpec();
 
-  const root = mkdtempSync(join(tmpdir(), "bayma-mcp-http-"));
+  // The state directory holds the sandbox hook's socket.
+  const root = mkdtempSync(join(SOCKET_TEMP_ROOT, "bayma-mcp-http-"));
   const port = await reservePort();
   const url = `http://127.0.0.1:${port}/mcp`;
   const stateDir = options.stateDir ?? join(root, "state");
@@ -305,6 +337,7 @@ export async function launchMcpHttpServer(
     child,
     url,
     stateDir,
+    tokenFile,
     binary: launch.binaryLabel,
     spawnClient: () => McpHttpClient.connect(url, options.bearerToken),
     stop,

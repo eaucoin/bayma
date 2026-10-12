@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
@@ -12,6 +11,11 @@ import {
 } from "./runtime/toolbelt.ts";
 import { runDoctor } from "./doctor.ts";
 import { serveMcpHttp } from "./mcp/http.ts";
+import {
+  parseSandboxHookMode,
+  runSandboxHook,
+  SANDBOX_HOOK_MODE_VARIABLE,
+} from "./mcp/sandbox-hook.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
 import { defaultStateDir } from "./paths.ts";
 import { failureDetail, failureMessage } from "./errors.ts";
@@ -109,6 +113,17 @@ Commands:
       token as Authorization: Bearer. GET /status answers, as JSON, how
       many execs are running and queued in every session (execsRunning,
       execsQueued) and, when none is, since when (idleSinceMs)
+  sandbox-hook [save|restore|resume] [--state-dir PATH]
+      tell the server of the state directory that the sandbox it runs in
+      is about to be saved whole, was restored, or runs on after a save, as
+      a host that saves sandboxes runs it in the sandbox: gVisor's runsc
+      checkpoint --save-restore-exec-argv, naming the mode in
+      GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
+      committed on storage and holds clients' idle timeouts; a restore
+      reads the token file again, starts clients' reconnect grace and
+      idle timeouts again, and tells each live session's exec; a host
+      whose save fails runs resume. A gVisor sandbox's file locks hold
+      within it alone, so such a host runs one server per state directory
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
@@ -209,7 +224,6 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         "--token-file",
         ...SERVER_OPTIONS,
       ]);
-      const tokenFile = parsed.get("--token-file");
       await startCommandTelemetry();
       await serveInstallingToolbelt((toolbelt) =>
         serveMcpHttp(adapters, {
@@ -224,15 +238,31 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
           clientIdleTimeoutMs: Number(
             option(parsed, "--client-idle-timeout-ms", "300000"),
           ),
-          // The token is read from a file so it stays out of the process's
-          // arguments and environment, which other processes can read.
-          bearerToken:
-            tokenFile === undefined
-              ? undefined
-              : readFileSync(tokenFile, "utf8").trimEnd(),
+          tokenFile: parsed.get("--token-file"),
           ...serverConfig(parsed),
           toolbelt,
         }),
+      );
+      return;
+    }
+    case "sandbox-hook": {
+      // gVisor runs the command with its mode in the environment, unless
+      // the command names one first.
+      const named = args.length % 2 === 1 ? args[0] : undefined;
+      const parsed = parseCliOptions(
+        named === undefined ? args : args.slice(1),
+        ["--state-dir"],
+      );
+      // A host runs the hook from a directory of its own, such as the
+      // sandbox's root, not the server's: the state directory is named.
+      const stateDir = parsed.get("--state-dir");
+      if (stateDir === undefined)
+        throw new Error("sandbox-hook needs --state-dir, its server's");
+      // The server records what the hook sets off; this process only asks
+      // it to, so it exports no telemetry of its own.
+      await runSandboxHook(
+        stateDir,
+        parseSandboxHookMode(named ?? process.env[SANDBOX_HOOK_MODE_VARIABLE]),
       );
       return;
     }

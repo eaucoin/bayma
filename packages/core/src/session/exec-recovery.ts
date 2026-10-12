@@ -1,5 +1,6 @@
 import {
   execTimestampAtOrAfterHistory,
+  isPendingExec,
   type ExecInterruptionReason,
   type ExecRecord,
 } from "./exec-types.ts";
@@ -16,9 +17,7 @@ export function reconcileOrphanedExecs(
 ): ReconciledExecHistory {
   let interruptedCount = 0;
   const reconciled = history.map((record) => {
-    if (record.status !== "queued" && record.status !== "running") {
-      return record;
-    }
+    if (!isPendingExec(record)) return record;
     interruptedCount += 1;
     const durationOrigin = record.startedAtMs ?? record.submittedAtMs;
     const finishedAtMs = execTimestampAtOrAfterHistory(record, recoveredAtMs);

@@ -7,6 +7,7 @@ import type { SessionManagerOptions } from "../session/session-manager.ts";
 import { createMcpApplication } from "./application.ts";
 import { createModelSurface } from "./model-surface.ts";
 import { SubscribedResourceUpdatePublisher } from "./events.ts";
+import { serveSandboxHook } from "./sandbox-hook.ts";
 import { shutdownAndExit } from "./shutdown.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
@@ -63,6 +64,26 @@ export async function serveMcpStdio(
     application.subscriptions,
   );
 
+  // Its client is in the sandbox with it, so a restore leaves the server
+  // nothing to start again but its sessions to tell.
+  let stopSandboxHook: () => Promise<void>;
+  try {
+    stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
+      save: () => manager.syncToStorage(),
+      restore: async (savedAtMs) => manager.sandboxRestored(savedAtMs),
+    });
+  } catch (error) {
+    try {
+      await engine.shutdown();
+    } catch (shutdownError) {
+      throw aggregateFailure(
+        "MCP stdio sandbox hook failed and engine cleanup was incomplete",
+        [error, shutdownError],
+      );
+    }
+    throw error;
+  }
+
   const transport = new StdioServerTransport();
   application.server.server.onerror = (error) => {
     report(failureDetail(error), {}, SeverityNumber.ERROR);
@@ -79,6 +100,7 @@ export async function serveMcpStdio(
     shutdownAndExit(async () => {
       const toolbeltStopped = config.toolbelt?.stop();
       try {
+        await stopSandboxHook();
         await engine.shutdown();
       } finally {
         await toolbeltStopped;
@@ -101,7 +123,7 @@ export async function serveMcpStdio(
   } catch (error) {
     const cleanup = await Promise.allSettled([
       application.server.close(),
-      engine.shutdown(),
+      stopSandboxHook().then(() => engine.shutdown()),
     ]);
     const failures = cleanup.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : [],

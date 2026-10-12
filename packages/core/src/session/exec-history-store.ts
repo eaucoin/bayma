@@ -14,7 +14,7 @@ import {
   EXEC_INTERRUPTION_REASONS,
   EXEC_MESSAGE_KINDS,
   EXEC_STATUSES,
-  RECOVERY_SOURCES,
+  SESSION_RETURNS,
   type ExecRecord,
 } from "./exec-types.ts";
 
@@ -58,7 +58,10 @@ const ExecRecordSchema: z.ZodType<ExecRecord> = z
     durationMs: z.number().finite().nonnegative().optional(),
     interruptionReason: z.enum(EXEC_INTERRUPTION_REASONS).optional(),
     notice: z
-      .strictObject({ returnedFrom: z.enum(RECOVERY_SOURCES) })
+      .strictObject({
+        returnedFrom: z.enum(SESSION_RETURNS),
+        snapshotAtMs: z.number().finite().nonnegative().optional(),
+      })
       .optional(),
     messages: z.array(ExecMessageRecordSchema),
   })

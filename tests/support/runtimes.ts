@@ -44,6 +44,41 @@ export function launchSpec(): LaunchSpec {
   };
 }
 
+/**
+ * Runs `bayma sandbox-hook` for the server of `stateDir`, unless none is
+ * named, as gVisor runs it, with its mode in the environment, or else named
+ * first. Returns how it exited, and its stderr.
+ */
+export async function runSandboxHookCommand(
+  stateDir: string | undefined,
+  mode: string,
+  modeIn: "environment" | "arguments" = "environment",
+): Promise<{ status: number; stderr: string }> {
+  const launch = launchSpec();
+  const child = Bun.spawn(
+    [
+      launch.command,
+      ...launch.args,
+      "sandbox-hook",
+      ...(modeIn === "arguments" ? [mode] : []),
+      ...(stateDir === undefined ? [] : ["--state-dir", stateDir]),
+    ],
+    {
+      env:
+        modeIn === "environment"
+          ? { ...process.env, GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE: mode }
+          : process.env,
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  );
+  const [status, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  return { status, stderr };
+}
+
 /** The bundle e2e tests exercise: `BAYMA_BUNDLE`, else dist/bayma.js. */
 export function bundlePath(): string {
   const path = resolve(

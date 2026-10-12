@@ -63,10 +63,12 @@ export * from "./runtime/output-capture.ts";
 export * from "./runtime/asset.ts";
 export * from "./runtime/state-directory-lease.ts";
 export * from "./paths.ts";
+export * from "./sandbox.ts";
 
 // MCP: serving, snapshots, resource URIs.
 export { serveMcpStdio, type McpStdioConfig } from "./mcp/stdio.ts";
 export { serveMcpHttp, type McpHttpConfig } from "./mcp/http.ts";
+export * from "./mcp/sandbox-hook.ts";
 export {
   createMcpApplication,
   type McpApplication,

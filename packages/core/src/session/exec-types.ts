@@ -55,9 +55,21 @@ export interface ExecMessageRecord {
 export const RECOVERY_SOURCES = ["process_snapshot", "checkpoint"] as const;
 export type RecoverySource = (typeof RECOVERY_SOURCES)[number];
 
+/**
+ * How a session came back: as a session does after its server stopped, or
+ * whole, with the sandbox bayma runs in, from a snapshot of the sandbox.
+ */
+export const SESSION_RETURNS = [
+  ...RECOVERY_SOURCES,
+  "sandbox_snapshot",
+] as const;
+export type SessionReturn = (typeof SESSION_RETURNS)[number];
+
 /** What an exec is told of how its session came back before it ran. */
 export interface ExecNotice {
-  returnedFrom: RecoverySource;
+  returnedFrom: SessionReturn;
+  /** When the sandbox's snapshot was taken, if bayma knows, for `sandbox_snapshot`. */
+  snapshotAtMs?: number;
 }
 
 export interface ExecRecord {
@@ -69,9 +81,17 @@ export interface ExecRecord {
   finishedAtMs?: number;
   durationMs?: number;
   interruptionReason?: ExecInterruptionReason;
-  /** How the session came back, told to the first exec it runs since. */
+  /**
+   * How the session came back, told to the first exec it runs since, or to
+   * the exec it was running when the sandbox was snapshotted.
+   */
   notice?: ExecNotice;
   messages: ExecMessageRecord[];
+}
+
+/** Whether an exec has yet to end: queued, or running. */
+export function isPendingExec({ status }: Pick<ExecRecord, "status">): boolean {
+  return status === "queued" || status === "running";
 }
 
 export function execTimestampAtOrAfterHistory(

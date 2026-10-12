@@ -22,7 +22,10 @@ export async function acquireStateDirectoryLease(
   // SQLite's write lock is owned by the open connection and released by the
   // operating system if the process exits. Unlike a filesystem sentinel or a
   // Unix socket pathname, it needs neither an age heuristic nor a racy stale
-  // artifact reclamation protocol.
+  // artifact reclamation protocol. Under gVisor the lock is the sandbox's
+  // own: it holds across a restore of the sandbox, but excludes no server
+  // in another sandbox on the same directory, so a host that runs bayma in
+  // sandboxes runs one per state directory.
   let lock;
   try {
     lock = await lockSqliteExclusively(lockPath);

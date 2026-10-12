@@ -178,6 +178,12 @@ export function describeExecNotice(notice: ExecNotice): string {
       return "bayma: this session came back from its checkpoint after the server it ran in stopped; only its checkpointed state survived, and the rest of its live state is gone.";
     case "process_snapshot":
       return "bayma: this session came back whole after the server it ran in stopped; its live state survived, but its network connections were closed.";
+    case "sandbox_snapshot":
+      return `bayma: this session came back whole with bayma's sandbox, restored from a snapshot${
+        notice.snapshotAtMs === undefined
+          ? ""
+          : ` taken at ${new Date(notice.snapshotAtMs).toISOString()}`
+      }; its live state is as it was then, but its network connections were closed.`;
   }
 }
 
