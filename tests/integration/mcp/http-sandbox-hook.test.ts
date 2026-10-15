@@ -166,17 +166,23 @@ test(
 test(
   "a resume leaves a client's idle timeout running as it was",
   async () => {
-    const idleTimeoutMs = 3_000;
+    const idleTimeoutMs = 6_000;
     const server = await launchMcpHttpServer({
       clientIdleTimeoutMs: idleTimeoutMs,
     });
     try {
       const { mcpSessionId } = await abandonSession(server.url);
-      await sleep(idleTimeoutMs - 1_000);
+      const abandonedAtMs = Date.now();
+      await sleep(1_000);
+      // Each hook is a process of its own, which takes a second or so to
+      // start on a busy machine: the timeout leaves them room to resume the
+      // server before the timeout armed before the save would end.
       await hook(server.stateDir, "save");
       await hook(server.stateDir, "resume");
-      // Past the timeout armed before the save, short of one started again.
-      await sleep(2_000);
+      expect(Date.now() - abandonedAtMs).toBeLessThan(idleTimeoutMs);
+      // Past the timeout armed before the save, short of one started again
+      // at the resume, a second or more after it.
+      await sleep(abandonedAtMs + idleTimeoutMs + 500 - Date.now());
       expect(await ping(server.url, mcpSessionId)).toBe(404);
     } finally {
       await server.close();

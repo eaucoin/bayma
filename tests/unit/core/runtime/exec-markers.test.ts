@@ -6,6 +6,7 @@ import {
   parseExecWindow,
   ProcessTransport,
   boundRuntimeText,
+  type ProcessSnapshotter,
   RUNTIME_OUTPUT_CAPTURE_POLICY,
 } from "@bayma/core";
 
@@ -231,16 +232,29 @@ test(
   { timeout: 3_000 },
 );
 
-test("process transport reports spawn errors instead of crashing", async () => {
-  const transport = new ProcessTransport({
-    platformId: "test",
-    promptRe: /(?:^|[\r\n])BAYMA> /g,
-    promptTimeoutMs: 1_000,
-    command: () => ({
-      file: `bayma-command-that-does-not-exist-${process.pid}`,
-      args: [],
-    }),
-  });
+/** A command that is on no PATH, as a runtime that is not installed. */
+const MISSING_COMMAND = `bayma-command-that-does-not-exist-${process.pid}`;
+
+/**
+ * The snapshotter of a machine that has one, as bayma's image does: with it, a
+ * transport records the stdio each runtime starts with through /bin/sh. It
+ * snapshots nothing here.
+ */
+const SNAPSHOTTER: ProcessSnapshotter = {
+  dump: () => {
+    throw new Error("this transport only starts sessions");
+  },
+  restoreCommand: () => ({ file: "/bin/false", args: [] }),
+  restoredPid: () => undefined,
+  unrestorableReason: () => undefined,
+  advancePidsPast: () => undefined,
+};
+
+/** Whether a session of `transport` whose runtime is not installed fails, saying `said`. */
+async function missingRuntimeFails(
+  transport: ProcessTransport,
+  said: string[],
+): Promise<void> {
   const handle = await transport.startSession({
     sessionId: "sess_spawn_failure",
     title: "spawn failure",
@@ -249,9 +263,42 @@ test("process transport reports spawn errors instead of crashing", async () => {
     rows: 24,
     scratchDir: tmpdir(),
   });
+  try {
+    const failure = await transport.waitForInitialPrompt(handle).then(
+      () => new Error("the session started"),
+      (error: unknown) => error as Error,
+    );
+    for (const text of said) expect(failure.message).toContain(text);
+  } finally {
+    await transport.shutdown();
+  }
+}
 
-  await expect(transport.waitForInitialPrompt(handle)).rejects.toThrow(
-    "failed to start",
+// Whether a transport has a snapshotter is the machine's, unless it is given
+// one or none: each test gives its own, so that it holds wherever it runs.
+test("process transport reports spawn errors instead of crashing", async () => {
+  await missingRuntimeFails(
+    new ProcessTransport({
+      platformId: "test",
+      promptRe: /(?:^|[\r\n])BAYMA> /g,
+      promptTimeoutMs: 1_000,
+      command: () => ({ file: MISSING_COMMAND, args: [] }),
+      snapshots: false,
+    }),
+    ["failed to start", MISSING_COMMAND],
   );
-  await transport.shutdown();
+});
+
+test("process transport that records its runtimes' stdio reports a runtime it cannot run", async () => {
+  await missingRuntimeFails(
+    new ProcessTransport({
+      platformId: "test",
+      promptRe: /(?:^|[\r\n])BAYMA> /g,
+      promptTimeoutMs: 1_000,
+      command: () => ({ file: MISSING_COMMAND, args: [] }),
+      snapshotter: SNAPSHOTTER,
+    }),
+    // The shell that records them cannot run it, and says so as it exits.
+    ["exited unexpectedly (code=127", `${MISSING_COMMAND}: not found`],
+  );
 });
