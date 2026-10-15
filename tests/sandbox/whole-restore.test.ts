@@ -17,7 +17,8 @@ import { RUNTIME_IDS, type ExecActivity, type RuntimeId } from "@bayma/core";
 // passed. Its sessions in every runtime come back with their live state,
 // the exec it was running goes on, an MCP SDK client that held its MCP
 // session carries on in it at the new address, and the server answers the
-// token its new container gave it alone.
+// token its new container gave it alone. Saved live, left running and then
+// stopped, it comes back from that save too.
 //
 // It needs root through sudo, Docker with gVisor's runsc registered as the
 // runtime `runsc`, and Docker's experimental features, which restore a
@@ -29,6 +30,9 @@ const version = JSON.parse(
 ).version as string;
 const IMAGE = `bayma:${version}`;
 const TEST_TIMEOUT_MS = 1_800_000;
+// No command the tests run takes this long: one that does is stuck, and its
+// failure says which, before the test's own timeout ends it saying nothing.
+const COMMAND_TIMEOUT_MS = 600_000;
 // Where runsc keeps the state of the sandboxes Docker's containerd starts,
 // in its moby namespace, through gVisor's shim.
 const RUNSC_ROOT = "/run/containerd/runsc/moby";
@@ -60,7 +64,11 @@ interface ExecSnapshot {
 }
 
 async function run(command: string[]): Promise<string> {
-  const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(command, {
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: COMMAND_TIMEOUT_MS,
+  });
   const [stdout, stderr, status] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -471,6 +479,105 @@ test(
       await second.client.close();
     } finally {
       // What is left goes, without hiding why the test failed, if it did.
+      for (const name of [saved, restored]) {
+        console.log(await logs(name));
+        await run(["docker", "rm", "--force", name]).catch(() => undefined);
+      }
+      await run(["sudo", "rm", "-rf", images, home]).catch((error) =>
+        console.error(error),
+      );
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "bayma saved live, then stopped, comes back from the save in a new container",
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), "bayma-sandbox-"));
+    const stateDir = join(home, ".local", "state", "bayma", "test");
+    mkdirSync(stateDir, { recursive: true });
+    const tokenFile = join(home, "token");
+    writeFileSync(tokenFile, "token\n");
+    const images = mkdtempSync(join(tmpdir(), "bayma-checkpoints-"));
+    const suffix = `${process.pid}-${Date.now()}`;
+    const [saved, restored] = [
+      `bayma-saved-${suffix}`,
+      `bayma-restored-${suffix}`,
+    ];
+    try {
+      await run(container("run", saved, home, stateDir, tokenFile));
+      const first = await connect(await serving(saved), "token");
+      const { session } = await call<{ session: { session_id: string } }>(
+        first.client,
+        "session.create",
+        { runtime: "bun", title: "sandbox-live", cwd: home },
+      );
+      const defined = await exec(
+        first.client,
+        session.session_id,
+        LIVE_STATE.bun.define,
+      );
+      expect(defined.status).toBe("ok");
+
+      // Saved while it runs, and left running, as a host that saves a
+      // sandbox live does; then stopped, which ends the server as its host
+      // ends it: whatever it held goes with it.
+      const id = await run(["docker", "inspect", "--format", "{{.Id}}", saved]);
+      const image = join(images, "checkpoint");
+      const savingAtMs = Date.now();
+      await run([
+        "sudo",
+        "runsc",
+        "--root",
+        RUNSC_ROOT,
+        "checkpoint",
+        "--image-path",
+        image,
+        "--leave-running",
+        `--save-restore-exec-argv=${await hookArgv(stateDir)}`,
+        id,
+      ]);
+      console.log(`saved live in ${Date.now() - savingAtMs} ms`);
+      const live = await exec(
+        first.client,
+        session.session_id,
+        LIVE_STATE.bun.read,
+      );
+      expect(live.result_text.trim()).toBe("42");
+      // It keeps its MCP session, which controls the bayma session, to go
+      // on in.
+      const held: HeldSession = {
+        sessionId: first.transport.sessionId,
+        protocolVersion: first.transport.protocolVersion,
+      };
+      await first.client.close();
+      const stoppingAtMs = Date.now();
+      await run(["docker", "stop", saved]);
+      console.log(`stopped in ${Date.now() - stoppingAtMs} ms`);
+
+      const restoredId = await run(
+        container("create", restored, home, stateDir, tokenFile),
+      );
+      const checkpoints = `/var/lib/docker/containers/${restoredId}/checkpoints`;
+      await run(["sudo", "mkdir", "-p", checkpoints]);
+      await run(["sudo", "cp", "-a", image, join(checkpoints, "checkpoint")]);
+      const restoringAtMs = Date.now();
+      await run(["docker", "start", "--checkpoint", "checkpoint", restored]);
+      const restoredUrl = await serving(restored);
+      console.log(`restored in ${Date.now() - restoringAtMs} ms`);
+      const second = await connect(restoredUrl, "token", held);
+      const read = await exec(
+        second.client,
+        session.session_id,
+        LIVE_STATE.bun.read,
+      );
+      expect({ status: read.status, result: read.result_text.trim() }).toEqual({
+        status: "ok",
+        result: "42",
+      });
+      await second.client.close();
+    } finally {
       for (const name of [saved, restored]) {
         console.log(await logs(name));
         await run(["docker", "rm", "--force", name]).catch(() => undefined);

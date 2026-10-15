@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpStdioClient } from "../support/mcp-stdio-client.ts";
@@ -20,6 +20,10 @@ test.serial(
     const stateDir = join(root, "state");
     const first = await McpStdioClient.launch(spec, { stateDir });
     try {
+      // The lock's journal is in memory, never a file beside it.
+      expect(
+        existsSync(join(stateDir, ".bayma-state-lease.sqlite-journal")),
+      ).toBe(false);
       await expect(McpStdioClient.launch(spec, { stateDir })).rejects.toThrow(
         /already in use|Connection closed/,
       );

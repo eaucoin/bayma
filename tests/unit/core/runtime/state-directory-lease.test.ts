@@ -3,6 +3,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -32,6 +33,19 @@ test("a state directory has exactly one live owner", async () => {
 
     const reacquired = await acquireStateDirectoryLease(stateDir);
     await reacquired.release();
+  });
+});
+
+test("a held lease keeps no file but its lock in the state directory", async () => {
+  await withTempDir(async (root) => {
+    const lease = await acquireStateDirectoryLease(`${root}/state`);
+    try {
+      expect(readdirSync(lease.stateDir)).toEqual([
+        ".bayma-state-lease.sqlite",
+      ]);
+    } finally {
+      await lease.release();
+    }
   });
 });
 

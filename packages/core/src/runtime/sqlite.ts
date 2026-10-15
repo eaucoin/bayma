@@ -21,6 +21,14 @@ export class SqliteLockContention extends Error {
 
 const BEGIN = "BEGIN EXCLUSIVE";
 const NO_WAIT = "PRAGMA busy_timeout = 0";
+// The lock is the transaction's, which writes nothing. On disk, its rollback
+// journal would be a file beside the database for exactly as long as the lock
+// is held, open all the while: a host that saves the sandbox while the server
+// runs and leaves it running, then restores that save once the server is
+// gone, would find the journal gone with it, and gVisor refuses to restore a
+// sandbox whose open files are missing. In memory, the lock is the database
+// file's alone, which stays.
+const JOURNAL_IN_MEMORY = "PRAGMA journal_mode = MEMORY";
 
 /** Open `path` and hold its write lock until `close()`. */
 export async function lockSqliteExclusively(
@@ -34,6 +42,7 @@ async function lockWithNode(path: string): Promise<ExclusiveSqliteLock> {
   const database = new DatabaseSync(path);
   try {
     database.exec(NO_WAIT);
+    database.exec(JOURNAL_IN_MEMORY);
     database.exec(BEGIN);
   } catch (error) {
     database.close();
@@ -49,6 +58,7 @@ async function lockWithBun(path: string): Promise<ExclusiveSqliteLock> {
   const database = new Database(path, { create: true, strict: true });
   try {
     database.run(NO_WAIT);
+    database.run(JOURNAL_IN_MEMORY);
     database.run(BEGIN);
   } catch (error) {
     database.close();
