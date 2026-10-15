@@ -115,24 +115,51 @@ Commands:
       token as Authorization: Bearer, read again once its sandbox is
       restored, for its new host's token; with --telemetry-token-file,
       each export of its telemetry carries that file's token as its
-      bearer, read for each export. GET /status answers, as JSON, how many execs are
-      running and queued in every session (execsRunning, execsQueued)
-      and, when none is, since when (idleSinceMs)
+      bearer, read for each export. GET /status answers, as JSON, how
+      many execs are running and queued in every session (execsRunning,
+      execsQueued), those running by their sessions' and their own IDs
+      (running: sessionId, execId), when none is, since when
+      (idleSinceMs), and the state generation (generation)
   sandbox-hook [save|restore|resume] --state-dir PATH
       tell the server of the state directory that the sandbox it runs in
       is about to be saved whole, was restored, or runs on after a save, as
       a host that saves sandboxes runs it in the sandbox: gVisor's runsc
       checkpoint --save-restore-exec-argv, naming the mode in
       GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
-      committed on storage, and holds requests, timeouts, and the
-      toolbelt's install, its files closed, until the restore or resume;
-      a restore reads the token file again, starts clients' reconnect
-      grace and idle timeouts again, tells each live session's exec, and
-      installs the toolbelt again where the save caught it installing; a
-      host whose save fails runs resume, and a
-      save neither follows within ten minutes is given up on. A gVisor
-      sandbox's file locks hold within it alone, so such a host runs one
-      server per state directory
+      committed on storage, holds requests, timeouts and exec starts, and
+      pauses the toolbelt's install with none of its files open, until the
+      restore or resume; it prints, as JSON, what the save caught: the
+      state generation and the execs running (generation, running:
+      sessionId, execId), which the state directory's last-save.json says
+      too. A restore reads the token file again, starts clients' reconnect
+      grace and idle timeouts again, tells each live session's next exec
+      how it came back, and starts over the toolbelt's install that the
+      save paused. A host whose save fails runs resume, and a save neither
+      follows within ten minutes is given up on. A gVisor sandbox's file
+      locks hold within it alone, so such a host runs one server per state
+      directory.
+      The state generation, in the state directory's generation.json as
+      { "schemaVersion": 1, "generation": N }, is moved on, on the disk,
+      before the server persists any change or tells a client of one as
+      state: an exec submitted, started or ended, an interrupt or a host
+      recycled, a session created, resized, recovered, scheduled for
+      eviction, closed or quarantined, a checkpoint committed or failed, or
+      the server started afresh. What is of clients' connections alone,
+      controllers and observers joining, changing and leaving, and pressure
+      warnings, which a restored server has again from its clients, does
+      not move it, nor does an exec's output, which a restore may show
+      again.
+      A save left running may be restored only while the generation on the
+      disk is the one the save caught: the server refuses a restore
+      otherwise, and stays saved rather than write over what is newer, and
+      a host checks it before it lets a restored sandbox run, refusing one
+      whose file it cannot read or whose schemaVersion it does not know.
+      Nothing is written into the state directory before the generation
+      moves on, so a server whose generation is stale writes nothing there.
+      A server stopped gracefully, as by SIGTERM, which a pod's deletion
+      sends, persists its sessions as it stops, and so moves the generation
+      on: a save of it left running is restored only where the server ended
+      otherwise, as a lost pod's or node's does, killed
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by
@@ -279,10 +306,11 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         throw new Error("sandbox-hook needs --state-dir, its server's");
       // The server records what the hook sets off; this process only asks
       // it to, so it exports no telemetry of its own.
-      await runSandboxHook(
+      const caught = await runSandboxHook(
         stateDir,
         parseSandboxHookMode(named ?? process.env[SANDBOX_HOOK_MODE_VARIABLE]),
       );
+      if (caught !== undefined) console.log(caught);
       return;
     }
     case "doctor": {

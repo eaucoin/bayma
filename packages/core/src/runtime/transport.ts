@@ -77,4 +77,11 @@ export interface RuntimeTransport {
   shutdown(): Promise<void>;
   /** Absent where this transport's runtime processes cannot be snapshotted. */
   readonly snapshots?: TransportSnapshots;
+  /**
+   * What the host of `handle`, which ran in the scratch directory
+   * `scratchDir` and has ended, left there that a save of the sandbox may map,
+   * as a Go host's plugins: the server removes it once the state generation
+   * has moved on past every such save.
+   */
+  endedHostFiles?(scratchDir: string, handle: TransportSessionHandle): string[];
 }

@@ -97,6 +97,11 @@ export interface ProcessTransportConfig {
   snapshots?: boolean;
   /** The environment's snapshotter unless given; null for none. */
   snapshotter?: ProcessSnapshotter | null;
+  /**
+   * What a host of `pid` that ended leaves in `scratchDir`
+   * (RuntimeTransport.endedHostFiles).
+   */
+  endedHostFiles?(scratchDir: string, pid: number): string[];
 }
 
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -232,6 +237,10 @@ export class ProcessTransport implements RuntimeTransport {
         unavailableReason: () => snapshotsUnavailableHere(snapshotter),
       };
     }
+  }
+
+  endedHostFiles(scratchDir: string, handle: TransportSessionHandle): string[] {
+    return this.config.endedHostFiles?.(scratchDir, handle.pid) ?? [];
   }
 
   async startSession(

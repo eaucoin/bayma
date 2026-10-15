@@ -38,7 +38,9 @@ test(
       expect(started).toEqual({
         execsRunning: 0,
         execsQueued: 0,
+        running: [],
         idleSinceMs: expect.any(Number),
+        generation: expect.any(Number),
       });
 
       const created = await client.callTool<{
@@ -50,18 +52,25 @@ test(
       });
       const sessionId = created.session.session_id;
       // Each call returns while its exec still runs, or waits to.
+      const execIds: string[] = [];
       for (const code of ["await Bun.sleep(1_000)", "40 + 2"]) {
-        const yielded = await client.callTool<{ done: boolean }>("exec", {
+        const yielded = await client.callTool<{
+          done: boolean;
+          exec_id: string;
+        }>("exec", {
           session_id: sessionId,
           code,
           yield_time_ms: 0,
         });
         expect(yielded.done).toBe(false);
+        execIds.push(yielded.exec_id);
       }
       expect(await activity(server.url)).toEqual({
         execsRunning: 1,
         execsQueued: 1,
+        running: [{ sessionId, execId: execIds[0]! }],
         idleSinceMs: null,
+        generation: expect.any(Number),
       });
 
       const deadline = Date.now() + 10_000;
@@ -73,7 +82,9 @@ test(
       expect(idle).toEqual({
         execsRunning: 0,
         execsQueued: 0,
+        running: [],
         idleSinceMs: expect.any(Number),
+        generation: expect.any(Number),
       });
       expect(idle.idleSinceMs).toBeGreaterThan(started.idleSinceMs!);
     } finally {

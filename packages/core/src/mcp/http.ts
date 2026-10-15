@@ -21,7 +21,7 @@ import { createOpaqueId } from "../ids.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
 import { report, SeverityNumber } from "../telemetry/record.ts";
-import { serveSandboxHook } from "./sandbox-hook.ts";
+import { restoreSandboxServer, serveSandboxHook } from "./sandbox-hook.ts";
 import { readTokenFile } from "../token-file.ts";
 import {
   resumesWithin,
@@ -535,8 +535,12 @@ export async function serveMcpHttp(
       });
     });
     stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
-      save: () => manager.syncToStorage(),
+      save: async () => {
+        await manager.syncToStorage();
+        return manager.sandboxSaving();
+      },
       restore: async (savedAtMs) => {
+        restoreSandboxServer({ manager, toolbelt: config.toolbelt }, savedAtMs);
         try {
           // The restored sandbox may serve another host, with a token of
           // its own; with no token it can read, it lets no request in.
@@ -549,8 +553,6 @@ export async function serveMcpHttp(
             }
           }
         } finally {
-          manager.sandboxRestored(savedAtMs);
-          config.toolbelt?.restored();
           // Clients lost their connections: each has its reconnect grace and
           // idle timeout from now to come back in.
           for (const session of sessions.values()) session.restartTimers();

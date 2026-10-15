@@ -4,6 +4,8 @@ import net from "node:net";
 import { join } from "node:path";
 import {
   holdingFiles,
+  restoreSandboxServer,
+  SandboxSaveOutlived,
   markSandboxResumed,
   parseSandboxHookMode,
   runSandboxHook,
@@ -24,6 +26,12 @@ function withHookDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   return withTempDir(fn, SOCKET_TEMP_ROOT) as Promise<T>;
 }
 
+/** What a save of the test's catches. */
+const CAUGHT = {
+  generation: 7,
+  running: [{ sessionId: "sess_a", execId: "exec_b" }],
+};
+
 /** Handlers that record what they were asked, in order, and whether the server was saved then. */
 function recording(): { calls: string[]; handlers: SandboxHookHandlers } {
   const calls: string[] = [];
@@ -33,6 +41,7 @@ function recording(): { calls: string[]; handlers: SandboxHookHandlers } {
     handlers: {
       save: async () => {
         calls.push(`save, ${saved()}`);
+        return CAUGHT;
       },
       restore: async (savedAtMs) => {
         calls.push(`restore from ${typeof savedAtMs}, ${saved()}`);
@@ -65,12 +74,13 @@ test("each mode the hook is run in reaches the server, saved until it runs on", 
     const { calls, handlers } = recording();
     const stop = await serveSandboxHook(dir, handlers);
     try {
-      await runSandboxHook(dir, "save");
+      // A save answers what it caught; the others nothing.
+      expect(JSON.parse((await runSandboxHook(dir, "save"))!)).toEqual(CAUGHT);
       expect(sandboxSaved()).toBe(true);
-      await runSandboxHook(dir, "restore");
+      expect(await runSandboxHook(dir, "restore")).toBeUndefined();
       expect(sandboxSaved()).toBe(false);
       await runSandboxHook(dir, "save");
-      await runSandboxHook(dir, "resume");
+      expect(await runSandboxHook(dir, "resume")).toBeUndefined();
       expect(sandboxSaved()).toBe(false);
       expect(calls).toEqual([
         "save, saved",
@@ -279,4 +289,66 @@ test("the hook's mode is one gVisor names", () => {
     expect(() => parseSandboxHookMode(mode)).toThrow(
       "the sandbox hook's mode must be save, restore, resume",
     );
+});
+
+test("a restored server tells its sessions, then installs the toolbelt again, even where telling them fails, and does neither where the fence refuses", () => {
+  const calls: string[] = [];
+  const server = (refuses: boolean, fails: boolean) => ({
+    manager: {
+      assertSandboxRestorable: () => {
+        calls.push("fence");
+        if (refuses) throw new Error("the state directory has moved on");
+      },
+      sandboxRestored: (savedAtMs: number) => {
+        calls.push(`sessions told of ${savedAtMs}`);
+        if (fails) throw new Error("the notices were not persisted");
+      },
+    },
+    toolbelt: { restored: () => void calls.push("toolbelt") },
+  });
+
+  restoreSandboxServer(server(false, false), 7);
+  expect(calls.splice(0)).toEqual(["fence", "sessions told of 7", "toolbelt"]);
+  expect(() => restoreSandboxServer(server(false, true), 7)).toThrow(
+    "the notices were not persisted",
+  );
+  expect(calls.splice(0)).toEqual(["fence", "sessions told of 7", "toolbelt"]);
+  // Refused, the restore fails, and the server it would have restored does
+  // nothing.
+  expect(() => restoreSandboxServer(server(true, false), 7)).toThrow(
+    "the state directory has moved on",
+  );
+  expect(calls.splice(0)).toEqual(["fence"]);
+});
+
+test("a server restored from a save its state directory moved on from stays saved, and one whose restore fails otherwise runs on", async () => {
+  await withHookDir(async (dir) => {
+    for (const [failure, staysSaved] of [
+      [
+        new SandboxSaveOutlived(
+          "the state directory has moved on since this save",
+        ),
+        true,
+      ],
+      [new Error("the notices were not persisted"), false],
+    ] as const) {
+      const { handlers } = recording();
+      const stop = await serveSandboxHook(dir, {
+        ...handlers,
+        restore: async () => {
+          throw failure;
+        },
+      });
+      try {
+        await runSandboxHook(dir, "save");
+        await expect(runSandboxHook(dir, "restore")).rejects.toThrow(
+          failure.message,
+        );
+        expect(sandboxSaved()).toBe(staysSaved);
+      } finally {
+        await stop();
+        markSandboxResumed();
+      }
+    }
+  });
 });

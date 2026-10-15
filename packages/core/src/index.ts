@@ -37,6 +37,12 @@ export * from "./session/retention-policy.ts";
 export * from "./session/catalog-store.ts";
 export * from "./session/checkpoint-store.ts";
 export * from "./session/exec-history-store.ts";
+export * from "./session/state-generation.ts";
+export {
+  killIfStill,
+  type MappingProcess,
+  procHidepid,
+} from "./runtime/mapping-processes.ts";
 export * from "./session/exec-recovery.ts";
 export { EventLog } from "./session/event-log.ts";
 export {

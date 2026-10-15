@@ -61,6 +61,20 @@ export function filesClosed(): Promise<void> {
   return new Promise((resolve) => closing.push(resolve));
 }
 
+/**
+ * The save a sandbox was restored from is one its state directory has moved
+ * on from (../session/state-generation.ts): the restored server must not run
+ * on, writing over what is newer.
+ */
+export class SandboxSaveOutlived extends Error {
+  override readonly name = "SandboxSaveOutlived";
+}
+
+/** Settles once the server runs on: at once while it is not saved. */
+export function sandboxRunsOn(): Promise<void> {
+  return saved?.resumed ?? Promise.resolve();
+}
+
 /** Whether the server is saved, between a save and its restore or resume. */
 export function sandboxSaved(): boolean {
   return saved !== undefined;

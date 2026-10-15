@@ -18,8 +18,9 @@ import { RUNTIME_IDS, type ExecActivity, type RuntimeId } from "@bayma/core";
 // the exec it was running goes on, an MCP SDK client that held its MCP
 // session carries on in it at the new address, and the server answers the
 // token its new container gave it alone. Saved live, left running and then
-// stopped, it comes back from that save too, and, saved as it installed its
-// toolbelt, installs it again.
+// killed, it comes back from that save too, and, saved as it installed its
+// toolbelt, installs it again; told a client of a change after the save, it
+// refuses to be restored from it.
 //
 // It needs root through sudo, Docker with gVisor's runsc registered as the
 // runtime `runsc`, and Docker's experimental features, which restore a
@@ -383,7 +384,15 @@ test(
         (await (
           await activity(savedUrl, "first-token")
         ).json()) as ExecActivity,
-      ).toEqual({ execsRunning: 1, execsQueued: 0, idleSinceMs: null });
+      ).toEqual({
+        execsRunning: 1,
+        execsQueued: 0,
+        running: [
+          { sessionId: busy.session.session_id, execId: running.exec_id },
+        ],
+        idleSinceMs: null,
+        generation: expect.any(Number),
+      });
 
       // Saved beside Docker's shim, running bayma's hook first, as a node
       // agent saves a pod's sandbox.
@@ -485,7 +494,9 @@ test(
       ).toEqual({
         execsRunning: 0,
         execsQueued: 0,
+        running: [],
         idleSinceMs: expect.any(Number),
+        generation: expect.any(Number),
       });
       await second.client.close();
     } finally {
@@ -502,13 +513,34 @@ test(
   TEST_TIMEOUT_MS,
 );
 
+/** How a sandbox saved live is restored, as savedLiveThenKilled runs it. */
+interface LiveSave {
+  /** The runtime of the session the save catches. */
+  runtime: "bun" | "go";
+  /** Whether the save catches the toolbelt's install, or follows it. */
+  whileInstalling: boolean;
+  /**
+   * What the sandbox, left running, does after the save and before it
+   * is killed: nothing, or an interrupt of an exec, which recycles a Go host.
+   * Either way it serves /status, which moves nothing.
+   */
+  after: "nothing" | "interrupt";
+}
+
 /**
- * Saves bayma live, as a host that saves a sandbox live does, once its
- * toolbelt is installed, or while it installs it; then stops it and restores
- * the save into a new container, which must carry on with its sessions, and,
- * saved while it installed, install the toolbelt again.
+ * Saves bayma live, as a host that saves a sandbox live does, then kills it
+ * and restores the save into a new container. Where nothing a client was told
+ * of happened after the save, the restored bayma carries on with its
+ * sessions, and, saved while it installed the toolbelt, installs it again.
+ * Where something did, the state generation has moved on, the restore is
+ * refused, and the container falls back to starting afresh, its sessions
+ * coming back from their checkpoints.
  */
-async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
+async function savedLiveThenKilled({
+  runtime,
+  whileInstalling,
+  after,
+}: LiveSave): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), "bayma-sandbox-"));
   const stateDir = join(home, ".local", "state", "bayma", "test");
   mkdirSync(stateDir, { recursive: true });
@@ -527,22 +559,25 @@ async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
       saved,
       whileInstalling ? "bayma: installing the " : "bayma: installed the ",
     );
-    const first = await connect(await serving(saved), "token");
+    const url = await serving(saved);
+    const first = await connect(url, "token");
     const { session } = await call<{ session: { session_id: string } }>(
       first.client,
       "session.create",
-      { runtime: "bun", title: "sandbox-live", cwd: home },
+      { runtime, title: "sandbox-live", cwd: home },
     );
     const defined = await exec(
       first.client,
       session.session_id,
-      LIVE_STATE.bun.define,
+      LIVE_STATE[runtime].define,
     );
     expect(defined.status).toBe("ok");
 
     // Saved while it runs, and left running, as a host that saves a
-    // sandbox live does; then stopped, which ends the server as its host
-    // ends it: whatever it held goes with it.
+    // sandbox live does; then killed, as a host that loses the sandbox
+    // loses it: whatever it held goes with it. A server stopped as it
+    // shuts down persists its sessions as it goes, which moves the state
+    // generation on, so that the save is refused.
     const id = await run(["docker", "inspect", "--format", "{{.Id}}", saved]);
     const image = join(images, "checkpoint");
     const savingAtMs = Date.now();
@@ -559,12 +594,24 @@ async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
       id,
     ]);
     console.log(`saved live in ${Date.now() - savingAtMs} ms`);
-    const live = await exec(
-      first.client,
-      session.session_id,
-      LIVE_STATE.bun.read,
-    );
-    expect(live.result_text.trim()).toBe("42");
+    // It runs on, and serves its clients.
+    const running = await activity(url, "token");
+    expect(running.status).toBe(200);
+    const { generation } = (await running.json()) as ExecActivity;
+    if (after === "interrupt") {
+      await call(first.client, "exec", {
+        session_id: session.session_id,
+        code: LOOPS[runtime],
+        yield_time_ms: 1_000,
+      });
+      await call(first.client, "session.interrupt", {
+        session_id: session.session_id,
+      });
+      const moved = (await (
+        await activity(url, "token")
+      ).json()) as ExecActivity;
+      expect(moved.generation).toBeGreaterThan(generation);
+    }
     // It keeps its MCP session, which controls the bayma session, to go
     // on in.
     const held: HeldSession = {
@@ -572,9 +619,7 @@ async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
       protocolVersion: first.transport.protocolVersion,
     };
     await first.client.close();
-    const stoppingAtMs = Date.now();
-    await run(["docker", "stop", saved]);
-    console.log(`stopped in ${Date.now() - stoppingAtMs} ms`);
+    await run(["docker", "kill", saved]);
 
     const restoredId = await run(
       container("create", restored, home, stateDir, tokenFile),
@@ -583,14 +628,37 @@ async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
     await run(["sudo", "mkdir", "-p", checkpoints]);
     await run(["sudo", "cp", "-a", image, join(checkpoints, "checkpoint")]);
     const restoringAtMs = Date.now();
-    await run(["docker", "start", "--checkpoint", "checkpoint", restored]);
+    const restore = run([
+      "docker",
+      "start",
+      "--checkpoint",
+      "checkpoint",
+      restored,
+    ]);
+    if (after === "interrupt") {
+      // bayma's restore hook refuses it, and so runsc.
+      await expect(restore).rejects.toThrow("has moved on since this save");
+      console.log(`refused in ${Date.now() - restoringAtMs} ms`);
+      await run(["docker", "start", restored]);
+      const second = await connect(await serving(restored), "token");
+      const read = await exec(
+        second.client,
+        session.session_id,
+        LIVE_STATE[runtime].read,
+      );
+      // Back from its checkpoint, which keeps no variable.
+      expect(read.status).not.toBe("ok");
+      await second.client.close();
+      return;
+    }
+    await restore;
     const restoredUrl = await serving(restored);
     console.log(`restored in ${Date.now() - restoringAtMs} ms`);
     const second = await connect(restoredUrl, "token", held);
     const read = await exec(
       second.client,
       session.session_id,
-      LIVE_STATE.bun.read,
+      LIVE_STATE[runtime].read,
     );
     expect({ status: read.status, result: read.result_text.trim() }).toEqual({
       status: "ok",
@@ -615,16 +683,58 @@ async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
   }
 }
 
+/** A cell that runs until it is interrupted. */
+const LOOPS: Record<LiveSave["runtime"], string> = {
+  bun: "for (;;) {}",
+  go: "for {\n}",
+};
+
 test(
-  "bayma saved live, then stopped, comes back from the save in a new container",
-  () => savedLiveThenStopped(false),
+  "bayma saved live, then killed, comes back from the save in a new container",
+  () =>
+    savedLiveThenKilled({
+      runtime: "bun",
+      whileInstalling: false,
+      after: "nothing",
+    }),
   TEST_TIMEOUT_MS,
 );
 
 // The save holds the install, its files closed, so that what it assembled
 // may move on once the sandbox runs on: the restore installs it again.
 test(
-  "bayma saved live while it installs the toolbelt, then stopped, comes back and installs it again",
-  () => savedLiveThenStopped(true),
+  "bayma saved live while it installs the toolbelt, then killed, comes back and installs it again",
+  () =>
+    savedLiveThenKilled({
+      runtime: "bun",
+      whileInstalling: true,
+      after: "nothing",
+    }),
+  TEST_TIMEOUT_MS,
+);
+
+// A Go host maps its session's plugins, which stay on the disk while a save
+// the generation matches may map them.
+test(
+  "bayma saved live with a Go session, then killed, comes back from the save",
+  () =>
+    savedLiveThenKilled({
+      runtime: "go",
+      whileInstalling: false,
+      after: "nothing",
+    }),
+  TEST_TIMEOUT_MS,
+);
+
+// A gVisor whose failed restores end, as ci.yml says by
+// GVISOR_ENDS_FAILED_RESTORES, lets docker start report the refusal.
+test.skipIf(process.env.GVISOR_ENDS_FAILED_RESTORES !== "1")(
+  "bayma saved live with a Go session, then interrupted, refuses the save, which falls back to the session's checkpoint",
+  () =>
+    savedLiveThenKilled({
+      runtime: "go",
+      whileInstalling: false,
+      after: "interrupt",
+    }),
   TEST_TIMEOUT_MS,
 );

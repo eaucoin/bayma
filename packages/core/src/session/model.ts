@@ -37,11 +37,28 @@ export interface SessionSummary {
 export interface ExecActivity {
   execsRunning: number;
   execsQueued: number;
+  /** Those running, each by its session's and its own ID. */
+  running: { sessionId: string; execId: string }[];
   /**
    * When the last exec ended, or the server started if none has since;
    * null while any is running or queued.
    */
   idleSinceMs: number | null;
+  /**
+   * The state directory's generation (see StateGeneration): a save of the
+   * sandbox that caught another may no longer be restored.
+   */
+  generation: number;
+}
+
+/**
+ * What a save of the sandbox caught, as `sandbox-hook save` says it: the
+ * state generation, which it may be restored at only while it is the one on
+ * the disk, and the execs that ran, each by its session's and its own ID.
+ */
+export interface SandboxSave {
+  generation: number;
+  running: { sessionId: string; execId: string }[];
 }
 
 export interface SessionDetail extends SessionSummary {

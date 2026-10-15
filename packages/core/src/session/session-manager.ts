@@ -1,11 +1,22 @@
 import { Buffer } from "node:buffer";
 import { execFile as execFileCallback } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import { promisify, TextDecoder } from "node:util";
 import { aggregateFailure, failureDetail, failureMessage } from "../errors.ts";
 import {
   runningTimeout,
+  SandboxSaveOutlived,
+  sandboxRunsOn,
+  sandboxSaved,
   sleepRunning,
   type RunningTimeout,
 } from "../sandbox.ts";
@@ -28,6 +39,11 @@ import type {
   TransportSessionHandle,
 } from "../runtime/transport.ts";
 import { createOpaqueId } from "../ids.ts";
+import {
+  killIfStill,
+  processesMapping,
+  procHidepid,
+} from "../runtime/mapping-processes.ts";
 import type {
   SessionEvent,
   SessionEventRecord,
@@ -40,6 +56,12 @@ import {
 } from "./catalog-store.ts";
 import { ExecHistoryStore } from "./exec-history-store.ts";
 import {
+  readStateGeneration,
+  StateGeneration,
+  StateGenerationNotMoved,
+  writeLastSave,
+} from "./state-generation.ts";
+import {
   CheckpointStore,
   type RuntimeCheckpointCommit,
   type RuntimeCheckpointSnapshot,
@@ -48,6 +70,7 @@ import {
 import type {
   DurabilityMode,
   ExecActivity,
+  SandboxSave,
   SessionDetail,
   SessionRole,
   SessionStatus,
@@ -225,6 +248,10 @@ export function validateSessionManagerOptions(
 const execFile = promisify(execFileCallback);
 
 const PTY_DELTA_MAX_BYTES = 64 * 1024;
+// How long a fresh start waits for the hosts of the server before it, which
+// it kills, to stop mapping their scratch files, and how often it looks.
+const ENDED_HOSTS_WAIT_MS = 10_000;
+const ENDED_HOSTS_POLL_MS = 50;
 // How long a runtime restored from a process snapshot has to answer a probe.
 const PROBE_TIMEOUT_MS = 30_000;
 
@@ -275,6 +302,18 @@ export class SessionManager {
   private readonly checkpointStore: CheckpointStore;
   private readonly options: SessionManagerOptions;
   private readonly emit: SessionEventSink;
+  /**
+   * The state directory's generation, moved on before any change is
+   * persisted (persist bumps it first) or told to a client as state: an exec
+   * submitted, started or ended, an interrupt, a recycle, a session created,
+   * resized, recovered, scheduled for eviction, closed or quarantined, a
+   * checkpoint committed or failed, and a start of the server that is no
+   * restore. What is of clients' connections alone, which a restored server
+   * has again from them (controllers and observers joining, changing and
+   * leaving, pressure warnings), and an exec's output, move nothing. A bump
+   * that cannot reach the disk throws, and what it counts is told to no one.
+   */
+  private readonly generation: StateGeneration;
 
   constructor(
     registry: RuntimeRegistry,
@@ -283,6 +322,7 @@ export class SessionManager {
     checkpointStore: CheckpointStore,
     options: SessionManagerOptions,
     emit: SessionEventSink,
+    generation = new StateGeneration(catalogStore.rootDir),
   ) {
     validateSessionManagerOptions(options);
     this.registry = registry;
@@ -291,6 +331,7 @@ export class SessionManager {
     this.checkpointStore = checkpointStore;
     this.options = options;
     this.emit = emit;
+    this.generation = generation;
   }
 
   async loadCatalog(): Promise<void> {
@@ -298,6 +339,10 @@ export class SessionManager {
       throw new Error("session catalog may only be loaded once");
     }
     this.catalogLoaded = true;
+    // A start that is no restore: no save from before it may be restored,
+    // and nothing it writes is before the state generation moves on.
+    this.generation.open();
+    this.generation.bump();
     const recoveredAtMs = Date.now();
     const catalog = this.catalogStore.list();
     for (const failure of catalog.failures) {
@@ -419,6 +464,98 @@ export class SessionManager {
     }
     this.sweepSessionDirectories();
     this.reservePidsForSnapshots();
+    // What the hosts of the server before left in the scratch directories of
+    // sessions with no process snapshot goes, which a save the generation
+    // matched before the bump above may have mapped.
+    await this.removeScratchOfEndedHosts();
+  }
+
+  /**
+   * Empties the scratch directories of the sessions with no process
+   * snapshot to restore of what the hosts of the servers before this one
+   * left there, as this server starts afresh and runs no host yet; a
+   * snapshot's processes map what they left, and their restore needs it.
+   * Their server ended, so they end too, as they read their input's end; one
+   * of this server's user that maps a file of any session's scratch
+   * meanwhile, as a Go host maps its session's plugins, is killed first, and
+   * said so: none goes on mapping what is removed, which a save would then
+   * hold whole, and a process snapshot's restore makes processes of its own.
+   */
+  private async removeScratchOfEndedHosts(): Promise<void> {
+    const root = join(this.catalogStore.rootDir, "scratch");
+    let sessionIds: string[];
+    try {
+      // A session's scratch is a directory; anything else there is no
+      // session's, and left as it is.
+      sessionIds = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      return;
+    }
+    let mounts = "";
+    try {
+      mounts = readFileSync("/proc/mounts", "utf8");
+    } catch {}
+    const hidepid = procHidepid(mounts);
+    if (hidepid !== null)
+      report(
+        `/proc is mounted with hidepid=${hidepid}, so the hosts of the server before this one are seen only where they are of its user`,
+      );
+    const deadline = Date.now() + ENDED_HOSTS_WAIT_MS;
+    for (;;) {
+      const mapping = await processesMapping([realpathSync(root)]);
+      if (mapping.length === 0) break;
+      if (Date.now() > deadline) {
+        report(
+          `processes ${mapping.map(({ pid }) => pid).join(", ")} still map files of sessions' scratch directories after ${ENDED_HOSTS_WAIT_MS} ms, which are removed beneath them`,
+        );
+        break;
+      }
+      for (const found of mapping) {
+        if (await killIfStill(found))
+          report(
+            `killed process ${found.pid} (${found.cmdline}), a host of the server before this one, which still mapped files of a session's scratch directory`,
+          );
+      }
+      await sleep(ENDED_HOSTS_POLL_MS);
+    }
+    for (const sessionId of sessionIds) {
+      if (this.sessions.get(sessionId)?.record.processSnapshot !== undefined)
+        continue;
+      const directory = join(root, sessionId);
+      for (const name of readdirSync(directory))
+        rmSync(join(directory, name), { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Removes what the host of `handle`, which has ended, left in the session's
+   * scratch directory that a save may map (RuntimeTransport.endedHostFiles),
+   * once the state generation has moved on past every such save; what a
+   * process maps still, as a host that is still exiting, stays, for the
+   * session's close or a fresh start.
+   */
+  private async removeEndedHostFiles(
+    session: SessionEntry,
+    handle: TransportSessionHandle,
+  ): Promise<void> {
+    const left =
+      this.transport(session).endedHostFiles?.(
+        this.scratchDir(session.record.sessionId),
+        handle,
+      ) ?? [];
+    for (const path of left) {
+      try {
+        if ((await processesMapping([realpathSync(path)])).length > 0) continue;
+        rmSync(path, { recursive: true, force: true });
+      } catch (error) {
+        report(
+          `could not remove ${path}, which an ended host of session ${session.record.sessionId} left: ${failureMessage(error)}`,
+          session.record,
+        );
+      }
+    }
   }
 
   /** The directory a session keeps its scratch files in, as long as it lives. */
@@ -581,10 +718,10 @@ export class SessionManager {
    * own, which probe and recover sessions, are not counted.
    */
   execActivity(): ExecActivity {
-    let execsRunning = 0;
+    const running: ExecActivity["running"] = [];
     let execsQueued = 0;
     let idleSinceMs = this.removedSessionsIdleSinceMs;
-    for (const { history } of this.sessions.values()) {
+    for (const { record: session, history } of this.sessions.values()) {
       // A session runs its execs one at a time in the order they came, so
       // those that have not ended are the last of its history.
       for (let index = history.length - 1; index >= 0; index -= 1) {
@@ -593,14 +730,17 @@ export class SessionManager {
           idleSinceMs = Math.max(idleSinceMs, record.finishedAtMs ?? 0);
           break;
         }
-        if (record.status === "running") execsRunning += 1;
-        else execsQueued += 1;
+        if (record.status === "running") {
+          running.push({ sessionId: session.sessionId, execId: record.execId });
+        } else execsQueued += 1;
       }
     }
     return {
-      execsRunning,
+      execsRunning: running.length,
       execsQueued,
-      idleSinceMs: execsRunning + execsQueued > 0 ? null : idleSinceMs,
+      running,
+      idleSinceMs: running.length + execsQueued > 0 ? null : idleSinceMs,
+      generation: this.generation.current,
     };
   }
 
@@ -1075,6 +1215,46 @@ export class SessionManager {
   }
 
   /**
+   * What a save of the sandbox now catches, as the server is saved: the
+   * state generation, which the save may be restored at only while it is
+   * the one on the disk, and the execs running, which none joins while the
+   * server is saved. It is the state directory's last-save.json too, for a
+   * host that reads it there after its save.
+   */
+  sandboxSaving(): SandboxSave {
+    // A server whose generation is stale, restored from a save the state
+    // directory moved on from, says nothing of a save over what is newer.
+    this.generation.assertCurrent();
+    const caught: SandboxSave = {
+      generation: this.generation.current,
+      running: this.execActivity().running,
+    };
+    writeLastSave(this.catalogStore.rootDir, caught);
+    return caught;
+  }
+
+  /**
+   * Refuses the restore of the sandbox, throwing SandboxSaveOutlived, where
+   * the state generation on the disk is no longer the one the save caught, or
+   * cannot be read, as the state directory has moved on since the save.
+   */
+  assertSandboxRestorable(): void {
+    let onDisk: number;
+    try {
+      onDisk = readStateGeneration(this.catalogStore.rootDir);
+    } catch (error) {
+      throw new SandboxSaveOutlived(
+        `the state generation cannot be read, so this save may be one the state directory has moved on from: ${failureMessage(error)}`,
+      );
+    }
+    if (onDisk !== this.generation.current) {
+      throw new SandboxSaveOutlived(
+        `the state directory has moved on since this save: its generation is ${onDisk}, and was ${this.generation.current} as the sandbox was saved`,
+      );
+    }
+  }
+
+  /**
    * Tells each live session it came back whole with the sandbox bayma runs
    * in, restored from a snapshot taken at `snapshotAtMs`: through the exec it
    * is running or runs next, which a client still waits on, or else the next
@@ -1182,6 +1362,8 @@ export class SessionManager {
         }
       } else {
         try {
+          // Before its files go: a save the generation still matches maps them.
+          this.generation.bump();
           this.removePersistedSession(session.record.sessionId);
         } catch (error) {
           failures.push(error);
@@ -1195,6 +1377,7 @@ export class SessionManager {
     } catch (error) {
       failures.push(error);
     }
+    this.generation.close();
     if (failures.length > 0) {
       throw aggregateFailure("session manager shutdown failed", failures);
     }
@@ -1308,6 +1491,7 @@ export class SessionManager {
               this.toSnapshot(session.record),
             ]);
             if (!session.runtime || !stillEvictable) return;
+            this.generation.bump();
             this.emitToActors(this.actorRecipients(session.record), {
               type: "session/evictionScheduled",
               sessionId: session.record.sessionId,
@@ -1446,8 +1630,14 @@ export class SessionManager {
     return exec;
   }
 
+  /**
+   * Persists the session's history and catalog entry, the state generation
+   * moved on first, as every persisted change does: a StateGenerationNotMoved
+   * thrown leaves the change unpersisted, and it must not be told.
+   */
   private persist(session: SessionEntry): void {
     if (session.persistable === false) return;
+    this.generation.bump();
     const runtimeId = session.record.runtimeId;
     if (!runtimeId) {
       throw new Error(`session ${session.record.sessionId} has no runtime`);
@@ -1674,6 +1864,9 @@ export class SessionManager {
     session: SessionEntry,
     reason: "create" | "recovery" | "recycle",
   ): Promise<void> {
+    // The host it starts writes in the session's scratch directory.
+    this.generation.bump();
+    const ended = session.runtime?.handle;
     const queued = await this.stopRuntime(
       session,
       "runtime_stopped",
@@ -1741,6 +1934,8 @@ export class SessionManager {
       throw error;
     }
     if (reason === "recycle") {
+      this.generation.bump();
+      if (ended) await this.removeEndedHostFiles(session, ended);
       this.emitToActors(this.actorRecipients(session.record), {
         type: "session/runtimeRecycled",
         sessionId: session.record.sessionId,
@@ -1791,6 +1986,16 @@ export class SessionManager {
       return false;
     }
     const { sessionId } = session.record;
+    // The dump is written into the state directory.
+    try {
+      this.generation.bump();
+    } catch (error) {
+      report(
+        `session ${sessionId}'s processes are not dumped: ${failureMessage(error)}`,
+        session.record,
+      );
+      return false;
+    }
     // The dump ends the runtime, which is no failure of it.
     runtime.unsubscribe();
     try {
@@ -2040,6 +2245,9 @@ export class SessionManager {
     try {
       this.persist(session);
     } catch (error) {
+      // Its files stay, and it is not told closed, until the generation moves
+      // on: a save the generation still matches maps them.
+      if (error instanceof StateGenerationNotMoved) throw error;
       tombstoneFailure = error;
     }
     try {
@@ -2137,9 +2345,11 @@ export class SessionManager {
     reason: string,
   ): Promise<void> {
     this.setQuarantinedState(session, reason);
+    let tellable = true;
     try {
       this.persist(session);
     } catch (error) {
+      tellable = !(error instanceof StateGenerationNotMoved);
       this.appendQuarantineReason(
         session,
         "quarantine persistence failed",
@@ -2147,22 +2357,27 @@ export class SessionManager {
       );
     }
     const actorIds = this.actorRecipients(session.record);
-    this.emitToActors(actorIds, {
-      type: "session/quarantined",
-      sessionId: session.record.sessionId,
-      reason: session.record.quarantineReason ?? reason,
-    });
-    this.emitToActors(actorIds, {
-      type: "session/statusChanged",
-      sessionId: session.record.sessionId,
-      status: "quarantined",
-      reason: session.record.quarantineReason ?? reason,
-    });
+    if (tellable) {
+      this.emitToActors(actorIds, {
+        type: "session/quarantined",
+        sessionId: session.record.sessionId,
+        reason: session.record.quarantineReason ?? reason,
+      });
+      this.emitToActors(actorIds, {
+        type: "session/statusChanged",
+        sessionId: session.record.sessionId,
+        status: "quarantined",
+        reason: session.record.quarantineReason ?? reason,
+      });
+    }
+    const ended = session.runtime?.handle;
     try {
       await this.stopRuntime(session);
     } catch (error) {
       this.appendQuarantineReason(session, "runtime termination failed", error);
     }
+    if (tellable && ended && !session.runtime)
+      await this.removeEndedHostFiles(session, ended);
   }
 
   private markQuarantined(session: SessionEntry, reason: string): void {
@@ -2218,6 +2433,11 @@ export class SessionManager {
       !session.runtime.activeExec &&
       session.runtime.queue.length > 0
     ) {
+      if (sandboxSaved()) {
+        // None starts while the server is saved: the save said what ran.
+        await sandboxRunsOn();
+        continue;
+      }
       const next = session.runtime.queue.shift();
       if (!next) return;
       try {
@@ -2279,12 +2499,16 @@ export class SessionManager {
       capture: new ExecOutputCapture(
         record,
         this.adapter(session).runtimeId,
-        (messageId, bytes) =>
+        (messageId, bytes) => {
+          // The exec's record names it: it is of the session's state, which
+          // nothing writes before the generation moves on.
+          this.generation.bump();
           this.historyStore.writeImage(
             session.record.sessionId,
             messageId,
             bytes,
-          ),
+          );
+        },
       ),
       completion: Promise.resolve(),
       resolveCompletion: () => undefined,
@@ -2474,13 +2698,22 @@ export class SessionManager {
     }
     this.terminalizeRuntimeExecs(session, "runtime_stopped", false);
     this.setQuarantinedState(session, reason);
+    // Quarantined whatever comes of its persisting; told only once the state
+    // generation has moved on.
+    let tellable = true;
     try {
       this.persist(session);
     } catch (persistError) {
+      tellable = !(persistError instanceof StateGenerationNotMoved);
       session.record.quarantineReason = `${reason}\nquarantine persistence failed: ${failureDetail(
         persistError,
       )}`;
       session.recovery.lastError = session.record.quarantineReason;
+      if (!tellable)
+        report(
+          `session ${session.record.sessionId} is quarantined untold: ${failureMessage(persistError)}`,
+          session.record,
+        );
     }
     const runtime = session.runtime;
     try {
@@ -2497,6 +2730,8 @@ export class SessionManager {
       .then(
         () => {
           if (session.runtime === runtime) session.runtime = undefined;
+          if (tellable)
+            return this.removeEndedHostFiles(session, runtime.handle);
         },
         (terminateError) => {
           this.appendQuarantineReason(
@@ -2507,6 +2742,13 @@ export class SessionManager {
         },
       );
     const actorIds = this.actorRecipients(session.record);
+    if (!tellable) {
+      if (active) {
+        this.disposeActive(active);
+        active.resolveCompletion();
+      }
+      return;
+    }
     if (active?.emitActors && message) {
       this.emitToActors(
         actorIds,
@@ -2593,6 +2835,14 @@ export class SessionManager {
         );
       }
       assertRuntimeCheckpointCompatible(adapter, checkpointCommit);
+    } catch (error) {
+      return this.failCheckpointCommit(session, failureDetail(error), execId);
+    }
+    // Before the checkpoint is written: a server whose generation is stale, as
+    // one restored from a save the state directory moved on from, writes
+    // nothing over what is newer.
+    this.generation.bump();
+    try {
       checkpoint = this.checkpointStore.writeCommit(
         session.record.sessionId,
         checkpointCommit,
@@ -2618,6 +2868,7 @@ export class SessionManager {
     reason: string,
     execId?: string,
   ): string {
+    this.generation.bump();
     this.emitToActors(this.actorRecipients(session.record), {
       type: "session/checkpointFailed",
       sessionId: session.record.sessionId,
@@ -2633,6 +2884,7 @@ export class SessionManager {
     checkpointValue: unknown,
     runtimeId = this.adapter(session).runtimeId,
   ): void {
+    this.generation.bump();
     const checkpoint = this.checkpointStore.writeCommit(
       session.record.sessionId,
       {
@@ -2657,18 +2909,29 @@ export class SessionManager {
     this.touchSession(session, checkpoint.updatedAtMs);
     try {
       this.persist(session);
-    } finally {
+    } catch (error) {
+      // Nothing of it is told before the state generation moves on.
+      if (error instanceof StateGenerationNotMoved) throw error;
       // The checkpoint manifest is authoritative before catalog/history are
       // projected. Even if that projection fails, observers must not be told
       // that an already-committed checkpoint failed.
-      this.emitToActors(this.actorRecipients(session.record), {
-        type: "session/checkpointCommitted",
-        sessionId: session.record.sessionId,
-        checkpointRevision: checkpoint.revision,
-        codecId: checkpoint.codecId,
-        byteLength: checkpoint.byteLength,
-      });
+      this.tellCheckpointCommitted(session, checkpoint);
+      throw error;
     }
+    this.tellCheckpointCommitted(session, checkpoint);
+  }
+
+  private tellCheckpointCommitted(
+    session: SessionEntry,
+    checkpoint: SessionCheckpoint,
+  ): void {
+    this.emitToActors(this.actorRecipients(session.record), {
+      type: "session/checkpointCommitted",
+      sessionId: session.record.sessionId,
+      checkpointRevision: checkpoint.revision,
+      codecId: checkpoint.codecId,
+      byteLength: checkpoint.byteLength,
+    });
   }
 
   private finalizeInterruptedExec(session: SessionEntry, execId: string): void {
@@ -2683,15 +2946,20 @@ export class SessionManager {
     active.record.interruptionReason = "controller_request";
     session.runtime.activeExec = undefined;
     this.touchSession(session, finishedAtMs);
-    this.persist(session);
-    if (active.emitActors) {
-      this.emitToActors(
-        this.actorRecipients(session.record),
-        execFinishedEvent(session.record.sessionId, active.record),
-      );
+    // Its exec ends for whoever waits on it however its end is persisted; one
+    // that cannot be is the interrupt's to quarantine.
+    try {
+      this.persist(session);
+      if (active.emitActors) {
+        this.emitToActors(
+          this.actorRecipients(session.record),
+          execFinishedEvent(session.record.sessionId, active.record),
+        );
+      }
+    } finally {
+      this.disposeActive(active);
+      active.resolveCompletion();
     }
-    this.disposeActive(active);
-    active.resolveCompletion();
   }
 
   private recordEvent(event: SessionEvent): void {
@@ -2726,15 +2994,26 @@ export class SessionManager {
     this.touchSession(session, finishedAtMs);
     finishExec(record, "error", finishedAtMs);
     const message = appendExecMessage(record, "error", messageText);
-    const actorIds = this.actorRecipients(session.record);
-    this.emitToActors(
-      actorIds,
-      execMessageEvent(session.record.sessionId, record.execId, message),
-    );
-    this.emitToActors(
-      actorIds,
-      execFinishedEvent(session.record.sessionId, record),
-    );
+    // Its end is on the disk before any client hears of it; one that cannot
+    // be is what the quarantine below says, and is told only with the state
+    // generation moved on.
+    let tellable = true;
+    try {
+      this.persist(session);
+    } catch (error) {
+      tellable = !(error instanceof StateGenerationNotMoved);
+    }
+    if (tellable) {
+      const actorIds = this.actorRecipients(session.record);
+      this.emitToActors(
+        actorIds,
+        execMessageEvent(session.record.sessionId, record.execId, message),
+      );
+      this.emitToActors(
+        actorIds,
+        execFinishedEvent(session.record.sessionId, record),
+      );
+    }
     await this.quarantineSession(
       session,
       `exec startup failed: ${messageText}`,

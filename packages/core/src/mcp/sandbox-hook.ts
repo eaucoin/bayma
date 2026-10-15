@@ -6,9 +6,13 @@ import { failureMessage } from "../errors.ts";
 import {
   filesClosed,
   markSandboxResumed,
+  SandboxSaveOutlived,
   markSandboxSaved,
   resumesWithin,
 } from "../sandbox.ts";
+import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
+import type { SandboxSave } from "../session/model.ts";
+import type { SessionManager } from "../session/session-manager.ts";
 import { inSpan, report } from "../telemetry/record.ts";
 
 // How a host that saves the whole sandbox bayma runs in, and restores it,
@@ -34,15 +38,45 @@ export const SANDBOX_HOOK_MODE_VARIABLE = "GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE";
  */
 export interface SandboxHookHandlers {
   /**
-   * Before the sandbox is saved: put what sessions committed on storage, so
-   * that falling back to their checkpoints loses nothing.
+   * Before the sandbox is saved, as the server is saved: put what sessions
+   * committed on storage, so that falling back to their checkpoints loses
+   * nothing, and say what the save catches.
    */
-  save: () => Promise<void>;
+  save: () => Promise<SandboxSave>;
   /**
    * After the sandbox was restored from what it saved at `savedAtMs`: its
    * connections to the outside are gone, and it may serve another host.
    */
   restore: (savedAtMs: number) => Promise<void>;
+}
+
+/**
+ * What restoreSandboxServer is given of the server it restores: its sessions,
+ * and its toolbelt's install.
+ */
+export interface RestoredServer {
+  manager: Pick<SessionManager, "assertSandboxRestorable" | "sandboxRestored">;
+  toolbelt?: Pick<ToolbeltInstall, "restored">;
+}
+
+/**
+ * What a server does as its sandbox is restored from a save of `savedAtMs`:
+ * it refuses the restore, by throwing, where the state directory has moved on
+ * since the save, and then does nothing else of it, as the restore fails.
+ * Otherwise it tells each live session's next exec how it came back, and
+ * installs the toolbelt again where the save caught it installing, even when
+ * telling the sessions fails.
+ */
+export function restoreSandboxServer(
+  { manager, toolbelt }: RestoredServer,
+  savedAtMs: number,
+): void {
+  manager.assertSandboxRestorable();
+  try {
+    manager.sandboxRestored(savedAtMs);
+  } finally {
+    toolbelt?.restored();
+  }
 }
 
 // A Unix socket's path is at most this many bytes long.
@@ -92,9 +126,12 @@ export async function serveSandboxHook(
   let savedAtMs: number | undefined;
   // How many saves the server made: a save given up on is the last one.
   let saves = 0;
+  // Whether the server was restored from a save its state directory had moved
+  // on from.
+  let outlived = false;
   // One mode at a time, in the order they came.
-  let tail = Promise.resolve();
-  const queue = (work: () => Promise<void>): Promise<void> => {
+  let tail: Promise<unknown> = Promise.resolve();
+  const queue = <T>(work: () => Promise<T>): Promise<T> => {
     const done = tail.then(work);
     tail = done.catch(() => undefined);
     return done;
@@ -103,15 +140,17 @@ export async function serveSandboxHook(
     savedAtMs = undefined;
     markSandboxResumed();
   };
-  const handle = async (mode: SandboxHookMode): Promise<void> => {
+  // What each mode answers, past its "ok": a save, what it caught.
+  const handle = async (mode: SandboxHookMode): Promise<string | undefined> => {
     switch (mode) {
       case "save": {
         markSandboxSaved();
+        let caught: SandboxSave;
         try {
-          await inSpan("bayma.sandbox.save", {}, async () => {
+          caught = await inSpan("bayma.sandbox.save", {}, async () => {
             // No file is held open by work that would move on with it.
             await filesClosed();
-            await handlers.save();
+            return handlers.save();
           });
         } catch (error) {
           resume();
@@ -122,15 +161,16 @@ export async function serveSandboxHook(
         void resumesWithin(SAVE_EXPIRY_MS).then((resumed) => {
           if (resumed) return;
           void queue(async () => {
-            // Saved again since, the server waits for that save's expiry.
-            if (savedAtMs === undefined || saves !== save) return;
+            // Saved again since, the server waits for that save's expiry;
+            // restored from an outlived save, it waits for good.
+            if (savedAtMs === undefined || saves !== save || outlived) return;
             report(
               `bayma: the server runs on, saved ${SAVE_EXPIRY_MS / 1000} s ago and neither restored nor resumed since`,
             );
             resume();
           });
         });
-        return;
+        return JSON.stringify(caught);
       }
       case "restore": {
         const restoredFrom = savedAtMs;
@@ -145,14 +185,26 @@ export async function serveSandboxHook(
             },
             () => handlers.restore(restoredFrom),
           );
-        } finally {
+        } catch (error) {
+          // Restored from a save its state directory has moved on from, the
+          // server stays saved, for good: running on, it would write over what
+          // is newer, as the sandbox the save was taken of did since.
+          if (error instanceof SandboxSaveOutlived) {
+            outlived = true;
+            report(
+              `bayma: the server stays saved, as the save it was restored from is outlived: ${error.message}`,
+            );
+            throw error;
+          }
           resume();
+          throw error;
         }
-        return;
+        resume();
+        return undefined;
       }
       case "resume":
         await inSpan("bayma.sandbox.resume", {}, async () => resume());
-        return;
+        return undefined;
     }
   };
   const server = net.createServer((socket) => {
@@ -174,7 +226,8 @@ export async function serveSandboxHook(
       queue(() =>
         handle(parseSandboxHookMode(request.subarray(0, end).toString())),
       ).then(
-        () => socket.end("ok\n"),
+        (answer) =>
+          socket.end(answer === undefined ? "ok\n" : `ok ${answer}\n`),
         (error: unknown) => socket.end(`${failureMessage(error)}\n`),
       );
     });
@@ -201,12 +254,14 @@ export async function serveSandboxHook(
 
 /**
  * Tells the server of `stateDir` that its sandbox is at `mode`, and waits
- * for it to have done what that takes; throws what it could not do.
+ * for it to have done what that takes: what it answers, a save what it
+ * caught, as JSON (SandboxSave), the others nothing. Throws what it could
+ * not do.
  */
 export async function runSandboxHook(
   stateDir: string,
   mode: SandboxHookMode,
-): Promise<void> {
+): Promise<string | undefined> {
   // The server's state directory is where its lease resolved it to.
   const path = sandboxHookSocket(realpathSync(resolve(stateDir)));
   const answer = await new Promise<string>((resolveAnswer, rejectAnswer) => {
@@ -226,8 +281,10 @@ export async function runSandboxHook(
       ),
     );
   });
-  if (answer !== "ok\n")
-    throw new Error(
-      `the bayma server of ${stateDir} could not ${mode}: ${answer.trimEnd() || "it closed the connection"}`,
-    );
+  if (answer === "ok\n") return undefined;
+  if (answer.startsWith("ok ") && answer.endsWith("\n"))
+    return answer.slice("ok ".length, -1);
+  throw new Error(
+    `the bayma server of ${stateDir} could not ${mode}: ${answer.trimEnd() || "it closed the connection"}`,
+  );
 }

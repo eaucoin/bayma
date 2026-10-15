@@ -5,6 +5,7 @@ import {
   RuntimeRegistry,
   SessionCatalogStore,
   SessionManager,
+  type SessionEventSink,
 } from "@bayma/core";
 import { bunAdapter } from "@bayma/runtime-bun";
 import { FakeTransport } from "../../../support/fake-transport.ts";
@@ -12,26 +13,31 @@ import { withTempDir } from "../../../support/temp.ts";
 
 const ACTOR = "actor_1";
 
-function managerIn(dir: string, transport: FakeTransport): SessionManager {
+function managerIn(
+  dir: string,
+  transport: FakeTransport,
+  emit: SessionEventSink = () => undefined,
+): SessionManager {
   return new SessionManager(
     new RuntimeRegistry([{ adapter: bunAdapter, transport }]),
     new SessionCatalogStore(dir),
     new ExecHistoryStore(dir),
     new CheckpointStore(dir),
     { maxSessions: 8, warnUsagePercent: 75, defaultCols: 80, defaultRows: 24 },
-    () => undefined,
+    emit,
   );
 }
 
 async function createSession(
   manager: SessionManager,
   dir: string,
+  durabilityMode: "ephemeral" | "checkpointed" = "ephemeral",
 ): Promise<string> {
   const session = await manager.createWithPolicy(
     ACTOR,
     "activity",
     dir,
-    { durabilityMode: "ephemeral" },
+    { durabilityMode },
     "controller",
   );
   return session.sessionId;
@@ -48,13 +54,18 @@ test("an exec counts from its submission to its end, queued behind the one runni
     const first = await createSession(manager, dir);
     const second = await createSession(manager, dir);
 
-    await manager.submitExec(first, ACTOR, "1");
+    const one = await manager.submitExec(first, ACTOR, "1");
     await manager.submitExec(first, ACTOR, "2");
-    await manager.submitExec(second, ACTOR, "3");
+    const three = await manager.submitExec(second, ACTOR, "3");
     expect(manager.execActivity()).toEqual({
       execsRunning: 2,
       execsQueued: 1,
+      running: [
+        { sessionId: first, execId: one.execId },
+        { sessionId: second, execId: three.execId },
+      ],
       idleSinceMs: null,
+      generation: expect.any(Number),
     });
 
     transport.completeNext(first);
@@ -63,7 +74,9 @@ test("an exec counts from its submission to its end, queued behind the one runni
     expect(manager.execActivity()).toEqual({
       execsRunning: 1,
       execsQueued: 0,
+      running: [{ sessionId: first, execId: expect.any(String) }],
       idleSinceMs: null,
+      generation: expect.any(Number),
     });
 
     transport.completeNext(first);
@@ -73,7 +86,9 @@ test("an exec counts from its submission to its end, queued behind the one runni
     expect(manager.execActivity()).toEqual({
       execsRunning: 0,
       execsQueued: 0,
+      running: [],
       idleSinceMs: last!.finishedAtMs!,
+      generation: expect.any(Number),
     });
   });
 });
@@ -100,7 +115,9 @@ test("an exec counts until it ends, interrupted or failed", async () => {
     expect(manager.execActivity()).toEqual({
       execsRunning: 0,
       execsQueued: 0,
+      running: [],
       idleSinceMs: Math.max(...ended.map(({ finishedAtMs }) => finishedAtMs!)),
+      generation: expect.any(Number),
     });
   });
 });
@@ -128,7 +145,9 @@ test("bayma's own execs, which recover sessions, are not counted", async () => {
     expect(manager.execActivity()).toEqual({
       execsRunning: 0,
       execsQueued: 0,
+      running: [],
       idleSinceMs,
+      generation: expect.any(Number),
     });
     transport.completeNext(sessionId);
     await reset;
@@ -153,7 +172,9 @@ test("a closed session's last exec still tells since when none has run", async (
     expect(manager.execActivity()).toEqual({
       execsRunning: 0,
       execsQueued: 0,
+      running: [],
       idleSinceMs: finishedAtMs!,
+      generation: expect.any(Number),
     });
   });
 });

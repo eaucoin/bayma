@@ -7,7 +7,7 @@ import type { SessionManagerOptions } from "../session/session-manager.ts";
 import { createMcpApplication } from "./application.ts";
 import { createModelSurface } from "./model-surface.ts";
 import { SubscribedResourceUpdatePublisher } from "./events.ts";
-import { serveSandboxHook } from "./sandbox-hook.ts";
+import { restoreSandboxServer, serveSandboxHook } from "./sandbox-hook.ts";
 import { shutdownAndExit } from "./shutdown.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
@@ -69,11 +69,12 @@ export async function serveMcpStdio(
   let stopSandboxHook: () => Promise<void>;
   try {
     stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
-      save: () => manager.syncToStorage(),
-      restore: async (savedAtMs) => {
-        manager.sandboxRestored(savedAtMs);
-        config.toolbelt?.restored();
+      save: async () => {
+        await manager.syncToStorage();
+        return manager.sandboxSaving();
       },
+      restore: async (savedAtMs) =>
+        restoreSandboxServer({ manager, toolbelt: config.toolbelt }, savedAtMs),
     });
   } catch (error) {
     try {
