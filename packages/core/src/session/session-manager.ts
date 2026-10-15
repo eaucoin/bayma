@@ -351,7 +351,7 @@ export class SessionManager {
     this.catalogLoaded = true;
     // A start that is no restore: no save from before it may be restored,
     // and nothing it writes is before the state generation moves on.
-    this.generation.open();
+    this.generation.openAfresh();
     this.generation.bump();
     const recoveredAtMs = Date.now();
     const catalog = this.catalogStore.list();
@@ -1666,8 +1666,10 @@ export class SessionManager {
    * thrown leaves the change unpersisted, and it must not be told.
    */
   private persist(session: SessionEntry): void {
-    if (session.persistable === false) return;
+    // One whose files cannot be read is persisted no more, but what is told
+    // of it, as its close, is a change all the same.
     this.generation.bump();
+    if (session.persistable === false) return;
     const runtimeId = session.record.runtimeId;
     if (!runtimeId) {
       throw new Error(`session ${session.record.sessionId} has no runtime`);

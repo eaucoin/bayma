@@ -166,7 +166,12 @@ Commands:
       a host checks it before it lets a restored sandbox run, refusing one
       whose file it cannot read or whose schemaVersion it does not know.
       Nothing is written into the state directory before the generation
-      moves on, so a server whose generation is stale writes nothing there.
+      moves on, so a server whose generation is stale writes nothing there,
+      but what a session's own host writes in its scratch directory, as a Go
+      build that ends meanwhile, which a fresh start empties all the same. A
+      fresh start finds generation.json of another schema, or none it can
+      read, and writes it anew, said so, at a generation no save caught; a
+      restore refuses it.
       A server stopped gracefully, as by SIGTERM, which a pod's deletion
       sends, persists its sessions as it stops, and so moves the generation
       on: a save of it left running is restored only where the server ended

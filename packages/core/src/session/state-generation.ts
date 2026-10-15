@@ -4,14 +4,17 @@ import {
   constants,
   fdatasyncSync,
   fsyncSync,
+  ftruncateSync,
   openSync,
   readFileSync,
   readSync,
   renameSync,
   writeSync,
 } from "node:fs";
+import { randomInt } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
+import { report, SeverityNumber } from "../telemetry/record.ts";
 import type { SandboxSave } from "./model.ts";
 
 /**
@@ -98,6 +101,17 @@ export class StateGenerationNotMoved extends Error {
   override readonly name = "StateGenerationNotMoved";
 }
 
+/** The generation file holds none that can be read: of another schema, or none JSON. */
+export class StateGenerationUnreadable extends Error {
+  override readonly name = "StateGenerationUnreadable";
+}
+
+/**
+ * Where a generation written anew starts (openAfresh): far past any a server
+ * counts to, as each starts at 0, and with room for its own bumps below 2^53.
+ */
+const FRESH_EPOCH_BASE = 2 ** 52;
+
 export class StateGeneration {
   readonly path: string;
   private readonly rootDir: string;
@@ -143,13 +157,49 @@ export class StateGeneration {
       syncDirectory(this.rootDir, this.syncs);
       return;
     }
+    let text: string;
     try {
-      this.value = parseGeneration(this.readFile(fd));
+      text = this.readFile(fd);
     } catch (error) {
       closeSync(fd);
       throw error;
     }
+    try {
+      this.value = parseGeneration(text);
+    } catch (error) {
+      closeSync(fd);
+      throw new StateGenerationUnreadable(
+        `${this.path} holds no state generation of schema ${STATE_GENERATION_SCHEMA_VERSION}: ${(error as Error).message}`,
+        { cause: error },
+      );
+    }
     this.fd = fd;
+  }
+
+  /**
+   * Opens the file as a server that starts afresh does, after which no save
+   * from before may be restored: one that holds no generation it can read, of
+   * another schema or none JSON, is written anew, said so, at a generation no
+   * save caught, as one would that the file was lost under, so that nothing
+   * stops the start. A restore still refuses such a file.
+   */
+  openAfresh(): void {
+    try {
+      this.open();
+    } catch (error) {
+      if (!(error instanceof StateGenerationUnreadable)) throw error;
+      this.fd = openSync(this.path, constants.O_RDWR);
+      // A file longer than a generation's leaves none of what it held after it.
+      ftruncateSync(this.fd, FILE_BYTES);
+      // Past any generation a server counted to, which starts at 0.
+      const epoch = FRESH_EPOCH_BASE + randomInt(2 ** 47);
+      this.write(epoch);
+      report(
+        `bayma: ${error.message}; it is written anew at generation ${epoch}, which no save caught, as this server starts afresh`,
+        {},
+        SeverityNumber.WARN,
+      );
+    }
   }
 
   /**

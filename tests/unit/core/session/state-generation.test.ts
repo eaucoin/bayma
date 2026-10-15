@@ -968,3 +968,70 @@ test("a server whose generation is stale starts no session's host, and a fresh s
     expect(withoutGeneration()).toEqual(before);
   });
 });
+
+test("a session whose history cannot be read is closed, its files removed and its close told, only once the generation moves on", async () => {
+  await withTempDir(async (dir) => {
+    const catalog = new SessionCatalogStore(dir);
+    const histories = new ExecHistoryStore(dir);
+    catalog.write({
+      sessionId: "sess_bad_history",
+      runtimeId: "bun",
+      title: "bad history",
+      cwd: dir,
+      status: "suspended",
+      durabilityMode: "checkpointed",
+      runtimeGeneration: 1,
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      closed: false,
+      cols: 80,
+      rows: 24,
+    });
+    writeFileSync(histories.historyPath("sess_bad_history"), "{broken history");
+    const told: string[] = [];
+    const manager = managerIn(dir, new FakeTransport(false), ({ event }) =>
+      told.push(event.type),
+    );
+    await manager.loadCatalog();
+    await manager.attach("sess_bad_history", ACTOR, "controller");
+    const ranOn = new StateGeneration(dir);
+    ranOn.bump();
+    ranOn.close();
+    const before = treeOf(dir);
+    told.length = 0;
+    await expect(manager.close("sess_bad_history", ACTOR)).rejects.toThrow(
+      StateGenerationNotMoved,
+    );
+    expect(treeOf(dir)).toEqual(before);
+    expect(told).not.toContain("session/closed");
+  });
+});
+
+test("a fresh start writes anew a generation file it cannot read, at a generation no save caught; a restore refuses one", async () => {
+  await withTempDir(async (dir) => {
+    for (const text of [
+      '{"schemaVersion":2,"generation":7}',
+      "{",
+      // 257 bytes, longer than a generation's, none of which is left after it.
+      `{"schemaVersion":2,"generation":7,"pad":"${"x".repeat(214)}"}`,
+    ]) {
+      writeFileSync(join(dir, STATE_GENERATION_FILE), text);
+      const manager = managerIn(dir, new FakeTransport(false), () => undefined);
+      await manager.loadCatalog();
+      expect(statSync(join(dir, STATE_GENERATION_FILE)).size).toBe(128);
+      const anew = readStateGeneration(dir);
+      expect(anew).toBeGreaterThan(2 ** 52);
+      expect(anew).toBeLessThan(Number.MAX_SAFE_INTEGER);
+      expect(manager.execActivity().generation).toBe(anew);
+      // What the server before caught, a small count, no longer matches.
+      markSandboxSaved();
+      manager.sandboxSaving();
+      writeFileSync(join(dir, STATE_GENERATION_FILE), text);
+      expect(() => manager.assertSandboxRestorable()).toThrow(
+        "the state generation cannot be read",
+      );
+      markSandboxResumed();
+      await manager.shutdown().catch(() => undefined);
+    }
+  });
+});
