@@ -38,6 +38,12 @@ export interface ExecActivity {
   execsRunning: number;
   execsQueued: number;
   /**
+   * Those running, each by its session's and its own ID: what a host that
+   * saves the sandbox while they run caught them doing, which it reads the
+   * end of in the state directory (see ExecHistoryStore).
+   */
+  running: { sessionId: string; execId: string }[];
+  /**
    * When the last exec ended, or the server started if none has since;
    * null while any is running or queued.
    */

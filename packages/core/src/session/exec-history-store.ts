@@ -1,6 +1,9 @@
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -228,6 +231,14 @@ export class ExecHistoryStore {
     return readFileSync(this.imagePath(sessionId, messageId));
   }
 
+  /**
+   * Writes the session's history, on the disk once this returns, which the
+   * session manager does before any client is told of an exec's end. So a
+   * host that saved the sandbox while an exec ran tells from it, as it
+   * restores that save, whether the exec has ended since: its record in
+   * `histories/<session ID>.json` has the `execId` and `status` of each of
+   * the session's execs, and one that ran on is "running" still.
+   */
   write(sessionId: string, history: ExecRecord[]): void {
     mkdirSync(this.historiesDir, { recursive: true });
     const validated = ExecHistorySchema.parse({
@@ -236,8 +247,20 @@ export class ExecHistoryStore {
     });
     const finalPath = this.historyPath(sessionId);
     const tempPath = `${finalPath}.tmp`;
-    writeFileSync(tempPath, JSON.stringify(validated, null, 2) + "\n", "utf8");
+    const file = openSync(tempPath, "w");
+    try {
+      writeFileSync(file, JSON.stringify(validated, null, 2) + "\n", "utf8");
+      fsyncSync(file);
+    } finally {
+      closeSync(file);
+    }
     renameSync(tempPath, finalPath);
+    const directory = openSync(this.historiesDir, "r");
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
   }
 
   read(sessionId: string): ExecRecord[] {

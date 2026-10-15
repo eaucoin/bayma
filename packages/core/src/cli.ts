@@ -116,8 +116,9 @@ Commands:
       restored, for its new host's token; with --telemetry-token-file,
       each export of its telemetry carries that file's token as its
       bearer, read for each export. GET /status answers, as JSON, how many execs are
-      running and queued in every session (execsRunning, execsQueued)
-      and, when none is, since when (idleSinceMs)
+      running and queued in every session (execsRunning, execsQueued),
+      those running by their sessions' and their own IDs (running:
+      sessionId, execId), and, when none is, since when (idleSinceMs)
   sandbox-hook [save|restore|resume] --state-dir PATH
       tell the server of the state directory that the sandbox it runs in
       is about to be saved whole, was restored, or runs on after a save, as
@@ -130,7 +131,12 @@ Commands:
       live session's exec; a host whose save fails runs resume, and a
       save neither follows within ten minutes is given up on. A gVisor
       sandbox's file locks hold within it alone, so such a host runs one
-      server per state directory
+      server per state directory. A host that saved the sandbox while an
+      exec ran, as /status named it, tells whether that exec has ended
+      since from the state directory's histories/<sessionId>.json, whose
+      history lists each exec's execId and status, and which is on the
+      disk before any client hears of an exec's end: one that runs on is
+      "running" still
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by

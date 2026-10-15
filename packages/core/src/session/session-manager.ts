@@ -581,10 +581,10 @@ export class SessionManager {
    * own, which probe and recover sessions, are not counted.
    */
   execActivity(): ExecActivity {
-    let execsRunning = 0;
+    const running: ExecActivity["running"] = [];
     let execsQueued = 0;
     let idleSinceMs = this.removedSessionsIdleSinceMs;
-    for (const { history } of this.sessions.values()) {
+    for (const { record: session, history } of this.sessions.values()) {
       // A session runs its execs one at a time in the order they came, so
       // those that have not ended are the last of its history.
       for (let index = history.length - 1; index >= 0; index -= 1) {
@@ -593,14 +593,16 @@ export class SessionManager {
           idleSinceMs = Math.max(idleSinceMs, record.finishedAtMs ?? 0);
           break;
         }
-        if (record.status === "running") execsRunning += 1;
-        else execsQueued += 1;
+        if (record.status === "running") {
+          running.push({ sessionId: session.sessionId, execId: record.execId });
+        } else execsQueued += 1;
       }
     }
     return {
-      execsRunning,
+      execsRunning: running.length,
       execsQueued,
-      idleSinceMs: execsRunning + execsQueued > 0 ? null : idleSinceMs,
+      running,
+      idleSinceMs: running.length + execsQueued > 0 ? null : idleSinceMs,
     };
   }
 

@@ -364,7 +364,14 @@ test(
         (await (
           await activity(savedUrl, "first-token")
         ).json()) as ExecActivity,
-      ).toEqual({ execsRunning: 1, execsQueued: 0, idleSinceMs: null });
+      ).toEqual({
+        execsRunning: 1,
+        execsQueued: 0,
+        running: [
+          { sessionId: busy.session.session_id, execId: running.exec_id },
+        ],
+        idleSinceMs: null,
+      });
 
       // Saved beside Docker's shim, running bayma's hook first, as a node
       // agent saves a pod's sandbox.
@@ -466,6 +473,7 @@ test(
       ).toEqual({
         execsRunning: 0,
         execsQueued: 0,
+        running: [],
         idleSinceMs: expect.any(Number),
       });
       await second.client.close();
