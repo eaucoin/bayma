@@ -18,7 +18,8 @@ import { RUNTIME_IDS, type ExecActivity, type RuntimeId } from "@bayma/core";
 // the exec it was running goes on, an MCP SDK client that held its MCP
 // session carries on in it at the new address, and the server answers the
 // token its new container gave it alone. Saved live, left running and then
-// stopped, it comes back from that save too.
+// stopped, it comes back from that save too, and, saved as it installed its
+// toolbelt, installs it again.
 //
 // It needs root through sudo, Docker with gVisor's runsc registered as the
 // runtime `runsc`, and Docker's experimental features, which restore a
@@ -91,6 +92,16 @@ async function logs(name: string): Promise<string> {
   ]);
   await child.exited;
   return `${name}:\n${stdout}${stderr}`;
+}
+
+/** Resolves once what a container said holds `text`, within two minutes. */
+async function logged(name: string, text: string): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  while (!(await logs(name)).includes(text)) {
+    if (Date.now() > deadline)
+      throw new Error(`${name} did not say "${text}" within 120 s`);
+    await sleep(250);
+  }
 }
 
 /**
@@ -491,101 +502,129 @@ test(
   TEST_TIMEOUT_MS,
 );
 
+/**
+ * Saves bayma live, as a host that saves a sandbox live does, once its
+ * toolbelt is installed, or while it installs it; then stops it and restores
+ * the save into a new container, which must carry on with its sessions, and,
+ * saved while it installed, install the toolbelt again.
+ */
+async function savedLiveThenStopped(whileInstalling: boolean): Promise<void> {
+  const home = mkdtempSync(join(tmpdir(), "bayma-sandbox-"));
+  const stateDir = join(home, ".local", "state", "bayma", "test");
+  mkdirSync(stateDir, { recursive: true });
+  const tokenFile = join(home, "token");
+  writeFileSync(tokenFile, "token\n");
+  const images = mkdtempSync(join(tmpdir(), "bayma-checkpoints-"));
+  const suffix = `${process.pid}-${Date.now()}`;
+  const [saved, restored] = [
+    `bayma-saved-${suffix}`,
+    `bayma-restored-${suffix}`,
+  ];
+  try {
+    await run(container("run", saved, home, stateDir, tokenFile));
+    // The install copies the toolbelt into the home, beside the sessions.
+    await logged(
+      saved,
+      whileInstalling ? "bayma: installing the " : "bayma: installed the ",
+    );
+    const first = await connect(await serving(saved), "token");
+    const { session } = await call<{ session: { session_id: string } }>(
+      first.client,
+      "session.create",
+      { runtime: "bun", title: "sandbox-live", cwd: home },
+    );
+    const defined = await exec(
+      first.client,
+      session.session_id,
+      LIVE_STATE.bun.define,
+    );
+    expect(defined.status).toBe("ok");
+
+    // Saved while it runs, and left running, as a host that saves a
+    // sandbox live does; then stopped, which ends the server as its host
+    // ends it: whatever it held goes with it.
+    const id = await run(["docker", "inspect", "--format", "{{.Id}}", saved]);
+    const image = join(images, "checkpoint");
+    const savingAtMs = Date.now();
+    await run([
+      "sudo",
+      "runsc",
+      "--root",
+      RUNSC_ROOT,
+      "checkpoint",
+      "--image-path",
+      image,
+      "--leave-running",
+      `--save-restore-exec-argv=${await hookArgv(stateDir)}`,
+      id,
+    ]);
+    console.log(`saved live in ${Date.now() - savingAtMs} ms`);
+    const live = await exec(
+      first.client,
+      session.session_id,
+      LIVE_STATE.bun.read,
+    );
+    expect(live.result_text.trim()).toBe("42");
+    // It keeps its MCP session, which controls the bayma session, to go
+    // on in.
+    const held: HeldSession = {
+      sessionId: first.transport.sessionId,
+      protocolVersion: first.transport.protocolVersion,
+    };
+    await first.client.close();
+    const stoppingAtMs = Date.now();
+    await run(["docker", "stop", saved]);
+    console.log(`stopped in ${Date.now() - stoppingAtMs} ms`);
+
+    const restoredId = await run(
+      container("create", restored, home, stateDir, tokenFile),
+    );
+    const checkpoints = `/var/lib/docker/containers/${restoredId}/checkpoints`;
+    await run(["sudo", "mkdir", "-p", checkpoints]);
+    await run(["sudo", "cp", "-a", image, join(checkpoints, "checkpoint")]);
+    const restoringAtMs = Date.now();
+    await run(["docker", "start", "--checkpoint", "checkpoint", restored]);
+    const restoredUrl = await serving(restored);
+    console.log(`restored in ${Date.now() - restoringAtMs} ms`);
+    const second = await connect(restoredUrl, "token", held);
+    const read = await exec(
+      second.client,
+      session.session_id,
+      LIVE_STATE.bun.read,
+    );
+    expect({ status: read.status, result: read.result_text.trim() }).toEqual({
+      status: "ok",
+      result: "42",
+    });
+    await second.client.close();
+    if (whileInstalling) {
+      await logged(
+        restored,
+        "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed",
+      );
+      await logged(restored, "bayma: installed the ");
+    }
+  } finally {
+    for (const name of [saved, restored]) {
+      console.log(await logs(name));
+      await run(["docker", "rm", "--force", name]).catch(() => undefined);
+    }
+    await run(["sudo", "rm", "-rf", images, home]).catch((error) =>
+      console.error(error),
+    );
+  }
+}
+
 test(
   "bayma saved live, then stopped, comes back from the save in a new container",
-  async () => {
-    const home = mkdtempSync(join(tmpdir(), "bayma-sandbox-"));
-    const stateDir = join(home, ".local", "state", "bayma", "test");
-    mkdirSync(stateDir, { recursive: true });
-    const tokenFile = join(home, "token");
-    writeFileSync(tokenFile, "token\n");
-    const images = mkdtempSync(join(tmpdir(), "bayma-checkpoints-"));
-    const suffix = `${process.pid}-${Date.now()}`;
-    const [saved, restored] = [
-      `bayma-saved-${suffix}`,
-      `bayma-restored-${suffix}`,
-    ];
-    try {
-      await run(container("run", saved, home, stateDir, tokenFile));
-      const first = await connect(await serving(saved), "token");
-      const { session } = await call<{ session: { session_id: string } }>(
-        first.client,
-        "session.create",
-        { runtime: "bun", title: "sandbox-live", cwd: home },
-      );
-      const defined = await exec(
-        first.client,
-        session.session_id,
-        LIVE_STATE.bun.define,
-      );
-      expect(defined.status).toBe("ok");
+  () => savedLiveThenStopped(false),
+  TEST_TIMEOUT_MS,
+);
 
-      // Saved while it runs, and left running, as a host that saves a
-      // sandbox live does; then stopped, which ends the server as its host
-      // ends it: whatever it held goes with it.
-      const id = await run(["docker", "inspect", "--format", "{{.Id}}", saved]);
-      const image = join(images, "checkpoint");
-      const savingAtMs = Date.now();
-      await run([
-        "sudo",
-        "runsc",
-        "--root",
-        RUNSC_ROOT,
-        "checkpoint",
-        "--image-path",
-        image,
-        "--leave-running",
-        `--save-restore-exec-argv=${await hookArgv(stateDir)}`,
-        id,
-      ]);
-      console.log(`saved live in ${Date.now() - savingAtMs} ms`);
-      const live = await exec(
-        first.client,
-        session.session_id,
-        LIVE_STATE.bun.read,
-      );
-      expect(live.result_text.trim()).toBe("42");
-      // It keeps its MCP session, which controls the bayma session, to go
-      // on in.
-      const held: HeldSession = {
-        sessionId: first.transport.sessionId,
-        protocolVersion: first.transport.protocolVersion,
-      };
-      await first.client.close();
-      const stoppingAtMs = Date.now();
-      await run(["docker", "stop", saved]);
-      console.log(`stopped in ${Date.now() - stoppingAtMs} ms`);
-
-      const restoredId = await run(
-        container("create", restored, home, stateDir, tokenFile),
-      );
-      const checkpoints = `/var/lib/docker/containers/${restoredId}/checkpoints`;
-      await run(["sudo", "mkdir", "-p", checkpoints]);
-      await run(["sudo", "cp", "-a", image, join(checkpoints, "checkpoint")]);
-      const restoringAtMs = Date.now();
-      await run(["docker", "start", "--checkpoint", "checkpoint", restored]);
-      const restoredUrl = await serving(restored);
-      console.log(`restored in ${Date.now() - restoringAtMs} ms`);
-      const second = await connect(restoredUrl, "token", held);
-      const read = await exec(
-        second.client,
-        session.session_id,
-        LIVE_STATE.bun.read,
-      );
-      expect({ status: read.status, result: read.result_text.trim() }).toEqual({
-        status: "ok",
-        result: "42",
-      });
-      await second.client.close();
-    } finally {
-      for (const name of [saved, restored]) {
-        console.log(await logs(name));
-        await run(["docker", "rm", "--force", name]).catch(() => undefined);
-      }
-      await run(["sudo", "rm", "-rf", images, home]).catch((error) =>
-        console.error(error),
-      );
-    }
-  },
+// The save holds the install, its files closed, so that what it assembled
+// may move on once the sandbox runs on: the restore installs it again.
+test(
+  "bayma saved live while it installs the toolbelt, then stopped, comes back and installs it again",
+  () => savedLiveThenStopped(true),
   TEST_TIMEOUT_MS,
 );
