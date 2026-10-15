@@ -108,7 +108,7 @@ Commands:
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
       [--client-idle-timeout-ms N] [--token-file PATH]
-      [--telemetry-token-file PATH]
+      [--telemetry-token-file PATH] [--stop-wait-ms N]
       serve MCP over Streamable HTTP; a client session with no request or
       stream open for the idle timeout, five minutes unless given, is
       closed; with --token-file, every request must carry the file's
@@ -119,11 +119,21 @@ Commands:
       many execs are running and queued in every session (execsRunning,
       execsQueued), those running by their sessions' and their own IDs
       (running: sessionId, execId), when none is, since when
-      (idleSinceMs), and the state generation (generation)
-  sandbox-hook [save|restore|resume] --state-dir PATH
+      (idleSinceMs), and the state generation (generation). With
+      --stop-wait-ms, SIGTERM's stop is held for up to that long for a save
+      of the sandbox, as a host that ends the sandbox's pod saves it whole
+      first: meanwhile the server takes no new session and no new exec,
+      those running or queued carrying on; a save that ends the sandbox
+      ends the server with it, and a restore from that save lets the stop
+      go, as its old pod's; a resume, sandbox-hook stop, or the wait's end
+      goes on with the stop, a sandbox-hook stop asked while the server is
+      saved once it runs on. Without it, or with 0, SIGTERM stops the
+      server at once
+  sandbox-hook [save|restore|resume|stop] --state-dir PATH
       tell the server of the state directory that the sandbox it runs in
       is about to be saved whole, was restored, or runs on after a save, as
-      a host that saves sandboxes runs it in the sandbox: gVisor's runsc
+      a host that saves sandboxes runs it in the sandbox, or, with stop,
+      that the stop it holds goes on (mcp-http --stop-wait-ms): gVisor's runsc
       checkpoint --save-restore-exec-argv, naming the mode in
       GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
       committed on storage, holds requests, timeouts and exec starts, and
@@ -151,7 +161,8 @@ Commands:
       again.
       A save left running may be restored only while the generation on the
       disk is the one the save caught: the server refuses a restore
-      otherwise, and stays saved rather than write over what is newer, and
+      otherwise, and stays saved rather than write over what is newer,
+      answering nothing more until its host kills it (SIGKILL), and
       a host checks it before it lets a restored sandbox run, refusing one
       whose file it cannot read or whose schemaVersion it does not know.
       Nothing is written into the state directory before the generation
@@ -268,6 +279,7 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         "--client-idle-timeout-ms",
         "--token-file",
         "--telemetry-token-file",
+        "--stop-wait-ms",
         ...SERVER_OPTIONS,
       ]);
       const telemetryTokenFile = parsed.get("--telemetry-token-file");
@@ -290,6 +302,7 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
             option(parsed, "--client-idle-timeout-ms", "300000"),
           ),
           tokenFile: parsed.get("--token-file"),
+          stopWaitMs: Number(option(parsed, "--stop-wait-ms", "0")),
           ...serverConfig(parsed),
           toolbelt,
         }),

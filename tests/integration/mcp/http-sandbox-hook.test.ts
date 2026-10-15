@@ -311,3 +311,126 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+/** Whether the server's process exits within `ms`. */
+async function exitsWithin(
+  server: { child: import("node:child_process").ChildProcess },
+  ms: number,
+): Promise<boolean> {
+  if (server.child.exitCode !== null || server.child.signalCode !== null)
+    return true;
+  server.child.ref();
+  try {
+    return await answeredWithin(
+      new Promise((resolve) => server.child.once("exit", resolve)),
+      ms,
+    );
+  } finally {
+    server.child.unref();
+  }
+}
+
+/** A session of the server's, the client's to exec in. */
+async function sessionOf(client: {
+  callTool<T>(name: string, args: Record<string, unknown>): Promise<T>;
+}): Promise<string> {
+  const created = await client.callTool<{ session: { session_id: string } }>(
+    "session.create",
+    { runtime: "bun", title: "held", cwd: process.cwd() },
+  );
+  return created.session.session_id;
+}
+
+test(
+  "SIGTERM's stop, held for a save, takes no new session or exec, lets what runs carry on, and goes on at sandbox-hook stop",
+  async () => {
+    const server = await launchMcpHttpServer({ stopWaitMs: 60_000 });
+    const client = await server.spawnClient();
+    try {
+      const sessionId = await sessionOf(client);
+      const flag = join(server.stateDir, "..", "carried-on");
+      const running = await client.callTool<{ exec_id: string }>("exec", {
+        session_id: sessionId,
+        code: `while (!require("node:fs").existsSync(${JSON.stringify(flag)})) await Bun.sleep(50); 42`,
+        yield_time_ms: 0,
+      });
+      process.kill(server.child.pid!, "SIGTERM");
+      await sleep(200);
+      expect(await exitsWithin(server, 0)).toBe(false);
+      await expect(
+        client.callTool("exec", { session_id: sessionId, code: "1" }),
+      ).rejects.toThrow("the server is stopping");
+      // What ran as the stop was held carries on, to its end.
+      writeFileSync(flag, "");
+      const finished = await client.callTool<{ result_text: string }>("wait", {
+        session_id: sessionId,
+        exec_id: running.exec_id,
+        yield_time_ms: 10_000,
+      });
+      expect(finished.result_text).toBe("42");
+      await expect(sessionOf(client)).rejects.toThrow("the server is stopping");
+      // Its sessions are served still, for whoever reads them.
+      expect((await fetch(new URL("/status", server.url))).status).not.toBe(
+        503,
+      );
+      await hook(server.stateDir, "stop");
+      expect(await exitsWithin(server, 10_000)).toBe(true);
+    } finally {
+      await client.close().catch(() => undefined);
+      await server.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a restore from a save that caught the held stop lets it go, as its old pod's, and the server runs on",
+  async () => {
+    const server = await launchMcpHttpServer({ stopWaitMs: 2_000 });
+    const client = await server.spawnClient();
+    try {
+      const sessionId = await sessionOf(client);
+      process.kill(server.child.pid!, "SIGTERM");
+      await sleep(200);
+      await hook(server.stateDir, "save");
+      await hook(server.stateDir, "restore");
+      // Past the wait, it runs on, and starts what it is asked to.
+      await sleep(3_000);
+      expect(await exitsWithin(server, 0)).toBe(false);
+      const ran = await client.callTool<{ result_text: string }>("exec", {
+        session_id: sessionId,
+        code: "40 + 2",
+      });
+      expect(ran.result_text).toBe("42");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "the held stop goes on once its wait ends with no save, and at once after a save that failed or left the sandbox running",
+  async () => {
+    const waited = await launchMcpHttpServer({ stopWaitMs: 1_000 });
+    try {
+      process.kill(waited.child.pid!, "SIGTERM");
+      expect(await exitsWithin(waited, 200)).toBe(false);
+      expect(await exitsWithin(waited, 10_000)).toBe(true);
+    } finally {
+      await waited.close();
+    }
+    const resumed = await launchMcpHttpServer({ stopWaitMs: 60_000 });
+    try {
+      process.kill(resumed.child.pid!, "SIGTERM");
+      await sleep(200);
+      await hook(resumed.stateDir, "save");
+      await hook(resumed.stateDir, "resume");
+      expect(await exitsWithin(resumed, 10_000)).toBe(true);
+    } finally {
+      await resumed.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);

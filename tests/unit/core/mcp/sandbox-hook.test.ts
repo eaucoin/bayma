@@ -227,7 +227,7 @@ test("the hook's server answers no request longer than a mode", async () => {
         "the sandbox hook's request is too long\n",
       );
       expect(await ask(dir, "checkpoint\n")).toBe(
-        "the sandbox hook's mode must be save, restore, resume, not checkpoint\n",
+        "the sandbox hook's mode must be save, restore, resume, stop, not checkpoint\n",
       );
       expect(calls).toEqual([]);
     } finally {
@@ -345,6 +345,53 @@ test("a server restored from a save its state directory moved on from stays save
           failure.message,
         );
         expect(sandboxSaved()).toBe(staysSaved);
+      } finally {
+        await stop();
+        markSandboxResumed();
+      }
+    }
+  });
+});
+
+test("a stop asked while the server is saved waits for it to run on, and a restore from the save leaves it as the old pod's", async () => {
+  await withHookDir(async (dir) => {
+    for (const after of ["resume", "restore", "none"] as const) {
+      const { calls, handlers } = recording();
+      const stopCalls: string[] = [];
+      handlers.stop = {
+        restored: () => stopCalls.push("restored"),
+        resumed: () => stopCalls.push("resumed"),
+        goOn: (reason) => stopCalls.push(`goOn: ${reason}`),
+      };
+      const stop = await serveSandboxHook(dir, handlers);
+      try {
+        if (after !== "none") {
+          await runSandboxHook(dir, "save");
+          // Saved, the stop waits: going on would write over the save.
+          await runSandboxHook(dir, "stop");
+          expect(stopCalls).toEqual([]);
+          await runSandboxHook(dir, after);
+          expect(stopCalls).toEqual(
+            after === "resume"
+              ? [
+                  "resumed",
+                  "goOn: sandbox-hook stop asked it to as the server was saved",
+                ]
+              : ["restored"],
+          );
+          if (after === "restore") {
+            // The old pod's stop asks nothing of the restored server: a save
+            // of it the server then runs on from goes on with none.
+            await runSandboxHook(dir, "save");
+            await runSandboxHook(dir, "resume");
+            expect(stopCalls).toEqual(["restored", "resumed"]);
+          }
+        } else {
+          // Running, it goes on at once.
+          await runSandboxHook(dir, "stop");
+          expect(stopCalls).toEqual(["goOn: sandbox-hook stop asked it to"]);
+        }
+        expect(calls.length).toBe({ resume: 1, restore: 3, none: 0 }[after]);
       } finally {
         await stop();
         markSandboxResumed();

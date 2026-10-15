@@ -11,6 +11,7 @@ import {
   resumesWithin,
 } from "../sandbox.ts";
 import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
+import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
 import { inSpan, report } from "../telemetry/record.ts";
@@ -25,7 +26,12 @@ import { inSpan, report } from "../telemetry/record.ts";
 // token, which the restore may be about to replace; the state directory's
 // mode keeps it to the server's own user.
 
-export const SANDBOX_HOOK_MODES = ["save", "restore", "resume"] as const;
+export const SANDBOX_HOOK_MODES = [
+  "save",
+  "restore",
+  "resume",
+  "stop",
+] as const;
 export type SandboxHookMode = (typeof SANDBOX_HOOK_MODES)[number];
 
 /** Where gVisor names the mode of the command it runs. */
@@ -48,6 +54,11 @@ export interface SandboxHookHandlers {
    * connections to the outside are gone, and it may serve another host.
    */
   restore: (savedAtMs: number) => Promise<void>;
+  /**
+   * The stop the server holds for a save, if it holds stops: a restore lets
+   * it go, a resume goes on with it, and `stop` goes on with it at once.
+   */
+  stop?: Pick<HeldStop, "restored" | "resumed" | "goOn">;
 }
 
 /**
@@ -129,6 +140,9 @@ export async function serveSandboxHook(
   // Whether the server was restored from a save its state directory had moved
   // on from.
   let outlived = false;
+  // Whether `stop` was asked while the server was saved, which waits for it
+  // to run on: a server restored from the save leaves it as its old pod's.
+  let stopAsked = false;
   // One mode at a time, in the order they came.
   let tail: Promise<unknown> = Promise.resolve();
   const queue = <T>(work: () => Promise<T>): Promise<T> => {
@@ -139,6 +153,18 @@ export async function serveSandboxHook(
   const resume = () => {
     savedAtMs = undefined;
     markSandboxResumed();
+  };
+  // The server runs on after a save, which failed or left the sandbox
+  // running: the stop held goes on, as one asked meanwhile does.
+  const runOn = () => {
+    resume();
+    handlers.stop?.resumed();
+    if (stopAsked) {
+      stopAsked = false;
+      handlers.stop?.goOn(
+        "sandbox-hook stop asked it to as the server was saved",
+      );
+    }
   };
   // What each mode answers, past its "ok": a save, what it caught.
   const handle = async (mode: SandboxHookMode): Promise<string | undefined> => {
@@ -153,7 +179,7 @@ export async function serveSandboxHook(
             return handlers.save();
           });
         } catch (error) {
-          resume();
+          runOn();
           throw error;
         }
         savedAtMs = Date.now();
@@ -167,7 +193,7 @@ export async function serveSandboxHook(
             report(
               `bayma: the server runs on, saved ${SAVE_EXPIRY_MS / 1000} s ago and neither restored nor resumed since`,
             );
-            resume();
+            runOn();
           });
         });
         return JSON.stringify(caught);
@@ -196,14 +222,26 @@ export async function serveSandboxHook(
             );
             throw error;
           }
+          // Restored all the same: a stop held or asked as it was saved was
+          // its old pod's.
+          stopAsked = false;
           resume();
+          handlers.stop?.restored();
           throw error;
         }
+        stopAsked = false;
         resume();
+        handlers.stop?.restored();
         return undefined;
       }
       case "resume":
-        await inSpan("bayma.sandbox.resume", {}, async () => resume());
+        await inSpan("bayma.sandbox.resume", {}, async () => runOn());
+        return undefined;
+      case "stop":
+        // Saved, the server waits to run on: going on with its stop now would
+        // write over what the save caught.
+        if (savedAtMs !== undefined) stopAsked = true;
+        else handlers.stop?.goOn("sandbox-hook stop asked it to");
         return undefined;
     }
   };

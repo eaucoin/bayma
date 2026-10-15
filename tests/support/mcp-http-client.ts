@@ -249,6 +249,8 @@ export interface McpHttpServerOptions {
   telemetryToken?: boolean;
   /** The server's environment: this process's unless given. */
   env?: NodeJS.ProcessEnv;
+  /** Serve with --stop-wait-ms. */
+  stopWaitMs?: number;
 }
 
 export interface McpHttpServer {
@@ -303,6 +305,9 @@ export async function launchMcpHttpServer(
         : ["--client-idle-timeout-ms", String(options.clientIdleTimeoutMs)]),
       ...(options.bearerToken === undefined ? [] : ["--token-file", tokenFile]),
       ...(options.telemetryToken ? ["--telemetry-token-file", tokenFile] : []),
+      ...(options.stopWaitMs === undefined
+        ? []
+        : ["--stop-wait-ms", String(options.stopWaitMs)]),
     ],
     {
       detached: true,

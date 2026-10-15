@@ -22,6 +22,7 @@ import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
 import { report, SeverityNumber } from "../telemetry/record.ts";
 import { restoreSandboxServer, serveSandboxHook } from "./sandbox-hook.ts";
+import { HeldStop } from "./held-stop.ts";
 import { readTokenFile } from "../token-file.ts";
 import {
   resumesWithin,
@@ -54,6 +55,11 @@ export interface McpHttpConfig extends Pick<
   tokenFile?: string;
   /** The toolbelt's install, which the server stops as it shuts down. */
   toolbelt?: ToolbeltInstall;
+  /**
+   * How long a SIGTERM's stop is held for a save of the sandbox, as a host
+   * that ends the sandbox's pod saves it first (HeldStop): none unless given.
+   */
+  stopWaitMs?: number;
 }
 
 interface HttpClientSession {
@@ -213,6 +219,16 @@ export async function serveMcpHttp(
   ) {
     throw new Error(
       `MCP HTTP client idle timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`,
+    );
+  }
+  const stopWaitMs = config.stopWaitMs ?? 0;
+  if (
+    !Number.isSafeInteger(stopWaitMs) ||
+    stopWaitMs < 0 ||
+    stopWaitMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new Error(
+      `MCP HTTP stop wait must be an integer between 0 and ${MAX_TIMER_DELAY_MS} ms`,
     );
   }
   const { tokenFile } = config;
@@ -524,6 +540,8 @@ export async function serveMcpHttp(
     }
   });
 
+  // SIGTERM's stop, held for a save of the sandbox where the config says to.
+  const heldStop = new HeldStop(stopWaitMs, manager, () => shutdown(0));
   let stopSandboxHook: () => Promise<void>;
   try {
     await new Promise<void>((resolveListen, rejectListen) => {
@@ -535,6 +553,7 @@ export async function serveMcpHttp(
       });
     });
     stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
+      stop: heldStop,
       save: async () => {
         await manager.syncToStorage();
         return manager.sandboxSaving();
@@ -623,7 +642,7 @@ export async function serveMcpHttp(
     shutdown(1);
   });
   process.on("SIGINT", () => shutdown(0));
-  process.on("SIGTERM", () => shutdown(0));
+  process.on("SIGTERM", () => heldStop.begin());
 
   return new Promise<never>(() => undefined);
 }

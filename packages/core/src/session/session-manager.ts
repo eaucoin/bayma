@@ -281,8 +281,18 @@ function report(
   reportLine(`bayma: ${message}`, session ? sessionAttributes(session) : {});
 }
 
+/**
+ * The server holds its stop for a save of its sandbox (../mcp/held-stop.ts),
+ * and takes no new session and no new exec until it lets the stop go.
+ */
+export class ServerStopping extends Error {
+  override readonly name = "ServerStopping";
+}
+
 export class SessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
+  /** Why the server takes no new session or exec, while it holds a stop. */
+  private stopHeldBecause: string | undefined;
   private readonly serverEventLog = new EventLog();
   private admissionMutationTail = Promise.resolve();
   private catalogLoaded = false;
@@ -777,6 +787,7 @@ export class SessionManager {
     role: SessionRole = "controller",
     runtimeId: RuntimeId = this.registry.onlyRuntimeId(),
   ): Promise<SessionSummary> {
+    this.assertStopNotHeld();
     return this.withAdmissionMutation(() =>
       this.createWithPolicyUnlocked(
         actorId,
@@ -1051,6 +1062,7 @@ export class SessionManager {
     actorId: string,
     code: string,
   ): Promise<SubmitResult> {
+    this.assertStopNotHeld();
     return this.withAdmissionMutation(() =>
       this.withSessionMutation(
         sessionId,
@@ -1424,6 +1436,24 @@ export class SessionManager {
     } finally {
       release();
     }
+  }
+
+  /**
+   * The server holds its stop, for `reason`: it takes no new session and no
+   * new exec until releaseStop, those running or queued carrying on.
+   */
+  holdStop(reason: string): void {
+    this.stopHeldBecause = reason;
+  }
+
+  /** The server runs on, as before its stop was held. */
+  releaseStop(): void {
+    this.stopHeldBecause = undefined;
+  }
+
+  private assertStopNotHeld(): void {
+    if (this.stopHeldBecause !== undefined)
+      throw new ServerStopping(this.stopHeldBecause);
   }
 
   private assertAcceptingMutations(): void {

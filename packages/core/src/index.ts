@@ -27,6 +27,7 @@ export * from "./session/model.ts";
 export * from "./session/exec-types.ts";
 export * from "./session/events.ts";
 export {
+  ServerStopping,
   SessionManager,
   validateSessionManagerOptions,
   type SessionCreatePolicy,
@@ -75,6 +76,7 @@ export * from "./sandbox.ts";
 export { serveMcpStdio, type McpStdioConfig } from "./mcp/stdio.ts";
 export { serveMcpHttp, type McpHttpConfig } from "./mcp/http.ts";
 export * from "./mcp/sandbox-hook.ts";
+export * from "./mcp/held-stop.ts";
 export {
   createMcpApplication,
   type McpApplication,
