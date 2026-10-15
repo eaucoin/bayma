@@ -180,8 +180,9 @@ jobs:
           sudo cp -r "$RUNNER_TEMP/gvisor/runsc" "$RUNNER_TEMP/gvisor/containerd-shim-runsc-v1" \
             "$RUNNER_TEMP/gvisor/gvisor-bin" /usr/local/bin/
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          { sudo cat /etc/docker/daemon.json 2>/dev/null || echo '{}'; } |
-            jq '. + {experimental: true, runtimes: {runsc: {runtimeType: "io.containerd.runsc.v1"}}}' |
+          # Read whole before tee opens it: tee empties it as it starts.
+          daemon=$(sudo cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+          jq '. + {experimental: true, runtimes: {runsc: {runtimeType: "io.containerd.runsc.v1"}}}' <<<"$daemon" |
             sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - run: bun run test:sandbox
