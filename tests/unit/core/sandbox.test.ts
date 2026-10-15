@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import {
+  filesClosed,
+  holdingFiles,
   markSandboxResumed,
   markSandboxSaved,
   resumesWithin,
@@ -92,3 +94,40 @@ test("a jump of the clocks counts a second at most toward a saved server's resum
   markSandboxResumed();
   expect(await resumed).toBe(true);
 }, 10_000);
+
+test("work that holds files open runs while the server is not saved, and a save waits for what runs to end", async () => {
+  const done: string[] = [];
+  let finish = () => {};
+  const running = holdingFiles(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          done.push("first");
+          resolve();
+        };
+      }),
+  );
+  await settle();
+  markSandboxSaved();
+  let closed = false;
+  void filesClosed().then(() => (closed = true));
+  // Saved, no other starts.
+  const waiting = holdingFiles(async () => void done.push("second"));
+  await settle();
+  expect(closed).toBe(false);
+  finish();
+  await running;
+  await settle();
+  expect(closed).toBe(true);
+  expect(done).toEqual(["first"]);
+
+  markSandboxResumed();
+  await waiting;
+  expect(done).toEqual(["first", "second"]);
+  expect(
+    await Promise.race([
+      filesClosed().then(() => true),
+      settle().then(() => false),
+    ]),
+  ).toBe(true);
+});

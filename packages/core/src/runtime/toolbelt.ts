@@ -25,6 +25,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { failureMessage } from "../errors.ts";
 import { dataRoot, type PathEnvironment } from "../paths.ts";
+import { holdingFiles } from "../sandbox.ts";
 import { inSpan } from "../telemetry/record.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
 import {
@@ -212,7 +213,7 @@ export async function installToolbelt(
       // Only a bayma holding the lock installs, so what is left beside the
       // path was left by one that died installing.
       for (const left of leftovers(target)) {
-        await rm(left, { recursive: true, force: true });
+        await holdingFiles(() => rm(left, { recursive: true, force: true }));
         report(`bayma: removed ${left}, which an interrupted install left`);
       }
       if (installed() === version) return false;
@@ -226,8 +227,9 @@ export async function installToolbelt(
 }
 
 /**
- * Runs the work it is given, at most `limit` at once, and none that has yet
- * to start once `signal` aborts.
+ * Runs the work it is given, at most `limit` at once, none while the server
+ * is saved (holdingFiles), and none that has yet to start once `signal`
+ * aborts.
  */
 function limiter(
   limit: number,
@@ -240,8 +242,10 @@ function limiter(
     if (running < limit) running += 1;
     else await new Promise<void>((resolve) => waiting.push(resolve));
     try {
-      signal?.throwIfAborted();
-      return await work();
+      return await holdingFiles(() => {
+        signal?.throwIfAborted();
+        return work();
+      });
     } finally {
       const next = waiting.shift();
       if (next) next();
@@ -334,8 +338,10 @@ async function stageToolbelt(
     if (existsSync(target) || isLink(target)) renameSync(target, replaced);
     renameSync(staging, target);
   } finally {
-    await rm(staging, { recursive: true, force: true });
-    await rm(replaced, { recursive: true, force: true });
+    await holdingFiles(async () => {
+      await rm(staging, { recursive: true, force: true });
+      await rm(replaced, { recursive: true, force: true });
+    });
   }
 }
 
@@ -346,7 +352,16 @@ export interface ToolbeltInstall {
    * assembled is left.
    */
   stop(): Promise<void>;
+  /**
+   * The sandbox was restored from a save: an install the save caught
+   * running stops, as what it assembled may have moved on since, and the
+   * toolbelt is installed again from the start, unless it is current.
+   */
+  restored(): void;
 }
+
+/** Why an install stopped as the sandbox was restored. */
+const RESTORED = new Error("the sandbox was restored");
 
 /**
  * Install the toolbelt as `installToolbelt` does, while the caller goes on,
@@ -359,25 +374,35 @@ export function startToolbeltInstall(
   env: PathEnvironment,
   report: (message: string) => void,
 ): ToolbeltInstall {
-  const stopping = new AbortController();
-  const settled = installToolbelt(
-    payloadRoot,
-    env,
-    report,
-    stopping.signal,
-  ).then(
-    () => undefined,
-    (error: unknown) =>
-      report(
-        stopping.signal.aborted
-          ? "bayma: stopped installing the toolbelt, which the next start installs"
-          : `bayma: installing the toolbelt failed: ${failureMessage(error)}`,
-      ),
-  );
+  const install = (signal: AbortSignal): Promise<void> =>
+    installToolbelt(payloadRoot, env, report, signal).then(
+      () => undefined,
+      (error: unknown) =>
+        report(
+          !signal.aborted
+            ? `bayma: installing the toolbelt failed: ${failureMessage(error)}`
+            : signal.reason === RESTORED
+              ? "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed"
+              : "bayma: stopped installing the toolbelt, which the next start installs",
+        ),
+    );
+  let stopping = new AbortController();
+  let settled = install(stopping.signal);
+  let stopped = false;
   return {
     stop() {
+      stopped = true;
       stopping.abort();
       return settled;
+    },
+    restored() {
+      if (stopped) return;
+      stopping.abort(RESTORED);
+      const next = new AbortController();
+      stopping = next;
+      settled = settled.then(() =>
+        next.signal.aborted ? undefined : install(next.signal),
+      );
     },
   };
 }

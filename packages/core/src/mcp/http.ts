@@ -550,6 +550,7 @@ export async function serveMcpHttp(
           }
         } finally {
           manager.sandboxRestored(savedAtMs);
+          config.toolbelt?.restored();
           // Clients lost their connections: each has its reconnect grace and
           // idle timeout from now to come back in.
           for (const session of sessions.values()) session.restartTimers();

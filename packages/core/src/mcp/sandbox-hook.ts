@@ -4,6 +4,7 @@ import net from "node:net";
 import { join, resolve } from "node:path";
 import { failureMessage } from "../errors.ts";
 import {
+  filesClosed,
   markSandboxResumed,
   markSandboxSaved,
   resumesWithin,
@@ -107,7 +108,11 @@ export async function serveSandboxHook(
       case "save": {
         markSandboxSaved();
         try {
-          await inSpan("bayma.sandbox.save", {}, handlers.save);
+          await inSpan("bayma.sandbox.save", {}, async () => {
+            // No file is held open by work that would move on with it.
+            await filesClosed();
+            await handlers.save();
+          });
         } catch (error) {
           resume();
           throw error;

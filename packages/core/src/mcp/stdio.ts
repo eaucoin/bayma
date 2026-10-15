@@ -70,7 +70,10 @@ export async function serveMcpStdio(
   try {
     stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
       save: () => manager.syncToStorage(),
-      restore: async (savedAtMs) => manager.sandboxRestored(savedAtMs),
+      restore: async (savedAtMs) => {
+        manager.sandboxRestored(savedAtMs);
+        config.toolbelt?.restored();
+      },
     });
   } catch (error) {
     try {

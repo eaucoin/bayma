@@ -16,7 +16,10 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   bindToolbelt,
+  filesClosed,
   installToolbelt,
+  markSandboxResumed,
+  markSandboxSaved,
   PAYLOAD_MANIFEST,
   startToolbeltInstall,
   TOOLBELT_DIR,
@@ -439,6 +442,64 @@ test("an install reports its progress as it copies", async () => {
       "bayma: copied 5000 of the toolbelt's files and directories",
       `bayma: installed the 0.3.0 toolbelt at ${toolbeltPath(env)}`,
     ]);
+  });
+});
+
+test("an install a save catches holds no file open while saved, and a restore installs the toolbelt again from the start", async () => {
+  await withTempDir(async (dir) => {
+    const root = realpathSync(dir);
+    const env = { XDG_DATA_HOME: join(root, "data") };
+    const payload = writePayload(root, "0.3.0");
+    writeFiles(join(payload, TOOLBELT_DIR, "bulk"), 20_000);
+    const reports: string[] = [];
+    const install = startToolbeltInstall(payload, env, (message) =>
+      reports.push(message),
+    );
+    const parent = dirname(toolbeltPath(env));
+    const staged = () =>
+      readdirSync(parent).filter((name) =>
+        /^toolbelt\.[A-Za-z0-9]{6}$/.test(name),
+      );
+    const copied = (staging: string) =>
+      existsSync(join(parent, staging, "bulk"))
+        ? readdirSync(join(parent, staging, "bulk")).length
+        : 0;
+    try {
+      while (staged().length === 0 || copied(staged()[0]!) === 0)
+        await sleep(1);
+      const [staging] = staged();
+      // Saved: what it copies ends, and nothing more is copied meanwhile.
+      markSandboxSaved();
+      await filesClosed();
+      const before = copied(staging!);
+      expect(before).toBeLessThan(20_000);
+      await sleep(200);
+      expect(copied(staging!)).toBe(before);
+
+      // Saved live, the sandbox ran on, and stopped, removing what the install
+      // had assembled; then it was restored from the save.
+      rmSync(join(parent, staging!), { recursive: true, force: true });
+      install.restored();
+      markSandboxResumed();
+      await reported(reports, "bayma: installed");
+      expect(reports).toContain(
+        "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed",
+      );
+      expect(installedVersion(env)).toBe("0.3.0\n");
+      expect(readdirSync(join(toolbeltPath(env), "bulk"))).toHaveLength(20_000);
+      expect(staged()).toEqual([]);
+
+      // Restored once it has installed, it leaves the toolbelt as it is.
+      const said = reports.length;
+      install.restored();
+      await sleep(50);
+      await install.stop();
+      expect(reports.slice(said)).toEqual([]);
+      expect(installedVersion(env)).toBe("0.3.0\n");
+    } finally {
+      markSandboxResumed();
+      await install.stop();
+    }
   });
 });
 

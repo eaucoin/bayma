@@ -31,6 +31,36 @@ export function markSandboxResumed(): void {
   resuming?.resume();
 }
 
+// How many pieces of work that hold files open run now (holdingFiles), and
+// who waits for none to (filesClosed).
+let holding = 0;
+const closing: (() => void)[] = [];
+
+/**
+ * Runs `work`, which holds files open while it runs, once the server is not
+ * saved. A save waits for any that runs to end (filesClosed), and none starts
+ * while the server is saved: a host restores a sandbox only where each file it
+ * held open is as it was, and one saved live runs on, its files with it, so
+ * a save that caught a file open could not be restored once that file moved
+ * on.
+ */
+export async function holdingFiles<T>(work: () => Promise<T>): Promise<T> {
+  while (saved) await saved.resumed;
+  holding += 1;
+  try {
+    return await work();
+  } finally {
+    holding -= 1;
+    if (holding === 0) for (const closed of closing.splice(0)) closed();
+  }
+}
+
+/** Settles once no work that holds files open runs (holdingFiles). */
+export function filesClosed(): Promise<void> {
+  if (holding === 0) return Promise.resolve();
+  return new Promise((resolve) => closing.push(resolve));
+}
+
 /** Whether the server is saved, between a save and its restore or resume. */
 export function sandboxSaved(): boolean {
   return saved !== undefined;

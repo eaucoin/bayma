@@ -124,10 +124,12 @@ Commands:
       a host that saves sandboxes runs it in the sandbox: gVisor's runsc
       checkpoint --save-restore-exec-argv, naming the mode in
       GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
-      committed on storage, and holds requests and timeouts until the
-      restore or resume; a restore reads the token file again, starts
-      clients' reconnect grace and idle timeouts again, and tells each
-      live session's exec; a host whose save fails runs resume, and a
+      committed on storage, and holds requests, timeouts, and the
+      toolbelt's install, its files closed, until the restore or resume;
+      a restore reads the token file again, starts clients' reconnect
+      grace and idle timeouts again, tells each live session's exec, and
+      installs the toolbelt again where the save caught it installing; a
+      host whose save fails runs resume, and a
       save neither follows within ten minutes is given up on. A gVisor
       sandbox's file locks hold within it alone, so such a host runs one
       server per state directory

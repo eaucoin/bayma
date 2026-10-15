@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import {
+  holdingFiles,
   markSandboxResumed,
   parseSandboxHookMode,
   runSandboxHook,
@@ -80,6 +81,37 @@ test("each mode the hook is run in reaches the server, saved until it runs on", 
       await stop();
     }
     expect(existsSync(sandboxHookSocket(dir))).toBe(false);
+  });
+});
+
+test("a save waits for the work that holds files open to end, and its files to close, before it saves", async () => {
+  await withHookDir(async (dir) => {
+    const { calls, handlers } = recording();
+    const stop = await serveSandboxHook(dir, handlers);
+    let finish = () => {};
+    const copying = holdingFiles(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            calls.push("copied");
+            resolve();
+          };
+        }),
+    );
+    try {
+      const saving = runSandboxHook(dir, "save");
+      while (!sandboxSaved())
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(calls).toEqual([]);
+      finish();
+      await saving;
+      await copying;
+      expect(calls).toEqual(["copied", "save, saved"]);
+    } finally {
+      finish();
+      await stop();
+    }
   });
 });
 
