@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -40,15 +39,18 @@ func run() int {
 	if err != nil {
 		return fail(err)
 	}
-	s, err := session.New(filepath.Join(scratch, strconv.Itoa(os.Getpid())), cwd)
+	module, err := claimModule(scratch, os.Getpid())
 	if err != nil {
 		return fail(err)
 	}
-	defer s.Close()
+	s, err := session.New(module, cwd)
+	if err != nil {
+		return fail(err)
+	}
 
 	w := protocol.NewWriter(out.Host)
 	w.Prompt()
-	for line := range readLines(s) {
+	for line := range readLines() {
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, ":exec "):
@@ -67,8 +69,8 @@ func run() int {
 
 // readLines reads stdin's lines on a goroutine of its own. Their end means
 // the server that owns this host is gone, and ends the host, even while a
-// cell runs, with any build it started.
-func readLines(s *session.Session) <-chan string {
+// cell runs, with any build it started; its module stays (claimModule).
+func readLines() <-chan string {
 	lines := make(chan string)
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
@@ -76,7 +78,6 @@ func readLines(s *session.Session) <-chan string {
 		for scanner.Scan() {
 			lines <- scanner.Text()
 		}
-		s.Close()
 		// A transport that owns the host's process tree makes it its group's
 		// leader; the group is then the host and what it started.
 		if syscall.Getpgrp() == os.Getpid() {

@@ -18,7 +18,6 @@ func newSession(t *testing.T, cwd string) *Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
 	return s
 }
 
@@ -95,6 +94,24 @@ func TestRenamedFieldsStayOutOfJSON(t *testing.T) {
 	}
 	if got := result(t, s, "v.secret"); got != "1" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+// The plugins a session loaded stay files in its module, which the host
+// mapped, for as long as the module does: the server alone removes it.
+func TestLoadedPluginsStayFiles(t *testing.T) {
+	s := newSession(t, t.TempDir())
+	result(t, s, "keep := 41")
+	result(t, s, "keep++")
+	// The prelude's plugin and each cell's.
+	plugins, _ := filepath.Glob(filepath.Join(s.dir, "plugins", "*.so"))
+	if len(plugins) != 3 {
+		t.Fatalf("got %q", plugins)
+	}
+	for _, plugin := range plugins {
+		if info, err := os.Stat(plugin); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("plugin %s: %v", plugin, err)
+		}
 	}
 }
 

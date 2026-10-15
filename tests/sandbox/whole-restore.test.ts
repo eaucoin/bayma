@@ -38,6 +38,8 @@ const COMMAND_TIMEOUT_MS = 600_000;
 // Where runsc keeps the state of the sandboxes Docker's containerd starts,
 // in its moby namespace, through gVisor's shim.
 const RUNSC_ROOT = "/run/containerd/runsc/moby";
+// How many cells the Go session of the test of saves' sizes runs.
+const GO_CELLS = 100;
 // The clients' idle timeout, which the sandbox stays saved for longer than.
 const IDLE_TIMEOUT_MS = 30_000;
 const SAVED_FOR_MS = 45_000;
@@ -477,6 +479,24 @@ test(
           told: true,
         });
       }
+      // The Go host came back mapping the plugins of its module, which are
+      // on the disk still: the server alone removes them.
+      const plugins = join(
+        stateDir,
+        "scratch",
+        sessions.get("go")!,
+        "go",
+        "*",
+        "plugins",
+        "*.so",
+      );
+      const kept = await exec(
+        second.client,
+        sessions.get("python")!,
+        `import glob\nlen(glob.glob(${JSON.stringify(plugins)}))`,
+      );
+      expect(kept.status).toBe("ok");
+      expect(Number(kept.result_text.trim())).toBeGreaterThan(0);
       // The clocks moved on by the time it stayed saved, which a timeout
       // armed before the save would have measured.
       const monotonic = await exec(
@@ -736,5 +756,90 @@ test.skipIf(process.env.GVISOR_ENDS_FAILED_RESTORES !== "1")(
       whileInstalling: false,
       after: "interrupt",
     }),
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a Go session's cells add nothing to the state of a whole save of bayma's sandbox",
+  async () => {
+    // The bytes of the state file of a save of a sandbox whose Go session
+    // ran `cells` cells, and the Sentry's own memory as it saved it.
+    const saveAfter = async (cells: number) => {
+      const home = mkdtempSync(join(tmpdir(), "bayma-sandbox-"));
+      const stateDir = join(home, ".local", "state", "bayma", "test");
+      mkdirSync(stateDir, { recursive: true });
+      const tokenFile = join(home, "token");
+      writeFileSync(tokenFile, "token\n");
+      const images = mkdtempSync(join(tmpdir(), "bayma-checkpoints-"));
+      const name = `bayma-go-${cells}-${process.pid}-${Date.now()}`;
+      try {
+        await run(container("run", name, home, stateDir, tokenFile));
+        const { client } = await connect(await serving(name), "token");
+        const { session } = await call<{ session: { session_id: string } }>(
+          client,
+          "session.create",
+          { runtime: "go", title: "sandbox-go", cwd: home },
+        );
+        for (let cell = 0; cell < cells; cell++) {
+          const ran = await exec(
+            client,
+            session.session_id,
+            `var cell${cell} = ${cell}`,
+          );
+          expect({ cell, status: ran.status }).toEqual({ cell, status: "ok" });
+        }
+        await client.close();
+        const id = await run([
+          "docker",
+          "inspect",
+          "--format",
+          "{{.Id}}",
+          name,
+        ]);
+        const { pid } = JSON.parse(
+          await run(["sudo", "runsc", "--root", RUNSC_ROOT, "state", id]),
+        ) as { pid: number };
+        const sentryAnonKiB = Number(
+          /^RssAnon:\s+(\d+) kB$/m.exec(
+            await run(["sudo", "cat", `/proc/${pid}/status`]),
+          )?.[1],
+        );
+        const image = join(images, "checkpoint");
+        await run([
+          "sudo",
+          "runsc",
+          "--root",
+          RUNSC_ROOT,
+          "checkpoint",
+          "--image-path",
+          image,
+          `--save-restore-exec-argv=${await hookArgv(stateDir)}`,
+          id,
+        ]);
+        const stateBytes = Number(
+          await run([
+            "sudo",
+            "stat",
+            "--format=%s",
+            join(image, "checkpoint.img"),
+          ]),
+        );
+        console.log(
+          `after ${cells} Go cells: a state file of ${stateBytes} bytes, the Sentry's own memory ${sentryAnonKiB} KiB`,
+        );
+        return stateBytes;
+      } finally {
+        console.log(await logs(name));
+        await run(["docker", "rm", "--force", name]).catch(() => undefined);
+        await run(["sudo", "rm", "-rf", images, home]).catch((error) =>
+          console.error(error),
+        );
+      }
+    };
+    // Each cell is a plugin of 2 to 4 MB, which the host keeps mapped: one
+    // deleted would be copied into every save's state whole.
+    const growth = (await saveAfter(GO_CELLS)) - (await saveAfter(1));
+    expect(growth).toBeLessThan(32 * 1024 * 1024);
+  },
   TEST_TIMEOUT_MS,
 );

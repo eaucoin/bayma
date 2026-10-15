@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   waitForSettledExec,
   withMcpStdio,
   type ExecSnapshot,
   type McpStdioClient,
 } from "../../support/mcp-stdio-client.ts";
+import { withTempDir } from "../../support/temp.ts";
 
 // What Go sessions do beyond the shared scenario corpus: a session that is
 // one package, errors in the names the user wrote, and output that belongs to
@@ -118,5 +121,39 @@ test("unexported fields reach later cells and stay out of JSON", async () => {
     ).toBe('{"Name":"a"}');
     expect((await run(client, session, "v.secret")).result_text).toBe("1");
     await client.callTool("session.close", { session_id: session });
+  });
+}, 240_000);
+
+// A host keeps its module, every plugin it mapped in it, for as long as it
+// runs; the server removes it once the host has ended and the generation has
+// moved on past its end, as an interrupt recycles the host.
+test("a recycled host's module goes, and its successor's stays", async () => {
+  await withTempDir(async (stateDir) => {
+    await withMcpStdio(
+      async (client) => {
+        const session = await createSession(client);
+        const modules = () =>
+          readdirSync(join(stateDir, "scratch", session, "go")).sort();
+        expect((await run(client, session, "kept := 41")).status).toBe("ok");
+        const [first] = modules();
+        expect(modules()).toEqual([first!]);
+        const looping = await client.callTool<ExecSnapshot>("exec", {
+          session_id: session,
+          code: "for {\n}",
+          yield_time_ms: 1_000,
+        });
+        await client.callTool("session.interrupt", { session_id: session });
+        await waitForSettledExec(client, session, looping, {
+          timeoutMs: EXEC_SETTLE_TIMEOUT_MS,
+        });
+        expect((await run(client, session, "41 + 1")).result_text).toBe("42");
+        // The recycled host's module is gone; its successor's is its own.
+        const after = modules();
+        expect(after).toHaveLength(1);
+        expect(after[0]).not.toBe(first);
+        await client.callTool("session.close", { session_id: session });
+      },
+      { stateDir },
+    );
   });
 }, 240_000);

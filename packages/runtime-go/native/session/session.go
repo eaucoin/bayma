@@ -70,9 +70,6 @@ func New(dir, cwd string) (*Session, error) {
 	return s, nil
 }
 
-// Close removes the session's module.
-func (s *Session) Close() error { return os.RemoveAll(s.dir) }
-
 // Exec runs one cell, and returns its final expression's values, if it ends
 // in one. A cell that never ran returns a *NotRunError; a cell that panicked
 // returns the panic.
@@ -122,9 +119,12 @@ func (s *Session) run(source, extraExports string) (loaded *plugin.Plugin, hasRe
 		restore()
 		return nil, false, &NotRunError{err}
 	}
+	// The plugin's file stays: a loaded plugin stays mapped, and a sandbox
+	// saved whole with its processes, as gVisor saves one, copies the content
+	// of every mapped file that is deleted into each save, where one still on
+	// disk is opened again as it is restored. The server removes it once the
+	// host has ended.
 	loaded, err = open(object)
-	// A loaded plugin stays mapped; its file is no longer needed.
-	os.Remove(object)
 	if err != nil {
 		return nil, false, err
 	}

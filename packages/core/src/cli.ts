@@ -159,7 +159,12 @@ Commands:
       A server stopped gracefully, as by SIGTERM, which a pod's deletion
       sends, persists its sessions as it stops, and so moves the generation
       on: a save of it left running is restored only where the server ended
-      otherwise, as a lost pod's or node's does, killed
+      otherwise, as a lost pod's or node's does, killed. So that a save it
+      matches has every file the sandbox maps, a Go session's host keeps
+      each cell's plugin, 2 to 4 MB, in its scratch directory for as long as
+      it runs; the server removes them once the generation is on the disk
+      past the host's end, a recycle or a quarantine, or as the session is
+      closed or the server starts afresh
   doctor [--runtime ${["all", ...RUNTIME_IDS].join("|")}]
       [--cwd PATH] [--state-dir PATH] [--format text|json]
       report which runtimes this machine can run and prove each one by

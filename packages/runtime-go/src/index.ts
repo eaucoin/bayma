@@ -13,4 +13,8 @@ export const goAdapter: RuntimeAdapter = {
   doctor: goDoctor,
 };
 
-export { goHostCommand } from "./transport.ts";
+export {
+  createGoTransport,
+  goHostCommand,
+  goHostModules,
+} from "./transport.ts";

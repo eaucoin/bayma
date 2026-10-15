@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   cacheRoot,
@@ -21,10 +22,36 @@ export function createGoTransport(): RuntimeTransport {
     interruptStrategy: "recycle",
     promptTimeoutMs: GO_STARTUP_TIMEOUT_MS,
     command: ({ scratchDir }) => goHostCommand(scratchDir),
+    endedHostFiles: goHostModules,
   });
 }
 
-/** The host, and how it runs: its session goes under `scratch`. */
+/**
+ * The modules the host of `pid` made in the scratch directory `scratch`, as
+ * module.go names them, `<pid>-<random>`: what it leaves there once it ends,
+ * each holding the plugins it mapped.
+ */
+export function goHostModules(scratch: string, pid: number): string[] {
+  const modules = join(scratch, "go");
+  let names: string[];
+  try {
+    names = readdirSync(modules);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  return names
+    .filter((name) => name.startsWith(`${pid}-`))
+    .map((name) => join(modules, name));
+}
+
+/**
+ * The host, and how it runs: its session's module goes under `scratch`, in a
+ * directory of the Go hosts' own, where each host makes a module of its own
+ * and removes none; the server removes a host's once the host has ended and
+ * the state generation has moved on past its end (goHostModules), and all of
+ * them as it closes the session, or starts afresh.
+ */
 export function goHostCommand(scratch: string): {
   file: string;
   args: string[];
@@ -35,7 +62,7 @@ export function goHostCommand(scratch: string): {
     file: payloadValue("BAYMA_GO_HOST_BIN"),
     args: [],
     env: {
-      BAYMA_GO_SCRATCH_DIR: scratch,
+      BAYMA_GO_SCRATCH_DIR: join(scratch, "go"),
       // The host is built -trimpath, so it knows no GOROOT of its own; cells
       // that read Go's own packages through go/build or go/importer find
       // them here.
