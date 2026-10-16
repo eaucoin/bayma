@@ -619,6 +619,12 @@ async function savedLiveThenKilled({
     expect(running.status).toBe(200);
     const { generation } = (await running.json()) as ExecActivity;
     if (after === "interrupt") {
+      // The Go host's module, which the save caught it mapping its plugins in.
+      const goScratch = join(stateDir, "scratch", session.session_id, "go");
+      const modules = async () =>
+        (await run(["sudo", "ls", goScratch])).split("\n").filter(Boolean);
+      const caught = await modules();
+      expect(caught).toHaveLength(1);
       await call(first.client, "exec", {
         session_id: session.session_id,
         code: LOOPS[runtime],
@@ -631,6 +637,16 @@ async function savedLiveThenKilled({
         await activity(url, "token")
       ).json()) as ExecActivity;
       expect(moved.generation).toBeGreaterThan(generation);
+      // The server removes the recycled host's module once the generation
+      // has moved on.
+      const removedBy = Date.now() + 10_000;
+      while ((await modules()).includes(caught[0]!)) {
+        if (Date.now() > removedBy)
+          throw new Error(
+            `the recycled Go host's module ${caught[0]} is still there`,
+          );
+        await sleep(100);
+      }
     }
     // It keeps its MCP session, which controls the bayma session, to go
     // on in.
@@ -656,8 +672,17 @@ async function savedLiveThenKilled({
       restored,
     ]);
     if (after === "interrupt") {
-      // bayma's restore hook refuses it, and so runsc.
-      await expect(restore).rejects.toThrow("has moved on since this save");
+      // The save caught the Go host mapping its cells' plugins, in its
+      // module; the interrupt recycled it, and the server removed its module
+      // once the generation had moved on. runsc refuses the restore as it
+      // finds the module gone, before bayma's restore hook would refuse it
+      // for the generation.
+      await expect(restore).rejects.toThrow(
+        new RegExp(
+          `failed to walk "[^"]*/scratch/${session.session_id}/go/[0-9]+-[0-9a-f]+"`,
+          "u",
+        ),
+      );
       console.log(`refused in ${Date.now() - restoringAtMs} ms`);
       await run(["docker", "start", restored]);
       const second = await connect(await serving(restored), "token");
