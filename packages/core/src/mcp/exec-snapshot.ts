@@ -184,6 +184,22 @@ export function describeExecNotice(notice: ExecNotice): string {
           ? ""
           : ` taken at ${new Date(notice.snapshotAtMs).toISOString()}`
       }; its live state is as it was then, but its network connections were closed.`;
+    case "memory_budget": {
+      const memory = notice.memory;
+      const mib = (bytes: number) => `${Math.round(bytes / 1024 ** 2)} MiB`;
+      if (!memory)
+        return "bayma: this session's runtime came to hold more than the server's runtime memory budget, so it was started again.";
+      const grew = `came to hold ${mib(memory.grewBytes)} more than it held as it started, past the server's runtime memory budget of ${mib(memory.budgetBytes)}${memory.keepsOfEachCell === undefined ? "" : `, as it keeps ${memory.keepsOfEachCell}`}`;
+      const started =
+        memory.from === "fresh"
+          ? "afresh: the session had no checkpoint committed, and none of its state survived"
+          : "from its checkpoint: only its checkpointed state survived, and the rest of its live state is gone";
+      const stoodDown =
+        memory.stoodDownBytes === undefined
+          ? ""
+          : ` Restored, it already holds ${mib(memory.stoodDownBytes)} more than it started with, past the budget too, so the budget stands down for this session until it is closed.`;
+      return `bayma: this session's runtime ${grew}, so it was started again ${started}.${stoodDown}`;
+    }
   }
 }
 

@@ -6,7 +6,7 @@
 
 // Engine: one adapter, one state directory, one session manager.
 export { createEngine, type Engine, type EngineConfig } from "./engine.ts";
-export { runCli, parseCliOptions } from "./cli.ts";
+export { runCli, parseCliOptions, parseRuntimeMemoryBudget } from "./cli.ts";
 export {
   runDoctor,
   doctorSuccessOutput,
@@ -27,14 +27,18 @@ export * from "./session/model.ts";
 export * from "./session/exec-types.ts";
 export * from "./session/events.ts";
 export {
+  DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES,
+  runtimeMemoryBudgetOf,
   ServerStopping,
   SessionManager,
   validateSessionManagerOptions,
   type SessionCreatePolicy,
+  type RuntimeMemoryBudget,
   type SessionManagerOptions,
   type SessionRecord,
 } from "./session/session-manager.ts";
 export * from "./session/retention-policy.ts";
+export { hostAnonymousBytes } from "./session/host-memory.ts";
 export * from "./session/catalog-store.ts";
 export * from "./session/checkpoint-store.ts";
 export * from "./session/exec-history-store.ts";

@@ -61,6 +61,15 @@ const ExecRecordSchema: z.ZodType<ExecRecord> = z
       .strictObject({
         returnedFrom: z.enum(SESSION_RETURNS),
         snapshotAtMs: z.number().finite().nonnegative().optional(),
+        memory: z
+          .strictObject({
+            grewBytes: z.number().int().positive(),
+            budgetBytes: z.number().int().positive(),
+            keepsOfEachCell: z.string().optional(),
+            from: z.enum(["checkpoint", "fresh"]),
+            stoodDownBytes: z.number().int().positive().optional(),
+          })
+          .optional(),
       })
       .optional(),
     messages: z.array(ExecMessageRecordSchema),

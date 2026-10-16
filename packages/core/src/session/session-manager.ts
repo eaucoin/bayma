@@ -94,6 +94,7 @@ import type {
 } from "./exec-types.ts";
 import { execTimestampAtOrAfterHistory, isPendingExec } from "./exec-types.ts";
 import { EventLog } from "./event-log.ts";
+import { hostAnonymousBytes } from "./host-memory.ts";
 import {
   appendExecMessage,
   execFinishedEvent,
@@ -151,6 +152,14 @@ interface LiveRuntimeSession {
   unsubscribe: () => void;
   queue: ExecRecord[];
   activeExec?: ActiveExec;
+  /**
+   * What the host held of its own as it started or was restored, which the
+   * runtime memory budget counts its growth from; undefined where it could
+   * not be told, or the budget does not cover the runtime.
+   */
+  startedHolding?: number;
+  /** Whether the server has been told the host's memory cannot be told, as it is once for each host. */
+  untoldReported?: boolean;
 }
 
 interface RecoveryState {
@@ -169,6 +178,12 @@ interface SessionEntry {
   recovery: RecoveryState;
   /** How the session came back, for the next exec it runs to be told. */
   notice?: ExecNotice;
+  /**
+   * Whether the runtime memory budget stands down for the session until it
+   * is closed, as a host restored from its checkpoint already held more than
+   * it.
+   */
+  budgetStoodDown?: boolean;
   eventLog: EventLog;
   persistable?: boolean;
   catalogFailure?: {
@@ -225,6 +240,55 @@ export interface SessionManagerOptions extends RetentionPolicy {
     cwd: string;
     role: SessionRole;
   }) => SessionCreatePolicy;
+  /**
+   * How much more a session's host may come to hold of its own than it held
+   * as it started, or was restored, once an exec has ended, by runtime: one
+   * that holds more is started again, from the session's checkpoint, or
+   * afresh where none was committed, its next exec told why
+   * (RuntimeMemoryBudget).
+   */
+  runtimeMemoryBudget?: RuntimeMemoryBudget;
+  /**
+   * What the host `pid` holds of its own, in bytes, as hostAnonymousBytes
+   * says unless given; undefined where it cannot be told.
+   */
+  hostMemoryBytes?: (pid: number) => number | undefined;
+}
+
+/**
+ * The runtime memory budget, in bytes, 0 for none: for the runtimes whose
+ * host keeps something of every cell it runs (RuntimeAdapter.keepsOfEachCell),
+ * DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES unless given; for every runtime, where
+ * given; and for each runtime named, which comes before both. A runtime it does
+ * not cover has none: a host that holds much, as a Python session holding a
+ * model does, holds it as its user means it to.
+ */
+export interface RuntimeMemoryBudget {
+  keeping?: number;
+  all?: number;
+  runtimes?: Partial<Record<RuntimeId, number>>;
+}
+
+/** The runtime memory budget of a server that is told none: 2 GiB. */
+export const DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES = 2 * 1024 ** 3;
+
+/** `bytes` in MiB, whole, as the budget's reports say them. */
+function mebibytes(bytes: number): string {
+  return `${Math.round(bytes / 1024 ** 2)} MiB`;
+}
+
+/** The budget `budget` gives the runtime of `adapter`, in bytes, 0 for none. */
+export function runtimeMemoryBudgetOf(
+  budget: RuntimeMemoryBudget | undefined,
+  adapter: Pick<RuntimeAdapter, "runtimeId" | "keepsOfEachCell">,
+): number {
+  return (
+    budget?.runtimes?.[adapter.runtimeId] ??
+    budget?.all ??
+    (adapter.keepsOfEachCell === undefined
+      ? 0
+      : (budget?.keeping ?? DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES))
+  );
 }
 
 function validateTerminalDimension(name: string, value: number): void {
@@ -237,6 +301,18 @@ export function validateSessionManagerOptions(
   options: SessionManagerOptions,
 ): void {
   validateRetentionPolicy(options);
+  const budget = options.runtimeMemoryBudget;
+  for (const bytes of [
+    budget?.keeping,
+    budget?.all,
+    ...Object.values(budget?.runtimes ?? {}),
+  ]) {
+    if (bytes !== undefined && (!Number.isSafeInteger(bytes) || bytes < 0)) {
+      throw new Error(
+        "a runtime memory budget must be a whole number of bytes, 0 or more",
+      );
+    }
+  }
   for (const [name, value] of [
     ["defaultCols", options.defaultCols],
     ["defaultRows", options.defaultRows],
@@ -1934,6 +2010,7 @@ export class SessionManager {
       }
       session.cols = handle.cols;
       session.rows = handle.rows;
+      this.startCounting(session, startedRuntime);
     } catch (error) {
       const cleanupFailures: unknown[] = [];
       if (runtime) {
@@ -2092,6 +2169,7 @@ export class SessionManager {
         (error) => this.onRuntimeExit(session, handle, error),
       );
       await this.probeRuntime(session);
+      this.startCounting(session, restored);
       session.recovery = this.buildRecoveryState(
         session.record,
         this.checkpointStore.read(sessionId),
@@ -2482,6 +2560,147 @@ export class SessionManager {
         await this.failExecStartup(session, next, error);
         return;
       }
+      // A recycle drains the queue again itself.
+      if (await this.keepWithinMemoryBudget(session)) return;
+    }
+  }
+
+  /** The runtime memory budget of the session's runtime, in bytes, 0 for none. */
+  private memoryBudgetOf(session: SessionEntry): number {
+    return runtimeMemoryBudgetOf(
+      this.options.runtimeMemoryBudget,
+      this.adapter(session),
+    );
+  }
+
+  /** What the session's host `handle` holds of its own, where its runtime has a budget to count it against. */
+  private holdingOf(
+    session: SessionEntry,
+    handle: TransportSessionHandle,
+  ): number | undefined {
+    if (this.memoryBudgetOf(session) === 0) return undefined;
+    return (this.options.hostMemoryBytes ?? hostAnonymousBytes)(handle.pid);
+  }
+
+  /** Has the runtime memory budget count the host's growth from what it holds now, as it has started or been restored. */
+  private startCounting(
+    session: SessionEntry,
+    runtime: LiveRuntimeSession,
+  ): void {
+    runtime.startedHolding = this.holdingOf(session, runtime.handle);
+    if (runtime.startedHolding === undefined)
+      this.reportUntold(session, runtime);
+  }
+
+  /**
+   * Tells the server, once for each host, that what the host holds of its
+   * own cannot be told, where the runtime memory budget would count it: the
+   * budget cannot hold it, rather than holding it silently to nothing.
+   */
+  private reportUntold(
+    session: SessionEntry,
+    runtime: LiveRuntimeSession,
+  ): void {
+    if (this.memoryBudgetOf(session) === 0 || runtime.untoldReported) return;
+    runtime.untoldReported = true;
+    report(
+      `session ${session.record.sessionId}'s ${this.adapter(session).runtimeId} host, pid ${runtime.handle.pid}, says nothing of its memory the runtime memory budget can count, in its /proc smaps_rollup, status or smaps: the budget does not hold it`,
+      session.record,
+    );
+  }
+
+  /**
+   * Starts the session's host again where it has come to hold more of its
+   * own than the runtime memory budget past what it held as it started, once
+   * an exec has ended, as SessionManagerOptions says, its next exec, queued
+   * or not yet submitted, told why: whether it did. None is started again
+   * while the sandbox is saved, nor once the budget stands down for the
+   * session, as it does where the host restored from the session's checkpoint
+   * already holds more than the budget past what it started with, which would
+   * otherwise be started again after every exec.
+   */
+  private async keepWithinMemoryBudget(
+    session: SessionEntry,
+  ): Promise<boolean> {
+    const budgetBytes = this.memoryBudgetOf(session);
+    const runtime = session.runtime;
+    if (
+      budgetBytes === 0 ||
+      session.budgetStoodDown ||
+      !runtime ||
+      runtime.activeExec ||
+      runtime.startedHolding === undefined ||
+      session.record.status === "quarantined"
+    )
+      return false;
+    const holding = this.holdingOf(session, runtime.handle);
+    if (holding === undefined) {
+      this.reportUntold(session, runtime);
+      return false;
+    }
+    const grewBytes = holding - runtime.startedHolding;
+    if (grewBytes <= budgetBytes) return false;
+    const { sessionId } = session.record;
+    try {
+      return await this.withSessionMutation(sessionId, async (entry) => {
+        if (entry.runtime !== runtime || runtime.activeExec || sandboxSaved())
+          return false;
+        const keepsOfEachCell = this.adapter(entry).keepsOfEachCell;
+        let from: "checkpoint" | "fresh" = "fresh";
+        try {
+          if (
+            entry.record.durabilityMode === "checkpointed" &&
+            this.compatibleCheckpoint(sessionId) !== null
+          )
+            from = "checkpoint";
+        } catch {
+          // The recycle fails as it reads it, and quarantines the session.
+        }
+        const memory: NonNullable<ExecNotice["memory"]> = {
+          grewBytes,
+          budgetBytes,
+          ...(keepsOfEachCell === undefined ? {} : { keepsOfEachCell }),
+          from,
+        };
+        const notice: ExecNotice = { returnedFrom: "memory_budget", memory };
+        const pending = entry.history.find(isPendingExec);
+        if (pending) pending.notice = notice;
+        else entry.notice = notice;
+        report(
+          `session ${sessionId}'s ${this.adapter(entry).runtimeId} host has come to hold ${mebibytes(grewBytes)} more than it started with, past the runtime memory budget of ${mebibytes(budgetBytes)}${keepsOfEachCell === undefined ? "" : `, as it keeps ${keepsOfEachCell}`}: it is started again ${from === "checkpoint" ? "from the session's checkpoint" : "afresh, the session having no checkpoint"}`,
+          entry.record,
+        );
+        await this.recycleRuntime(entry, "memory budget", {
+          allowFresh: true,
+        });
+        const restored = entry.runtime;
+        const restoredHolding =
+          restored?.startedHolding === undefined
+            ? undefined
+            : this.holdingOf(entry, restored.handle);
+        if (
+          restored?.startedHolding !== undefined &&
+          restoredHolding !== undefined &&
+          restoredHolding - restored.startedHolding > budgetBytes
+        ) {
+          entry.budgetStoodDown = true;
+          memory.stoodDownBytes = restoredHolding - restored.startedHolding;
+          this.persist(entry);
+          report(
+            `session ${sessionId}'s host, restored from its checkpoint, already holds ${mebibytes(memory.stoodDownBytes)} more than it started with, past the runtime memory budget: the budget stands down for the session until it is closed`,
+            entry.record,
+          );
+        }
+        return true;
+      });
+    } catch (error) {
+      // A recycle that failed quarantined the session; a server stopping
+      // starts nothing again.
+      report(
+        `session ${sessionId}'s host was not started again within the runtime memory budget: ${failureDetail(error)}`,
+        session.record,
+      );
+      return true;
     }
   }
 

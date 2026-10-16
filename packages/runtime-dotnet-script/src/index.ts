@@ -19,6 +19,8 @@ export const dotnetScriptAdapter: RuntimeAdapter = {
   createTransport: createDotnetScriptTransport,
   prepareExec: writeDotnetExecFile,
   doctor: dotnetScriptDoctor,
+  keepsOfEachCell:
+    "every cell it compiled, each costing more the longer the session runs",
 };
 
 export { resolveDotnetScriptCacheRoot } from "./transport.ts";

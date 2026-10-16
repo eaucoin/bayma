@@ -74,3 +74,61 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+// A C# host keeps every cell it compiled: past the server's runtime memory
+// budget, as a host whose first cell compiles and holds 256 MiB is past one of
+// 96 MiB, it is started again from the session's checkpoint once an exec has
+// ended, and the next exec told why; restored, compiling the cell that restores
+// the checkpoint, it holds less past its start than the budget, as it holds
+// some 30 MiB.
+test(
+  "a dotnet-script host past the runtime memory budget is started again from its checkpoint, the next exec told why",
+  async () => {
+    await withMcpStdio(
+      async (client) => {
+        const created = await client.callTool<{
+          session: { session_id: string };
+        }>("session.create", {
+          runtime: "dotnet-script",
+          title: "dotnet-memory-budget",
+          cwd: process.cwd(),
+        });
+        const sessionId = created.session.session_id;
+        const exec = async (code: string) =>
+          waitForSettledExec(
+            client,
+            sessionId,
+            await client.callTool<ExecSnapshot>("exec", {
+              session_id: sessionId,
+              code,
+              yield_time_ms: 1_000,
+            }),
+            { timeoutMs: EXEC_SETTLE_TIMEOUT_MS },
+          );
+        const pid = "System.Environment.ProcessId";
+        const first = await exec(
+          `bayma_write_checkpoint(41); var held = new byte[256 << 20]; System.Array.Fill(held, (byte)1); ${pid}`,
+        );
+        expect(first.notice).toBeUndefined();
+        const second = await exec(
+          `$"{bayma_read_checkpoint<int>() + 1} {${pid}}"`,
+        );
+        expect(second.status).toBe("ok");
+        expect(second.notice ?? "").toMatch(
+          /^bayma: this session's runtime came to hold \d+ MiB more than it held as it started, past the server's runtime memory budget of 96 MiB, as it keeps every cell it compiled, each costing more the longer the session runs, so it was started again from its checkpoint: only its checkpointed state survived, and the rest of its live state is gone\.$/,
+        );
+        const [answer, secondPid] = (second.result_text ?? "")
+          .replaceAll('"', "")
+          .trim()
+          .split(" ");
+        expect(answer).toBe("42");
+        expect(secondPid).not.toBe((first.result_text ?? "").trim());
+      },
+      {
+        defaultDurability: "checkpointed",
+        serverArgs: ["--runtime-memory-budget-mb", "96"],
+      },
+    );
+  },
+  TEST_TIMEOUT_MS,
+);

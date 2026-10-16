@@ -157,3 +157,46 @@ test("a recycled host's module goes, and its successor's stays", async () => {
     );
   });
 }, 240_000);
+
+// A Go host keeps each cell's plugin loaded: past the server's runtime memory
+// budget, as a host that comes to hold 64 MiB of its own more than it started
+// with is past one of 32 MiB, it is started again from the session's checkpoint
+// once an exec has ended, and the next exec told why. A plugin's text is no
+// memory of its own, as the kernel takes it back as it needs.
+test(
+  "a Go host past the runtime memory budget is started again from its checkpoint, the next exec told why",
+  async () => {
+    await withMcpStdio(
+      async (client) => {
+        const sessionId = await createSession(client);
+        const first = await run(
+          client,
+          sessionId,
+          "bayma_write_checkpoint(41)\nvar held = make([]byte, 64<<20)\nfor i := range held {\n\theld[i] = 1\n}\nos.Getpid()",
+        );
+        expect(first.status).toBe("ok");
+        expect(first.notice).toBeUndefined();
+        const second = await run(
+          client,
+          sessionId,
+          'import "fmt"\nvar answer int\nbayma_read_checkpoint(&answer)\nfmt.Sprintf("%d %d", answer+1, os.Getpid())',
+        );
+        expect(second.status).toBe("ok");
+        expect(second.notice ?? "").toMatch(
+          /^bayma: this session's runtime came to hold \d+ MiB more than it held as it started, past the server's runtime memory budget of 32 MiB, as it keeps each cell's plugin loaded, which Go never unloads, so it was started again from its checkpoint: only its checkpointed state survived, and the rest of its live state is gone\.$/,
+        );
+        const [answer, pid] = (second.result_text ?? "")
+          .replaceAll('"', "")
+          .trim()
+          .split(" ");
+        expect(answer).toBe("42");
+        expect(pid).not.toBe((first.result_text ?? "").trim());
+      },
+      {
+        defaultDurability: "checkpointed",
+        serverArgs: ["--runtime-memory-budget-mb", "32"],
+      },
+    );
+  },
+  EXEC_SETTLE_TIMEOUT_MS * 3,
+);

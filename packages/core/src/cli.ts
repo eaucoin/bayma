@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
-import { parseRuntimeId, RUNTIME_IDS } from "./runtime/id.ts";
+import { parseRuntimeId, RUNTIME_IDS, type RuntimeId } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
 import { requirePayloadDir } from "./runtime/payload.ts";
 import {
@@ -24,6 +24,10 @@ import { startTelemetry, stopTelemetry } from "./telemetry/index.ts";
 import { log, report, SeverityNumber } from "./telemetry/record.ts";
 import { BAYMA_VERSION } from "./version.ts";
 import type { DurabilityMode } from "./session/model.ts";
+import {
+  DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES,
+  type RuntimeMemoryBudget,
+} from "./session/session-manager.ts";
 
 // The command surface of the `bayma` binary.
 
@@ -68,6 +72,31 @@ function defaultDurability(
   return value;
 }
 
+/**
+ * The runtime memory budget `spec` gives, as --runtime-memory-budget-mb takes
+ * it in MiB: a list, each item a budget for the runtimes that keep something
+ * of each cell (N), for every runtime (all=N), or for one (RUNTIME=N), 0 for
+ * none.
+ */
+export function parseRuntimeMemoryBudget(spec: string): RuntimeMemoryBudget {
+  const budget: RuntimeMemoryBudget = {};
+  const runtimes: Partial<Record<RuntimeId, number>> = {};
+  for (const item of spec.split(",")) {
+    const match = /^(?:([a-z-]+)=)?(\d+)$/.exec(item.trim());
+    const bytes = Number(match?.[2]) * 1024 ** 2;
+    if (!match || !Number.isSafeInteger(bytes)) {
+      throw new Error(
+        `--runtime-memory-budget-mb takes a list of whole numbers of MiB, each alone, as all=N, or as RUNTIME=N, not ${JSON.stringify(item)}`,
+      );
+    }
+    const named = match[1];
+    if (named === undefined) budget.keeping = bytes;
+    else if (named === "all") budget.all = bytes;
+    else runtimes[parseRuntimeId(named)] = bytes;
+  }
+  return Object.keys(runtimes).length > 0 ? { ...budget, runtimes } : budget;
+}
+
 const SERVER_OPTIONS = [
   "--state-dir",
   "--max-sessions",
@@ -76,6 +105,7 @@ const SERVER_OPTIONS = [
   "--cols",
   "--rows",
   "--default-durability",
+  "--runtime-memory-budget-mb",
 ] as const;
 
 function serverConfig(parsed: ReadonlyMap<string, string>) {
@@ -89,6 +119,13 @@ function serverConfig(parsed: ReadonlyMap<string, string>) {
     ),
     defaultCols: Number(option(parsed, "--cols", "120")),
     defaultRows: Number(option(parsed, "--rows", "40")),
+    runtimeMemoryBudget: parseRuntimeMemoryBudget(
+      option(
+        parsed,
+        "--runtime-memory-budget-mb",
+        String(DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES / 1024 ** 2),
+      ),
+    ),
     resolveCreatePolicy: () => ({ durabilityMode }),
   };
 }
@@ -102,11 +139,13 @@ Commands:
   mcp-stdio [--state-dir PATH] [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
+      [--runtime-memory-budget-mb N]
       serve MCP over stdio
   mcp-http [--host HOST] [--port N] [--path PATH] [--state-dir PATH]
       [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
+      [--runtime-memory-budget-mb N]
       [--client-idle-timeout-ms N] [--token-file PATH]
       [--telemetry-token-file PATH] [--stop-wait-ms N]
       serve MCP over Streamable HTTP; a client session with no request or
@@ -197,6 +236,20 @@ Commands:
 Sessions are checkpointed by default: they outlive the server, whole where
 the server can snapshot their processes, and otherwise from their
 checkpoints. --default-durability ephemeral ends them with the server.
+
+The runtime memory budget, --runtime-memory-budget-mb, bounds what a
+session's host comes to hold of its own, anonymous memory and swap across
+its process group, past what it held as it started or was restored: once an
+exec has ended, a host past it is started again from the session's
+checkpoint, or afresh where none was committed, and the session's next exec
+is told so, and why. By default it is ${DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES / 1024 ** 2} MiB, and covers only C# and
+Go, whose hosts keep every cell they compiled, each C# cell costing more the
+longer the session runs, and every cell's plugin, so that they grow with
+their cells. The option takes a list: N for those, all=N for every runtime,
+RUNTIME=N for one, each in MiB, 0 for none, a runtime's own before all=N. A
+host its checkpoint restores already past the budget would be started again
+after every exec: the budget stands down for that session until it closes,
+and its next exec is told so.
 
 OpenTelemetry traces, metrics, and logs of bayma's work are exported over
 OTLP to wherever OTEL_EXPORTER_OTLP_ENDPOINT and OpenTelemetry's other

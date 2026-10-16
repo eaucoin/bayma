@@ -12,7 +12,10 @@ import { aggregateFailure, failureDetail } from "../errors.ts";
 import type { RuntimeAdapter } from "../runtime/adapter.ts";
 import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
 import { createEngine } from "../engine.ts";
-import type { SessionManagerOptions } from "../session/session-manager.ts";
+import type {
+  RuntimeMemoryBudget,
+  SessionManagerOptions,
+} from "../session/session-manager.ts";
 import { createMcpApplication, type McpApplication } from "./application.ts";
 import { createModelSurface } from "./model-surface.ts";
 import { SubscribedResourceUpdatePublisher } from "./events.ts";
@@ -44,6 +47,8 @@ export interface McpHttpConfig extends Pick<
   snapshotTokenLimit: number;
   defaultCols: number;
   defaultRows: number;
+  /** The runtime memory budget, as SessionManagerOptions.runtimeMemoryBudget says. */
+  runtimeMemoryBudget?: RuntimeMemoryBudget;
   /** How long a client session with no request or stream open stays open. */
   clientIdleTimeoutMs: number;
   /**
@@ -249,6 +254,7 @@ export async function serveMcpHttp(
       warnUsagePercent: config.warnUsagePercent,
       defaultCols: config.defaultCols,
       defaultRows: config.defaultRows,
+      runtimeMemoryBudget: config.runtimeMemoryBudget,
       resolveCreatePolicy: config.resolveCreatePolicy,
       isActorLive: (actorId) => httpClientSession(actorId)?.live() ?? false,
       actorReconnectWindowMs: (actorId) =>

@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { hostPlatformId, parseCliOptions, PLATFORM_IDS } from "@bayma/core";
+import {
+  hostPlatformId,
+  parseCliOptions,
+  parseRuntimeMemoryBudget,
+  PLATFORM_IDS,
+} from "@bayma/core";
 
 test("runtime CLI options are command scoped and unambiguous", () => {
   expect(
@@ -28,4 +33,17 @@ test("the platform id names the payload bayma needs", () => {
   expect(() => hostPlatformId("darwin", "arm64")).toThrow(
     "bayma runs on linux-x64, not darwin-arm64",
   );
+});
+
+test("the runtime memory budget is a list of budgets in MiB, for the runtimes that keep each cell, for all, or for one", () => {
+  const MIB = 1024 ** 2;
+  expect(parseRuntimeMemoryBudget("2048")).toEqual({ keeping: 2048 * MIB });
+  expect(parseRuntimeMemoryBudget("0")).toEqual({ keeping: 0 });
+  expect(parseRuntimeMemoryBudget("1024, all=4096,python=8192,bun=0")).toEqual({
+    keeping: 1024 * MIB,
+    all: 4096 * MIB,
+    runtimes: { python: 8192 * MIB, bun: 0 },
+  });
+  for (const spec of ["", "-1", "1.5", "python=", "=3", "cobol=1"])
+    expect(() => parseRuntimeMemoryBudget(spec)).toThrow();
 });

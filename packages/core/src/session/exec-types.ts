@@ -62,6 +62,7 @@ export type RecoverySource = (typeof RECOVERY_SOURCES)[number];
 export const SESSION_RETURNS = [
   ...RECOVERY_SOURCES,
   "sandbox_snapshot",
+  "memory_budget",
 ] as const;
 export type SessionReturn = (typeof SESSION_RETURNS)[number];
 
@@ -70,6 +71,23 @@ export interface ExecNotice {
   returnedFrom: SessionReturn;
   /** When the sandbox's snapshot was taken, if bayma knows, for `sandbox_snapshot`. */
   snapshotAtMs?: number;
+  /**
+   * For `memory_budget`, a host started again as it came to hold more of its
+   * own than the server's runtime memory budget past what it held as it
+   * started: how much more, the budget, what the runtime keeps of each cell
+   * where it keeps something, whether the session came back from its
+   * checkpoint or afresh, as one that committed none does, and, where the
+   * host restored from the checkpoint already held more than the budget past
+   * what it started with, how much more, the budget standing down for the
+   * session until it is closed.
+   */
+  memory?: {
+    grewBytes: number;
+    budgetBytes: number;
+    keepsOfEachCell?: string;
+    from: "checkpoint" | "fresh";
+    stoodDownBytes?: number;
+  };
 }
 
 export interface ExecRecord {

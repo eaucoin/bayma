@@ -41,6 +41,8 @@ export interface ExecSnapshot {
   truncated?: boolean;
   original_token_count?: number;
   images?: { seq: number; mime_type: string; uri: string }[];
+  /** How the session came back before the exec ran, where it is told. */
+  notice?: string;
 }
 
 export interface WaitForSettledExecOptions {
@@ -93,6 +95,8 @@ export class McpStdioClient {
       stateDir?: string;
       defaultDurability?: "ephemeral" | "checkpointed";
       env?: Record<string, string>;
+      /** More of mcp-stdio's options, after those it is always given. */
+      serverArgs?: readonly string[];
     } = {},
   ): Promise<McpStdioClient> {
     return McpStdioClient.launch(launchSpec(), options);
@@ -105,6 +109,8 @@ export class McpStdioClient {
       stateDir?: string;
       defaultDurability?: "ephemeral" | "checkpointed";
       env?: Record<string, string>;
+      /** More of mcp-stdio's options, after those it is always given. */
+      serverArgs?: readonly string[];
     } = {},
   ): Promise<McpStdioClient> {
     const tempRoot = mkdtempSync(join(tmpdir(), "bayma-mcp-"));
@@ -119,6 +125,7 @@ export class McpStdioClient {
         stateDir,
         "--default-durability",
         options.defaultDurability ?? "ephemeral",
+        ...(options.serverArgs ?? []),
       ],
       cwd: process.cwd(),
       env: options.env ?? processEnvironment(),
@@ -438,6 +445,7 @@ export async function withMcpStdio<T>(
     stateDir?: string;
     defaultDurability?: "ephemeral" | "checkpointed";
     env?: Record<string, string>;
+    serverArgs?: readonly string[];
   } = {},
 ): Promise<T> {
   const client = await McpStdioClient.connect(options);

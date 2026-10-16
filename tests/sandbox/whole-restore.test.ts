@@ -20,7 +20,8 @@ import { RUNTIME_IDS, type ExecActivity, type RuntimeId } from "@bayma/core";
 // token its new container gave it alone. Saved live, left running and then
 // killed, it comes back from that save too, and, saved as it installed its
 // toolbelt, installs it again; told a client of a change after the save, it
-// refuses to be restored from it.
+// refuses to be restored from it. Its runtime memory budget holds a Go host
+// in the sandbox, whose /proc says its memory in smaps alone.
 //
 // It needs root through sudo, Docker with gVisor's runsc registered as the
 // runtime `runsc`, and Docker's experimental features, which restore a
@@ -137,13 +138,14 @@ async function hookArgv(stateDir: string): Promise<string> {
   return [path, ...args, "sandbox-hook", "--state-dir", stateDir].join(" ");
 }
 
-/** A container serving mcp-http in a gVisor sandbox, created or run. */
+/** A container serving mcp-http in a gVisor sandbox, created or run, with `serverArgs` besides. */
 function container(
   how: "create" | "run",
   name: string,
   home: string,
   stateDir: string,
   tokenFile: string,
+  serverArgs: readonly string[] = [],
 ): string[] {
   return [
     "docker",
@@ -179,6 +181,7 @@ function container(
     String(IDLE_TIMEOUT_MS),
     "--token-file",
     tokenFile,
+    ...serverArgs,
   ];
 }
 
@@ -870,6 +873,67 @@ test(
     // deleted would be copied into every save's state whole.
     const growth = (await saveAfter(GO_CELLS)) - (await saveAfter(1));
     expect(growth).toBeLessThan(32 * 1024 * 1024);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+// gVisor's /proc has no smaps_rollup, and its status no RssAnon or VmSwap: the
+// budget reads a host's memory from its smaps there, and a Go host that comes
+// to hold 256 MiB of its own more than it started with, past a budget of 96
+// MiB, is started again from the session's checkpoint, the next exec told why.
+test(
+  "a Go host in bayma's sandbox past the runtime memory budget is started again from its checkpoint, the next exec told why",
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), "bayma-sandbox-"));
+    const stateDir = join(home, ".local", "state", "bayma", "test");
+    mkdirSync(stateDir, { recursive: true });
+    const tokenFile = join(home, "token");
+    writeFileSync(tokenFile, "token\n");
+    const name = `bayma-budget-${process.pid}-${Date.now()}`;
+    try {
+      await run(
+        container("run", name, home, stateDir, tokenFile, [
+          "--runtime-memory-budget-mb",
+          "96",
+        ]),
+      );
+      const { client } = await connect(await serving(name), "token");
+      const { session } = await call<{ session: { session_id: string } }>(
+        client,
+        "session.create",
+        { runtime: "go", title: "sandbox-budget", cwd: home },
+      );
+      const first = await exec(
+        client,
+        session.session_id,
+        "bayma_write_checkpoint(41)\nvar held = make([]byte, 256<<20)\nfor i := range held {\n\theld[i] = 1\n}\nos.Getpid()",
+      );
+      expect(first.status).toBe("ok");
+      expect(first.notice).toBeUndefined();
+      const second = await exec(
+        client,
+        session.session_id,
+        'import "fmt"\nvar answer int\nbayma_read_checkpoint(&answer)\nfmt.Sprintf("%d %d", answer+1, os.Getpid())',
+      );
+      expect(second.status).toBe("ok");
+      expect(second.notice ?? "").toMatch(
+        /^bayma: this session's runtime came to hold \d+ MiB more than it held as it started, past the server's runtime memory budget of 96 MiB, as it keeps each cell's plugin loaded, which Go never unloads, so it was started again from its checkpoint: only its checkpointed state survived, and the rest of its live state is gone\.$/,
+      );
+      const [answer, pid] = second.result_text
+        .replaceAll('"', "")
+        .trim()
+        .split(" ");
+      expect(answer).toBe("42");
+      expect(pid).not.toBe(first.result_text.trim());
+      expect(await logs(name)).not.toContain("says nothing of its memory");
+      await client.close();
+    } finally {
+      console.log(await logs(name));
+      await run(["docker", "rm", "--force", name]).catch(() => undefined);
+      await run(["sudo", "rm", "-rf", home]).catch((error) =>
+        console.error(error),
+      );
+    }
   },
   TEST_TIMEOUT_MS,
 );

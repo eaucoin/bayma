@@ -3,7 +3,10 @@ import { aggregateFailure, failureDetail } from "../errors.ts";
 import type { RuntimeAdapter } from "../runtime/adapter.ts";
 import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
 import { createEngine } from "../engine.ts";
-import type { SessionManagerOptions } from "../session/session-manager.ts";
+import type {
+  RuntimeMemoryBudget,
+  SessionManagerOptions,
+} from "../session/session-manager.ts";
 import { createMcpApplication } from "./application.ts";
 import { createModelSurface } from "./model-surface.ts";
 import { SubscribedResourceUpdatePublisher } from "./events.ts";
@@ -23,6 +26,8 @@ export interface McpStdioConfig extends Pick<
   snapshotTokenLimit: number;
   defaultCols: number;
   defaultRows: number;
+  /** The runtime memory budget, as SessionManagerOptions.runtimeMemoryBudget says. */
+  runtimeMemoryBudget?: RuntimeMemoryBudget;
   /** The toolbelt's install, which the server stops as it shuts down. */
   toolbelt?: ToolbeltInstall;
 }
@@ -45,6 +50,7 @@ export async function serveMcpStdio(
       warnUsagePercent: config.warnUsagePercent,
       defaultCols: config.defaultCols,
       defaultRows: config.defaultRows,
+      runtimeMemoryBudget: config.runtimeMemoryBudget,
       resolveCreatePolicy: config.resolveCreatePolicy,
     },
     (envelope) => {

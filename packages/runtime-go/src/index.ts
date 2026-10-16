@@ -11,6 +11,7 @@ export const goAdapter: RuntimeAdapter = {
   createTransport: createGoTransport,
   prepareExec: writeGoExecFile,
   doctor: goDoctor,
+  keepsOfEachCell: "each cell's plugin loaded, which Go never unloads",
 };
 
 export {

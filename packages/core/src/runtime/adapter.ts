@@ -255,4 +255,12 @@ export interface RuntimeAdapter {
   createTransport(): RuntimeTransport;
   prepareExec(input: PrepareExecInput): PreparedExec;
   doctor: RuntimeDoctor;
+  /**
+   * What the runtime's host keeps of every cell it runs, for as long as it
+   * runs, where it keeps something, so that its memory grows with the
+   * session's cells without bound: the server's runtime memory budget covers
+   * such a runtime unless told otherwise, and its notice says what it keeps
+   * (SessionManagerOptions.runtimeMemoryBudget). Said as what it keeps.
+   */
+  keepsOfEachCell?: string;
 }
