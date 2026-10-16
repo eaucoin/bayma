@@ -142,8 +142,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
-      GVISOR_RELEASE: 20260921.0-eaucoin.3
-      GVISOR_SHA512: ab59ce25025c28460cc07742e7a7e0679f8bda989513c113dca2a1b6215a791e6e2134022ed5bee33524f7132eb379eb0c83d6a8e796c15d4319dfd1b1a9647b
+      GVISOR_RELEASE: 20260921.0-eaucoin.8
+      GVISOR_SHA512: 5091e17365e49328af3f6fd79211ac645699db8cb4f39d940a2d140980dc6f9b11f1ff89944e1723c06a759617b8083d2de8d16ce848945a7f300ef8724db48b
+      # From .7, gVisor ends a restore that fails, which docker start then reports.
+      GVISOR_ENDS_FAILED_RESTORES: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
