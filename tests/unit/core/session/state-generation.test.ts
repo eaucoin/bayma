@@ -279,8 +279,9 @@ test("a save racing a submission says what it caught, and starts no exec until t
       { schemaVersion: 1, ...caught },
     );
 
-    // Submitted while saved, behind the one running, which then ends: the
-    // next does not start, so what the save caught stays what runs.
+    // Submitted while saved, behind the one running, whose runtime then ends
+    // it: neither its end nor the next's start comes before the server runs
+    // on, so what the save caught stays what runs.
     const queued = await manager.submitExec(sessionId, ACTOR, "2");
     transport.completeNext(sessionId);
     await Bun.sleep(10);
@@ -288,6 +289,39 @@ test("a save racing a submission says what it caught, and starts no exec until t
       manager.execs(sessionId).find(({ execId }) => execId === queued.execId)
         ?.status,
     ).toBe("queued");
+    expect(manager.execActivity().running).toEqual([
+      { sessionId, execId: running.execId },
+    ]);
+
+    markSandboxResumed();
+    await Bun.sleep(10);
+    expect(manager.exec(sessionId, running.execId).status).toBe("ok");
+    expect(manager.execActivity().running).toEqual([
+      { sessionId, execId: queued.execId },
+    ]);
+  });
+});
+
+test("an exec queued behind one that ended just before the save starts once the server runs on, not while it is saved", async () => {
+  await withTempDir(async (dir) => {
+    const transport = new FakeTransport(false);
+    const manager = managerIn(dir, transport, () => undefined);
+    const { sessionId } = await manager.createWithPolicy(
+      ACTOR,
+      "drained",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
+    const first = await manager.submitExec(sessionId, ACTOR, "1");
+    const queued = await manager.submitExec(sessionId, ACTOR, "2");
+    await Bun.sleep(0);
+    // The first ends, and the save begins, before the queue moves on.
+    transport.completeNext(sessionId);
+    markSandboxSaved();
+    await Bun.sleep(10);
+    expect(manager.exec(sessionId, first.execId).status).toBe("ok");
+    expect(manager.exec(sessionId, queued.execId).status).toBe("queued");
     expect(manager.execActivity().running).toEqual([]);
 
     markSandboxResumed();
@@ -295,6 +329,76 @@ test("a save racing a submission says what it caught, and starts no exec until t
     expect(manager.execActivity().running).toEqual([
       { sessionId, execId: queued.execId },
     ]);
+  });
+});
+
+test("an exec whose end is held as the server is saved, then interrupted, ends once: its held end, as the server runs on, ends nothing, nor the exec after it", async () => {
+  await withTempDir(async (dir) => {
+    const transport = new FakeTransport(false);
+    const finished: string[] = [];
+    const manager = managerIn(dir, transport, ({ event }) => {
+      if (event.type === "exec/finished") finished.push(event.execId);
+    });
+    const { sessionId } = await manager.createWithPolicy(
+      ACTOR,
+      "interrupted",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
+    const held = await manager.submitExec(sessionId, ACTOR, "1");
+    await Bun.sleep(0);
+    markSandboxSaved();
+    transport.completeNext(sessionId);
+    await Bun.sleep(10);
+    expect(manager.exec(sessionId, held.execId).status).toBe("running");
+    await manager.interrupt(sessionId, ACTOR);
+    expect(manager.exec(sessionId, held.execId).status).toBe("interrupted");
+    const after = await manager.submitExec(sessionId, ACTOR, "2");
+
+    markSandboxResumed();
+    await Bun.sleep(10);
+    expect(manager.exec(sessionId, held.execId).status).toBe("interrupted");
+    expect(finished).toEqual([held.execId]);
+    expect(manager.exec(sessionId, after.execId).status).toBe("running");
+    expect(manager.execActivity().running).toEqual([
+      { sessionId, execId: after.execId },
+    ]);
+  });
+});
+
+test("what the runtime sends of an exec after its end, held as the server is saved, is dropped", async () => {
+  await withTempDir(async (dir) => {
+    const transport = new FakeTransport(false);
+    const finished: string[] = [];
+    const manager = managerIn(dir, transport, ({ event }) => {
+      if (event.type === "exec/finished") finished.push(event.execId);
+    });
+    const { sessionId } = await manager.createWithPolicy(
+      ACTOR,
+      "late",
+      dir,
+      { durabilityMode: "ephemeral" },
+      "controller",
+    );
+    const held = await manager.submitExec(sessionId, ACTOR, "1");
+    await Bun.sleep(0);
+    const prefix = transport.pendingEventPrefix(sessionId);
+    markSandboxSaved();
+    transport.completeNext(sessionId);
+    await Bun.sleep(10);
+    transport.emit(
+      sessionId,
+      `${prefix}{"kind":"stdout","text":"late"}\n${prefix}{"kind":"done"}\n`,
+    );
+    await Bun.sleep(10);
+
+    markSandboxResumed();
+    await Bun.sleep(10);
+    const record = manager.exec(sessionId, held.execId);
+    expect(record.status).toBe("ok");
+    expect(record.messages.map(({ text }) => text)).not.toContain("late");
+    expect(finished).toEqual([held.execId]);
   });
 });
 

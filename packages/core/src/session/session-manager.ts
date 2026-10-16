@@ -145,6 +145,8 @@ interface ActiveExec {
   completion: Promise<void>;
   resolveCompletion: () => void;
   dispose?: () => void;
+  /** Whether it ended while the server was saved, its end held until the server runs on. */
+  endHeld?: boolean;
 }
 
 interface LiveRuntimeSession {
@@ -2824,7 +2826,7 @@ export class SessionManager {
 
   private processBrokerChunk(session: SessionEntry, chunk: Uint8Array): void {
     const active = session.runtime?.activeExec;
-    if (!active || !session.runtime) return;
+    if (!active || !session.runtime || active.endHeld) return;
 
     const actorIds = this.actorRecipients(session.record);
     if (active.emitActors && actorIds.length > 0) {
@@ -2864,7 +2866,24 @@ export class SessionManager {
     }
 
     if (!parsed.done) return;
+    if (sandboxSaved()) {
+      // None ends while the server is saved, as none starts: the save caught it
+      // running, and a restore tells it how it came back, which the restored
+      // server hears of only after it runs on, as gVisor tells it once the
+      // sandbox runs; a resume, that it ran on.
+      active.endHeld = true;
+      void sandboxRunsOn().then(() => {
+        if (session.runtime?.activeExec === active)
+          this.endExec(session, active);
+      });
+      return;
+    }
+    this.endExec(session, active);
+  }
 
+  /** Ends the session's active exec, which its runtime has ended. */
+  private endExec(session: SessionEntry, active: ActiveExec): void {
+    const actorIds = this.actorRecipients(session.record);
     const { capture } = active;
     const finishedAtMs = execTimestampAtOrAfterHistory(
       active.record,

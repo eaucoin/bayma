@@ -389,7 +389,7 @@ test("a runtime that keeps nothing of its cells is held to a budget given for al
   });
 });
 
-test("a host within the budget, one whose memory cannot be told, one whose exec ends while the sandbox is saved, and no budget, are left as they are", async () => {
+test("a host within the budget, one whose memory cannot be told, one whose exec ends while the sandbox is saved until it runs on, and no budget, are left as they are", async () => {
   await withTempDir(async (dir) => {
     // Within the budget, at it exactly.
     const within = managerFor(dir, keeping, { keeping: 100 * MIB });
@@ -411,7 +411,8 @@ test("a host within the budget, one whose memory cannot be told, one whose exec 
     expect(untold.transport.starts.length).toBe(1);
     await untold.manager.close(untoldId, "actor_1");
 
-    // Its exec ending as the sandbox is saved.
+    // Its exec ending as the sandbox is saved: its end, and the budget's look
+    // after it, wait for the server to run on.
     const saved = managerFor(dir, keeping, { keeping: 100 * MIB }, false);
     const savedId = await session(saved, dir, "checkpointed");
     grow(saved, 150 * MIB);
@@ -420,9 +421,10 @@ test("a host within the budget, one whose memory cannot be told, one whose exec 
     markSandboxSaved();
     saved.transport.completeNext(savedId);
     await settle();
+    expect(saved.transport.starts.length).toBe(1);
     markSandboxResumed();
     await settle();
-    expect(saved.transport.starts.length).toBe(1);
+    expect(saved.transport.starts.length).toBe(2);
     await saved.manager.close(savedId, "actor_1");
 
     // No budget: never measured.

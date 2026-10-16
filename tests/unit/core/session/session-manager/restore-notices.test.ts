@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
   CheckpointStore,
   ExecHistoryStore,
+  markSandboxResumed,
+  markSandboxSaved,
   RuntimeRegistry,
   SessionCatalogStore,
   SessionManager,
@@ -24,7 +26,10 @@ beforeEach(() => {
   restoreStderr = () => stderr.mockRestore();
 });
 
-afterEach(() => restoreStderr());
+afterEach(() => {
+  markSandboxResumed();
+  restoreStderr();
+});
 
 function managerFor(
   dir: string,
@@ -159,8 +164,8 @@ test("a sandbox's restore is told to the exec still running or queued, else to t
       "actor_2",
       "4",
     );
-    // The restored sandbox runs before it hears it was restored: an exec may
-    // end meanwhile, its result going to whoever still waits on it.
+    // One that ended before the sandbox was saved, its result gone to whoever
+    // waited on it, is told nothing: the session's next exec is.
     transport.completeNext(ended);
     await Bun.sleep(0);
     manager.sandboxRestored(1_000);
@@ -187,6 +192,51 @@ test("a sandbox's restore is told to the exec still running or queued, else to t
       const { execId } = await manager.submitExec(sessionId, "actor_2", "5");
       expect(manager.exec(sessionId, execId).notice).toEqual(told);
     }
+  });
+});
+
+test("an exec whose runtime ends it while the server is saved ends once the server runs on: told of the sandbox's restore, which the restored server hears of only after it runs, or of nothing after a resume", async () => {
+  await withTempDir(async (dir) => {
+    const transport = new SnapshottingTransport(false);
+    const manager = managerFor(dir, transport);
+    const ended = async (title: string, after: () => void) => {
+      const { sessionId } = await manager.createWithPolicy(
+        "actor_2",
+        title,
+        dir,
+        { durabilityMode: "ephemeral" },
+        "controller",
+      );
+      const { execId } = await manager.submitExec(sessionId, "actor_2", "1");
+      await Bun.sleep(0);
+      markSandboxSaved();
+      transport.completeNext(sessionId);
+      await Bun.sleep(0);
+      // Its end held, it is still running, and nothing of it is written.
+      expect(manager.exec(sessionId, execId).status).toBe("running");
+      expect(new ExecHistoryStore(dir).read(sessionId)[0]!.status).toBe(
+        "running",
+      );
+      after();
+      markSandboxResumed();
+      await Bun.sleep(0);
+      return { sessionId, record: manager.exec(sessionId, execId) };
+    };
+    const restored = await ended("restored", () =>
+      manager.sandboxRestored(1_000),
+    );
+    const told: ExecNotice = {
+      returnedFrom: "sandbox_snapshot",
+      snapshotAtMs: 1_000,
+    };
+    expect(restored.record.status).toBe("ok");
+    expect(restored.record.notice).toEqual(told);
+    expect(
+      new ExecHistoryStore(dir).read(restored.sessionId)[0]!.notice,
+    ).toEqual(told);
+    const resumed = await ended("resumed", () => undefined);
+    expect(resumed.record.status).toBe("ok");
+    expect(resumed.record.notice).toBeUndefined();
   });
 });
 
