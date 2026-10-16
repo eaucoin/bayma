@@ -722,6 +722,23 @@ void Print(object? value)
 {
     Console.WriteLine(__bayma_internal_format_display(value));
 }
+
+// What the host does of each exec in the session's own code, handed it once
+// here: compiled as a submission of its own each exec, it would lengthen the
+// chain of submissions, each of which Roslyn keeps, its cost growing with the
+// chain's length.
+AppDomain.CurrentDomain.SetData("bayma.prepare-exec", (Action<string, string?>)((prefix, directory) =>
+{
+    __bayma_internal_channels.CurrentPrefix = prefix;
+    __bayma_internal_channels.CurrentDirectory = directory!;
+    System.Console.SetOut(new __bayma_internal_channel_writer("stdout"));
+    System.Console.SetError(new __bayma_internal_channel_writer("stderr"));
+}));
+AppDomain.CurrentDomain.SetData("bayma.emit-checkpoint", (Action<string, string>)((prefix, checkpointOutputPath) =>
+{
+    __bayma_internal_channels.CurrentPrefix = prefix;
+    __bayma_internal_emit_checkpoint(checkpointOutputPath);
+}));
 """;
     }
 
@@ -746,16 +763,7 @@ void Print(object? value)
     )
     {
         await EnsureStateInitialized(sourcePath, checkpointJson);
-        State = await State!.ContinueWithAsync(
-            string.Join(
-                "\\n",
-                "__bayma_internal_channels.CurrentPrefix = " + JsonSerializer.Serialize(eventPrefix) + ";",
-                "__bayma_internal_channels.CurrentDirectory = " + JsonSerializer.Serialize(Path.GetDirectoryName(sourcePath)) + ";",
-                "System.Console.SetOut(new __bayma_internal_channel_writer(\\\"stdout\\\"));",
-                "System.Console.SetError(new __bayma_internal_channel_writer(\\\"stderr\\\"));"
-            ),
-            BuildOptions(sourcePath)
-        );
+        Handed<Action<string, string?>>("bayma.prepare-exec")(eventPrefix, Path.GetDirectoryName(sourcePath));
         try
         {
             State = await State!.ContinueWithAsync(code, BuildOptions(sourcePath));
@@ -781,8 +789,7 @@ void Print(object? value)
         }
     }
 
-    public static async Task EmitCheckpoint(
-        string sourcePath,
+    public static void EmitCheckpoint(
         string eventPrefix,
         string checkpointOutputPath
     )
@@ -792,14 +799,14 @@ void Print(object? value)
             return;
         }
 
-        State = await State.ContinueWithAsync(
-            string.Join(
-                "\\n",
-                "__bayma_internal_channels.CurrentPrefix = " + JsonSerializer.Serialize(eventPrefix) + ";",
-                "__bayma_internal_emit_checkpoint(" + JsonSerializer.Serialize(checkpointOutputPath) + ");"
-            ),
-            BuildOptions(sourcePath)
-        );
+        Handed<Action<string, string>>("bayma.emit-checkpoint")(eventPrefix, checkpointOutputPath);
+    }
+
+    /// What the session's prelude handed the host under the name given.
+    private static T Handed<T>(string name) where T : Delegate
+    {
+        return AppDomain.CurrentDomain.GetData(name) as T
+            ?? throw new InvalidOperationException("the session's prelude handed the host no " + name);
     }
 
     public static string FormatResult(object result)
@@ -942,8 +949,7 @@ async Task RunSubmission(string specPath)
         {
             try
             {
-                await BaymaHost.EmitCheckpoint(
-                    spec.source_path,
+                BaymaHost.EmitCheckpoint(
                     spec.event_prefix,
                     spec.checkpoint_output_path
                 );
