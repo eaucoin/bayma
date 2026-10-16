@@ -202,6 +202,28 @@ function readManifest(
   );
 }
 
+/**
+ * That `exec`, the step `step` of `runtimeId`'s scenario, ended ok: else why
+ * not, the exec's error and output, and what the server wrote on its stderr,
+ * so that a failure names itself.
+ */
+function expectOk(
+  client: McpStdioClient,
+  runtimeId: string,
+  step: string,
+  exec: ExecSnapshot,
+): void {
+  if (exec.status === "ok") return;
+  throw new Error(
+    `${runtimeId}'s ${step} ended ${exec.status}: ${JSON.stringify({
+      error: exec.error_text,
+      stderr: exec.stderr_text,
+      stdout: exec.stdout_text,
+      result: exec.result_text,
+    })}\nthe server's stderr:\n${client.serverOutput().slice(-20_000)}`,
+  );
+}
+
 async function connectCheckpointed(stateDir: string): Promise<McpStdioClient> {
   return McpStdioClient.connect({
     stateDir,
@@ -383,7 +405,12 @@ test.serial(
                 sessionId,
                 scenario.readCounter(),
               );
-              expect(recovered.status).toBe("ok");
+              expectOk(
+                client,
+                scenario.runtimeId,
+                `read of cycle ${cycle}`,
+                recovered,
+              );
               expect(recovered.result_text ?? "").toContain(String(cycle - 1));
             }
 
@@ -392,7 +419,12 @@ test.serial(
               sessionId,
               scenario.writeCounter(cycle),
             );
-            expect(seeded.status).toBe("ok");
+            expectOk(
+              client,
+              scenario.runtimeId,
+              `write of cycle ${cycle}`,
+              seeded,
+            );
           } finally {
             await client.close();
           }
@@ -408,7 +440,12 @@ test.serial(
             sessionId!,
             scenario.readCounter(),
           );
-          expect(finalRecovered.status).toBe("ok");
+          expectOk(
+            finalClient,
+            scenario.runtimeId,
+            "final read",
+            finalRecovered,
+          );
           expect(finalRecovered.result_text ?? "").toContain("5");
         } finally {
           await finalClient.close();
