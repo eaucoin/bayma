@@ -1,0 +1,83 @@
+name: repeat-under-load
+
+# On demand: one test, run again and again on a runner whose CPUs and memory a
+# hog holds busy meanwhile, to find what fails under load, as a test that fails
+# only now and then may. Each run's output is kept, a failure's naming what
+# failed.
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "The test file"
+        type: string
+        default: tests/integration/checkpoint/stress-and-failure-modes.test.ts
+      test:
+        description: "The test's name, or a pattern of it"
+        type: string
+        default: repeated checkpointed restart recovery stays stable across every runtime
+      runs:
+        description: "How many times it runs"
+        type: number
+        default: 10
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  repeat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      # The payload takes more disk than some runners start with free.
+      - run: |
+          [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -ge 40 ] ||
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: bun run toolchains pull
+      - run: bun run payload
+      - run: sudo apt-get install -y stress-ng
+      - name: Run the test again and again, under load
+        shell: bash
+        env:
+          FILE: ${{ inputs.file }}
+          TEST: ${{ inputs.test }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/runs"
+          # A CPU hog on each CPU, and one that holds a third of the memory,
+          # touching it, beside the test.
+          memory=$(awk '/MemTotal/ { print int($2 / 3) }' /proc/meminfo)
+          stress-ng --cpu "$(nproc)" --vm 1 --vm-bytes "${memory}k" --vm-keep --timeout 0 >/dev/null 2>&1 &
+          hog=$!
+          failed=0
+          for run in $(seq 1 "$RUNS"); do
+            if bun --env-file=otel.env tooling/src/cli.ts test "$FILE" -t "$TEST" >"$RUNNER_TEMP/runs/$run.log" 2>&1; then
+              echo "run $run: passed"
+            else
+              failed=$((failed + 1))
+              echo "run $run: FAILED"
+              grep -E "ended (error|interrupted)|\(fail\)" "$RUNNER_TEMP/runs/$run.log" | head -20 || true
+            fi
+          done
+          kill "$hog" || true
+          echo "$failed of $RUNS runs failed"
+          [ "$failed" -eq 0 ]
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repeat-under-load
+          path: ${{ runner.temp }}/runs
