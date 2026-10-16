@@ -686,6 +686,11 @@ async function savedLiveThenKilled({
       console.log(`refused in ${Date.now() - restoringAtMs} ms`);
       await run(["docker", "start", restored]);
       const second = await connect(await serving(restored), "token");
+      // Started afresh, the server holds no MCP session of before: the
+      // session's controller is a client that has none open now.
+      await call(second.client, "session.acquire_controller", {
+        session_id: session.session_id,
+      });
       const read = await exec(
         second.client,
         session.session_id,
