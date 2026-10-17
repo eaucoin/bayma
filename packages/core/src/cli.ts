@@ -166,13 +166,16 @@ Commands:
       ends the server with it, and a restore from that save lets the stop
       go, as its old pod's; a resume, sandbox-hook stop, or the wait's end
       goes on with the stop, a sandbox-hook stop asked while the server is
-      saved once it runs on. Without it, or with 0, SIGTERM stops the
+      saved once it runs on; one asked before SIGTERM, as a host asks it as
+      it ends the pod itself, has the SIGTERM that follows within the wait
+      stop the server at once. Without it, or with 0, SIGTERM stops the
       server at once
   sandbox-hook [save|restore|resume|stop] --state-dir PATH
       tell the server of the state directory that the sandbox it runs in
       is about to be saved whole, was restored, or runs on after a save, as
       a host that saves sandboxes runs it in the sandbox, or, with stop,
-      that the stop it holds goes on (mcp-http --stop-wait-ms): gVisor's runsc
+      that the stop it holds, or the next it is given, goes on (mcp-http
+      --stop-wait-ms): gVisor's runsc
       checkpoint --save-restore-exec-argv, naming the mode in
       GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
       committed on storage, holds requests, timeouts and exec starts, and

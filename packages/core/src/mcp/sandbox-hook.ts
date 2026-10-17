@@ -56,7 +56,8 @@ export interface SandboxHookHandlers {
   restore: (savedAtMs: number) => Promise<void>;
   /**
    * The stop the server holds for a save, if it holds stops: a restore lets
-   * it go, a resume goes on with it, and `stop` goes on with it at once.
+   * it go, a resume goes on with it, and `stop` goes on with it at once, or
+   * with the next, where none is held yet.
    */
   stop?: Pick<HeldStop, "restored" | "resumed" | "goOn">;
 }

@@ -21,7 +21,10 @@ export interface StopHolder {
  * save that failed or left the sandbox running, goes on with it at once, as
  * does `sandbox-hook stop`, once the server runs on where it is asked while
  * the server is saved, and the wait's end. Going on is the server's
- * ordinary stop, which persists its sessions.
+ * ordinary stop, which persists its sessions. A `sandbox-hook stop` asked
+ * before SIGTERM, as a host asks it as it ends the pod itself, which saves
+ * nothing first, has the SIGTERM that follows within the wait go on at once;
+ * a restore or a resume spends it, as one asked before the save was the old pod's.
  */
 export class HeldStop {
   private readonly waitMs: number;
@@ -29,6 +32,11 @@ export class HeldStop {
   private readonly stop: () => void;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private held = false;
+  /**
+   * Until when a SIGTERM goes on at once, as a `sandbox-hook stop` before it asked, in ms
+   * of the monotonic clock (performance.now()), which no change of the wall clock moves.
+   */
+  private armedUntil: number | undefined;
 
   /** A stop held for up to `waitMs`, none for 0, which `stop` goes on with. */
   constructor(waitMs: number, sessions: StopHolder, stop: () => void) {
@@ -49,6 +57,16 @@ export class HeldStop {
   /** SIGTERM: holds the stop for a save, or goes on with it at once where it waits for none. */
   begin(): void {
     if (this.held) return;
+    const armed =
+      this.armedUntil !== undefined && performance.now() <= this.armedUntil;
+    this.armedUntil = undefined;
+    if (armed) {
+      report(
+        "bayma: stopping at once, as sandbox-hook stop asked before SIGTERM",
+      );
+      this.stop();
+      return;
+    }
     if (this.waitMs === 0) {
       this.stop();
       return;
@@ -63,8 +81,13 @@ export class HeldStop {
     this.timer = setTimeout(() => this.waited(), this.waitMs);
   }
 
-  /** The sandbox was restored from a save that caught the stop: it was the old pod's, and the server runs on. */
+  /**
+   * The sandbox was restored from a save that caught the stop: it was the old pod's, and the
+   * server runs on. A stop asked before SIGTERM was the old pod's too: the restored pod's
+   * SIGTERM holds.
+   */
   restored(): void {
+    this.armedUntil = undefined;
     if (!this.held) return;
     this.clear();
     this.sessions.releaseStop();
@@ -73,14 +96,25 @@ export class HeldStop {
     );
   }
 
-  /** The server runs on after a save, which failed or left the sandbox running: the stop goes on. */
+  /**
+   * The server runs on after a save, which failed or left the sandbox running: the stop goes
+   * on. A stop asked before SIGTERM, before the save, is spent: a SIGTERM after it holds.
+   */
   resumed(): void {
+    this.armedUntil = undefined;
     if (this.held) this.goOn("the sandbox was not saved whole");
   }
 
-  /** Goes on with the held stop at once, saying why, as `sandbox-hook stop` asks. */
+  /**
+   * Goes on with the held stop at once, saying why, as `sandbox-hook stop`
+   * asks; with no stop held, has the next SIGTERM within the wait go on at
+   * once, as one that asks before SIGTERM means.
+   */
   goOn(reason: string): void {
-    if (!this.held) return;
+    if (!this.held) {
+      if (this.waitMs > 0) this.armedUntil = performance.now() + this.waitMs;
+      return;
+    }
     this.clear();
     report(`bayma: the held stop goes on, as ${reason}`);
     this.stop();

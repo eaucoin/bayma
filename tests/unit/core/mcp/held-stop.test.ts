@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { HeldStop, markSandboxResumed, markSandboxSaved } from "@bayma/core";
 
 // SIGTERM's stop, held for a save of the sandbox
@@ -60,13 +60,69 @@ test("a wait that ends during a save leaves the stop to the save's outcome: a re
   expect(resumed.happened.slice(1)).toEqual(["stopped"]);
 });
 
-test("sandbox-hook stop goes on at once; with no stop held, a restore, a resume and a stop do nothing", () => {
+test("sandbox-hook stop goes on at once; with no stop held, a restore and a resume do nothing", () => {
   const { stop, happened } = heldStop(60_000);
   stop.restored();
   stop.resumed();
-  stop.goOn("asked");
   expect(happened).toEqual([]);
   stop.begin();
   stop.goOn("sandbox-hook stop asked it to");
   expect(happened.slice(1)).toEqual(["stopped"]);
+});
+
+const HELD_FOR_60_S =
+  "held: the server is stopping: it holds its stop for up to 60 s for a save of its sandbox, and takes no new session or exec meanwhile";
+
+test("a sandbox-hook stop asked before SIGTERM has the SIGTERM that follows within the wait stop at once, and no later one", async () => {
+  const { stop, happened } = heldStop(60);
+  stop.goOn("sandbox-hook stop asked it to");
+  expect(happened).toEqual([]);
+  stop.begin();
+  expect(happened).toEqual(["stopped"]);
+  expect(stop.holding).toBe(false);
+  // Spent: a SIGTERM after it holds.
+  stop.begin();
+  expect(stop.holding).toBe(true);
+  expect(happened.slice(1)).toEqual([
+    "held: the server is stopping: it holds its stop for up to 0.06 s for a save of its sandbox, and takes no new session or exec meanwhile",
+  ]);
+  await Bun.sleep(100);
+
+  // Asked once, it is spent by the SIGTERM that follows; and one past the wait holds again.
+  const lapsed = heldStop(30);
+  lapsed.stop.goOn("sandbox-hook stop asked it to");
+  await Bun.sleep(60);
+  lapsed.stop.begin();
+  expect(lapsed.stop.holding).toBe(true);
+  expect(lapsed.happened).toEqual([
+    "held: the server is stopping: it holds its stop for up to 0.03 s for a save of its sandbox, and takes no new session or exec meanwhile",
+  ]);
+  await Bun.sleep(60);
+});
+
+test("a sandbox-hook stop asked before a save is the old pod's: after a restore, or a resume, the next SIGTERM holds", () => {
+  for (const after of ["restored", "resumed"] as const) {
+    const { stop, happened } = heldStop(60_000);
+    stop.goOn("sandbox-hook stop asked it to");
+    markSandboxSaved();
+    markSandboxResumed();
+    stop[after]();
+    stop.begin();
+    expect(stop.holding).toBe(true);
+    expect(happened).toEqual([HELD_FOR_60_S]);
+    stop.goOn("the test is done");
+  }
+});
+
+test("a sandbox-hook stop asked before SIGTERM lasts its wait by the monotonic clock, whatever the wall clock does", () => {
+  const { stop, happened } = heldStop(60_000);
+  stop.goOn("sandbox-hook stop asked it to");
+  // The wall clock set an hour on, as a clock that synchronizes late sets it.
+  setSystemTime(new Date(Date.now() + 3_600_000));
+  try {
+    stop.begin();
+  } finally {
+    setSystemTime();
+  }
+  expect(happened).toEqual(["stopped"]);
 });
