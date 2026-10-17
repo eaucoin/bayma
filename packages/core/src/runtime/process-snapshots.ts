@@ -12,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { failureMessage } from "../errors.ts";
+import { removeTree } from "../remove-tree.ts";
+import { report } from "../telemetry/record.ts";
 import { BAYMA_VERSION } from "../version.ts";
 
 /**
@@ -427,6 +429,11 @@ export async function snapshotsUnavailableReason(
   } finally {
     // A dump ends the tree; a failed one leaves it.
     tree.kill("SIGKILL");
-    rmSync(directory, { recursive: true, force: true });
+    // A cleanup, whose failure changes nothing of what the probe found.
+    const failure = removeTree(directory);
+    if (failure)
+      report(
+        `bayma: could not remove ${directory}, where it tried a process snapshot: ${failureMessage(failure)}`,
+      );
   }
 }

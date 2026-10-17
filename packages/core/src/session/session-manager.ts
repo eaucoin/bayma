@@ -6,12 +6,12 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
 } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import { promisify, TextDecoder } from "node:util";
 import { aggregateFailure, failureDetail, failureMessage } from "../errors.ts";
+import { removeTree } from "../remove-tree.ts";
 import {
   runningTimeout,
   SandboxSaveOutlived,
@@ -360,6 +360,23 @@ function report(
 }
 
 /**
+ * Removes `path`, as removeTree does, saying what it could not remove, of
+ * `what`, in the server's log: a cleanup's failure never stops the server.
+ */
+function removeOrReport(
+  path: string,
+  what: string,
+  session?: Parameters<typeof sessionAttributes>[0],
+): void {
+  const failure = removeTree(path);
+  if (failure)
+    report(
+      `could not remove ${path}, ${what}: ${failureMessage(failure)}`,
+      session,
+    );
+}
+
+/**
  * The server holds its stop for a save of its sandbox (../mcp/held-stop.ts),
  * and takes no new session and no new exec until it lets the stop go.
  */
@@ -469,7 +486,7 @@ export class SessionManager {
 
     for (const stored of catalog.entries) {
       if (stored.closed) {
-        this.removePersistedSession(stored.sessionId);
+        this.removeClosedSession(stored.sessionId);
         continue;
       }
       const metadata = {
@@ -510,7 +527,7 @@ export class SessionManager {
             }
           : this.normalizeCatalogEntry(metadata, checkpoint);
       if (normalized.closed) {
-        this.removePersistedSession(normalized.sessionId);
+        this.removeClosedSession(normalized.sessionId);
         continue;
       }
       const record: SessionRecord = {
@@ -550,12 +567,25 @@ export class SessionManager {
       }
       this.sessions.set(record.sessionId, entry);
     }
-    this.sweepSessionDirectories();
+    // Cleanups, which say what they could not do and never stop the start.
+    try {
+      this.sweepSessionDirectories();
+    } catch (error) {
+      report(
+        `could not sweep the sessions' directories: ${failureMessage(error)}`,
+      );
+    }
     this.reservePidsForSnapshots();
     // What the hosts of the server before left in the scratch directories of
     // sessions with no process snapshot goes, which a save the generation
     // matched before the bump above may have mapped.
-    await this.removeScratchOfEndedHosts();
+    try {
+      await this.removeScratchOfEndedHosts();
+    } catch (error) {
+      report(
+        `could not empty the scratch directories of the sessions the server before left: ${failureMessage(error)}`,
+      );
+    }
   }
 
   /**
@@ -612,8 +642,20 @@ export class SessionManager {
       if (this.sessions.get(sessionId)?.record.processSnapshot !== undefined)
         continue;
       const directory = join(root, sessionId);
-      for (const name of readdirSync(directory))
-        rmSync(join(directory, name), { recursive: true, force: true });
+      let names: string[];
+      try {
+        names = readdirSync(directory);
+      } catch (error) {
+        report(
+          `could not read ${directory}, the scratch directory of session ${sessionId}: ${failureMessage(error)}`,
+        );
+        continue;
+      }
+      for (const name of names)
+        removeOrReport(
+          join(directory, name),
+          `which a host of the server before left in session ${sessionId}'s scratch directory`,
+        );
     }
   }
 
@@ -636,7 +678,8 @@ export class SessionManager {
     for (const path of left) {
       try {
         if ((await processesMapping([realpathSync(path)])).length > 0) continue;
-        rmSync(path, { recursive: true, force: true });
+        const failure = removeTree(path);
+        if (failure) throw failure;
       } catch (error) {
         report(
           `could not remove ${path}, which an ended host of session ${session.record.sessionId} left: ${failureMessage(error)}`,
@@ -697,7 +740,10 @@ export class SessionManager {
       }
       for (const sessionId of entries) {
         if (!owns(this.sessions.get(sessionId)))
-          rmSync(join(root, sessionId), { recursive: true, force: true });
+          removeOrReport(
+            join(root, sessionId),
+            `the directory of session ${sessionId}, which no session owns`,
+          );
       }
     }
   }
@@ -2191,7 +2237,11 @@ export class SessionManager {
       return failure;
     } finally {
       session.record.processSnapshot = undefined;
-      rmSync(directory, { recursive: true, force: true });
+      removeOrReport(
+        directory,
+        `session ${sessionId}'s spent process snapshot`,
+        session.record,
+      );
     }
   }
 
@@ -2331,10 +2381,42 @@ export class SessionManager {
     } else {
       this.catalogStore.remove(sessionId);
     }
-    this.historyStore.remove(sessionId);
-    this.checkpointStore.remove(sessionId);
-    rmSync(this.scratchDir(sessionId), { recursive: true, force: true });
-    rmSync(this.snapshotDir(sessionId), { recursive: true, force: true });
+    // The rest is a cleanup, which says what it could not do and goes on.
+    for (const [what, remove] of [
+      ["history", () => this.historyStore.remove(sessionId)],
+      ["checkpoint", () => this.checkpointStore.remove(sessionId)],
+    ] as const) {
+      try {
+        remove();
+      } catch (error) {
+        report(
+          `could not remove the ${what} of session ${sessionId}: ${failureMessage(error)}`,
+        );
+      }
+    }
+    removeOrReport(
+      this.scratchDir(sessionId),
+      `the scratch directory of session ${sessionId}`,
+    );
+    removeOrReport(
+      this.snapshotDir(sessionId),
+      `the snapshot directory of session ${sessionId}`,
+    );
+  }
+
+  /**
+   * Removes a closed session the catalog still holds, as a start finds one:
+   * one whose catalog entry cannot be removed stays for the next start, said
+   * so, and stops nothing.
+   */
+  private removeClosedSession(sessionId: string): void {
+    try {
+      this.removePersistedSession(sessionId);
+    } catch (error) {
+      report(
+        `could not remove closed session ${sessionId}'s catalog entry, which the next start removes: ${failureMessage(error)}`,
+      );
+    }
   }
 
   private finalizeSessionRemoval(

@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { aggregateFailure } from "./errors.ts";
+import { aggregateFailure, failureMessage } from "./errors.ts";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { RuntimeRegistry, type RuntimeBinding } from "./runtime/registry.ts";
 import type { SessionEventSink } from "./session/events.ts";
@@ -17,7 +17,7 @@ import {
   type StateDirectoryLease,
 } from "./runtime/state-directory-lease.ts";
 import { observeSessions } from "./session/telemetry.ts";
-import { inSpan } from "./telemetry/record.ts";
+import { inSpan, report } from "./telemetry/record.ts";
 
 // If initialization cannot prove that its transport stopped, retaining the
 // lease until process exit is safer than allowing another runtime to mutate
@@ -67,7 +67,14 @@ async function openEngine(
     catalogStore = new SessionCatalogStore(rootDir);
     historyStore = new ExecHistoryStore(rootDir);
     checkpointStore = new CheckpointStore(rootDir);
-    removeAllExecFileWorkspaces(historyStore.execBundlesDir);
+    // A cleanup, which says what it could not do and never stops the start.
+    const leftWorkspaces = removeAllExecFileWorkspaces(
+      historyStore.execBundlesDir,
+    );
+    if (leftWorkspaces)
+      report(
+        `bayma: could not remove the execs' file workspaces the server before left: ${failureMessage(leftWorkspaces)}`,
+      );
     manager = new SessionManager(
       registry,
       catalogStore,

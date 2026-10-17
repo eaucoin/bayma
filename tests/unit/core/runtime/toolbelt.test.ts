@@ -29,6 +29,11 @@ import {
 } from "@bayma/core";
 import { holdToolbeltInstallLock } from "../../../support/payload.ts";
 import { withTempDir } from "../../../support/temp.ts";
+import {
+  AS_ROOT,
+  goModuleCache,
+  rootOwned,
+} from "../../../support/unremovable.ts";
 
 /** A payload of `version` that carries a toolbelt holding one package. */
 function writePayload(root: string, version: string): string {
@@ -292,6 +297,8 @@ test("what an interrupted install left beside the toolbelt is removed, even wher
     const parent = dirname(toolbeltPath(env));
     for (const left of ["toolbelt.Ab12Cd", "toolbelt.Ef34Gh.replaced"])
       mkdirSync(join(parent, left, "node_modules"), { recursive: true });
+    // One holding what no one may write in, as a Go module cache.
+    goModuleCache(join(parent, "toolbelt.Ab12Cd"));
     // Only what an install leaves is an install's to remove.
     mkdirSync(join(parent, "toolbelt.notes"));
     const reports: string[] = [];
@@ -309,6 +316,77 @@ test("what an interrupted install left beside the toolbelt is removed, even wher
       `bayma: removed ${join(parent, "toolbelt.Ab12Cd")}, which an interrupted install left`,
       `bayma: removed ${join(parent, "toolbelt.Ef34Gh.replaced")}, which an interrupted install left`,
     ]);
+  });
+});
+
+test.skipIf(!AS_ROOT)(
+  "what an interrupted install left that cannot be removed is said, and the install goes on",
+  async () => {
+    await withTempDir(async (dir) => {
+      const root = realpathSync(dir);
+      const env = { XDG_DATA_HOME: join(root, "data") };
+      const payload = writePayload(root, "0.3.0");
+      await installToolbelt(payload, env);
+      const left = join(dirname(toolbeltPath(env)), "toolbelt.Ij56Kl");
+      const unlock = rootOwned(left);
+      try {
+        const reports: string[] = [];
+        expect(
+          await installToolbelt(payload, env, (message) =>
+            reports.push(message),
+          ),
+        ).toBe(false);
+        expect(existsSync(left)).toBe(true);
+        expect(reports).toEqual([
+          expect.stringMatching(
+            new RegExp(
+              `^bayma: could not remove ${left}, which an interrupted install left: `,
+            ),
+          ),
+        ]);
+      } finally {
+        unlock();
+      }
+    });
+  },
+);
+
+test("an install removes a large leftover off the event loop, a server answering its requests meanwhile", async () => {
+  await withTempDir(async (dir) => {
+    const root = realpathSync(dir);
+    const env = { XDG_DATA_HOME: join(root, "data") };
+    const payload = writePayload(root, "0.3.0");
+    await installToolbelt(payload, env);
+    // A leftover of 20,000 files, as large as a toolbelt's, whose removal
+    // on the event loop would stall it for a good part of a second.
+    const left = join(dirname(toolbeltPath(env)), "toolbelt.Mn78Op");
+    for (let directory = 0; directory < 200; directory++) {
+      const path = join(left, "node_modules", `package-${directory}`);
+      mkdirSync(path, { recursive: true });
+      for (let file = 0; file < 100; file++)
+        writeFileSync(join(path, `${file}.js`), "");
+    }
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    try {
+      let installed = false;
+      const installing = installToolbelt(payload, env).finally(
+        () => (installed = true),
+      );
+      let slowest = 0;
+      let answered = 0;
+      while (!installed) {
+        const askedAt = performance.now();
+        expect(await (await fetch(server.url)).text()).toBe("ok");
+        slowest = Math.max(slowest, performance.now() - askedAt);
+        answered += 1;
+      }
+      expect(await installing).toBe(false);
+      expect(existsSync(left)).toBe(false);
+      expect(answered).toBeGreaterThan(1);
+      expect(slowest).toBeLessThan(100);
+    } finally {
+      server.stop(true);
+    }
   });
 });
 

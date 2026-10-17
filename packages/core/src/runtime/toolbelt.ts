@@ -17,7 +17,6 @@ import {
   mkdir,
   readdir,
   readlink,
-  rm,
   stat,
   symlink,
 } from "node:fs/promises";
@@ -25,6 +24,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { failureMessage } from "../errors.ts";
 import { dataRoot, type PathEnvironment } from "../paths.ts";
+import { removeTreeAsync } from "../remove-tree.ts";
 import { holdingFiles } from "../sandbox.ts";
 import { inSpan } from "../telemetry/record.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
@@ -213,8 +213,12 @@ export async function installToolbelt(
       // Only a bayma holding the lock installs, so what is left beside the
       // path was left by one that died installing.
       for (const left of leftovers(target)) {
-        await holdingFiles(() => rm(left, { recursive: true, force: true }));
-        report(`bayma: removed ${left}, which an interrupted install left`);
+        const failure = await holdingFiles(() => removeTreeAsync(left));
+        report(
+          failure
+            ? `bayma: could not remove ${left}, which an interrupted install left: ${failureMessage(failure)}`
+            : `bayma: removed ${left}, which an interrupted install left`,
+        );
       }
       if (installed() === version) return false;
       await stageToolbelt(source, payloadRoot, version, target, report, signal);
@@ -339,8 +343,13 @@ async function stageToolbelt(
     renameSync(staging, target);
   } finally {
     await holdingFiles(async () => {
-      await rm(staging, { recursive: true, force: true });
-      await rm(replaced, { recursive: true, force: true });
+      for (const path of [staging, replaced]) {
+        const failure = await removeTreeAsync(path);
+        if (failure)
+          report(
+            `bayma: could not remove ${path}, which the toolbelt's install staged: ${failureMessage(failure)}`,
+          );
+      }
     });
   }
 }

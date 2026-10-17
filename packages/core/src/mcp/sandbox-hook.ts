@@ -3,6 +3,7 @@ import { realpathSync, rmSync } from "node:fs";
 import net from "node:net";
 import { join, resolve } from "node:path";
 import { failureMessage } from "../errors.ts";
+import { removeTree } from "../remove-tree.ts";
 import {
   filesClosed,
   markSandboxResumed,
@@ -285,7 +286,12 @@ export async function serveSandboxHook(
   return () =>
     new Promise<void>((resolveClose) => {
       server.close(() => {
-        rmSync(path, { force: true });
+        // A cleanup, which says what it could not do and never stops the close.
+        const failure = removeTree(path);
+        if (failure)
+          report(
+            `bayma: could not remove the sandbox hook's socket ${path}: ${failureMessage(failure)}`,
+          );
         resolveClose();
       });
     });

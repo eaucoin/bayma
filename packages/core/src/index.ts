@@ -16,6 +16,7 @@ export {
 } from "./doctor.ts";
 export { BAYMA_VERSION } from "./version.ts";
 export { aggregateFailure, describeFailure, failureDetail } from "./errors.ts";
+export { removeTree, removeTreeAsync } from "./remove-tree.ts";
 export {
   createOpaqueId,
   assertSafePersistedId,

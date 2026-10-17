@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { removeTree } from "../remove-tree.ts";
 
 export interface ExecFileWorkspace {
   file(filename: string): string;
@@ -9,16 +10,8 @@ export interface ExecFileWorkspace {
 }
 
 function removeWorkspace(path: string, bestEffort: boolean): void {
-  try {
-    rmSync(path, {
-      recursive: true,
-      force: true,
-      maxRetries: 10,
-      retryDelay: 50,
-    });
-  } catch (error) {
-    if (!bestEffort) throw error;
-  }
+  const failure = removeTree(path, { retries: 10 });
+  if (failure && !bestEffort) throw failure;
 }
 
 function execWorkspaceNamespace(rootDir: string): string {
@@ -85,6 +78,9 @@ export function createExecFileWorkspace(
   };
 }
 
-export function removeAllExecFileWorkspaces(rootDir: string): void {
-  removeWorkspace(execWorkspaceNamespace(rootDir), false);
+/** Removes every exec's file workspace of `rootDir`: the error that stopped it, if any, which is the caller's to say. */
+export function removeAllExecFileWorkspaces(
+  rootDir: string,
+): Error | undefined {
+  return removeTree(execWorkspaceNamespace(rootDir), { retries: 10 });
 }
