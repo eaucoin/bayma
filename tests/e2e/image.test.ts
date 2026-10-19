@@ -294,6 +294,40 @@ test.serial(
 );
 
 test.serial(
+  "the image's PID helper refuses a PID its namespace cannot reach, leaving the counter where it was",
+  async () => {
+    const { home } = makeHome();
+    try {
+      const helper = await run([
+        "docker",
+        "run",
+        "--rm",
+        ...userFlags(home),
+        "--entrypoint",
+        "sh",
+        IMAGE,
+        "-c",
+        [
+          "before=$(sh -c 'echo $$')",
+          "bayma-advance-pids $(cat /proc/sys/kernel/pid_max)",
+          'echo "status $?"',
+          "after=$(sh -c 'echo $$')",
+          'echo "moved $((after - before))"',
+        ].join("; "),
+      ]);
+      // By cat, the helper itself, and the shell that echoes `after`.
+      expect(helper.stdout).toBe("status 1\nmoved 3\n");
+      expect(helper.output).toMatch(
+        /bayma-advance-pids: PID \d+ is not below this namespace's pid_max, \d+\n/,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+test.serial(
   "a REPL session snapshotted before a reboot comes back from its checkpoint",
   async () => {
     const { home, stateDir } = makeHome();
