@@ -1013,7 +1013,7 @@ export function createDotnetScriptTransport(): RuntimeTransport {
       input: `:probe ${nonce}\n`,
       expectedOutput: `__BAYMA_READY_${nonce}__`,
     }),
-    promptTimeoutMs: DOTNET_STARTUP_TIMEOUT_MS,
+    startupTimeoutMs: DOTNET_STARTUP_TIMEOUT_MS,
     command: () => {
       const dotnetRoot =
         process.env.BAYMA_DOTNET_ROOT ?? process.env.DOTNET_ROOT;

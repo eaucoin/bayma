@@ -32,7 +32,7 @@ export function createRustTransport(): RuntimeTransport {
     platformId: "stdio",
     promptRe: /(?:^|[\r\n])BAYMA> /g,
     interruptStrategy: "recycle",
-    promptTimeoutMs: RUST_STARTUP_TIMEOUT_MS,
+    startupTimeoutMs: RUST_STARTUP_TIMEOUT_MS,
     command: () => {
       // EVcxR's compilation cache is content-addressed; one per toolchain.
       const version = process.env.BAYMA_RUST_VERSION ?? "development";

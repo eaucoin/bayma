@@ -20,7 +20,7 @@ export function createGoTransport(): RuntimeTransport {
     promptRe: /(?:^|[\r\n])BAYMA> /g,
     // Nothing stops a goroutine from outside it.
     interruptStrategy: "recycle",
-    promptTimeoutMs: GO_STARTUP_TIMEOUT_MS,
+    startupTimeoutMs: GO_STARTUP_TIMEOUT_MS,
     command: ({ scratchDir }) => goHostCommand(scratchDir),
     endedHostFiles: goHostModules,
   });

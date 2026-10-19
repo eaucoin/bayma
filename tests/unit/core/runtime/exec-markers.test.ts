@@ -134,7 +134,7 @@ test(
     const transport = new ProcessTransport({
       platformId: "test",
       promptRe: /(?:^|[\r\n])❯ /g,
-      promptTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
       command: () => ({
         file: process.execPath,
         args: [
@@ -168,7 +168,7 @@ test(
     const transport = new ProcessTransport({
       platformId: "test",
       promptRe: /(?:^|[\r\n])BAYMA> /g,
-      promptTimeoutMs: 100,
+      startupTimeoutMs: 100,
       command: () => ({
         file: process.execPath,
         args: [
@@ -204,7 +204,7 @@ test(
     const transport = new ProcessTransport({
       platformId: "test",
       promptRe: /(?:^|[\r\n])BAYMA> /,
-      promptTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
       command: () => ({
         file: process.execPath,
         args: [
@@ -282,7 +282,7 @@ test("process transport reports spawn errors instead of crashing", async () => {
     new ProcessTransport({
       platformId: "test",
       promptRe: /(?:^|[\r\n])BAYMA> /g,
-      promptTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
       command: () => ({ file: MISSING_COMMAND, args: [] }),
       snapshots: false,
     }),
@@ -295,7 +295,7 @@ test("process transport that records its runtimes' stdio reports a runtime it ca
     new ProcessTransport({
       platformId: "test",
       promptRe: /(?:^|[\r\n])BAYMA> /g,
-      promptTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
       command: () => ({ file: MISSING_COMMAND, args: [] }),
       snapshotter: SNAPSHOTTER,
     }),

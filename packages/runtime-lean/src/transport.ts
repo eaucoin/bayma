@@ -25,7 +25,7 @@ export function createLeanTransport(): RuntimeTransport {
     promptRe: /(?:^|[\r\n])BAYMA> /g,
     // Nothing stops Lean's elaborator from outside it.
     interruptStrategy: "recycle",
-    promptTimeoutMs: LEAN_STARTUP_TIMEOUT_MS,
+    startupTimeoutMs: LEAN_STARTUP_TIMEOUT_MS,
     // Lean's runtime holds io_uring instances, which CRIU cannot dump; its
     // checkpoint already keeps a session's whole environment.
     snapshots: false,

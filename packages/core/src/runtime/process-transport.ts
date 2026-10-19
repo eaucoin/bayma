@@ -93,7 +93,12 @@ export interface ProcessTransportConfig {
     input: string;
     expectedOutput: string;
   };
-  promptTimeoutMs?: number;
+  /**
+   * How long the runtime may take from its start to its first prompt:
+   * DEFAULT_STARTUP_TIMEOUT_MS unless given, for a runtime that builds or
+   * compiles something first.
+   */
+  startupTimeoutMs?: number;
   lineSubmitDelayMs?: number;
   /** False for a runtime whose processes CRIU cannot dump. */
   snapshots?: boolean;
@@ -111,7 +116,16 @@ const MAX_RECENT_OUTPUT_BYTES = 4 * 1024 * 1024;
 const PROMPT_SCAN_TAIL_CHARACTERS = 1024;
 const GRACEFUL_TERMINATION_TIMEOUT_MS = 250;
 const FORCED_TERMINATION_TIMEOUT_MS = 5_000;
-const DEFAULT_PROMPT_TIMEOUT_MS = 5_000;
+// How long a runtime may take from its start to its first prompt, unless it
+// says otherwise. Bun, Python and C prompt within half a second, and C++,
+// which loads Clang to JIT its cells, within 0.9 s, and 2.3 s on a CI runner
+// whose every CPU a hog holds busy; a sandbox just restored, which loads its
+// memory and files as they are touched, is slower still, and has taken more
+// than 5 s. A runtime that exits fails its start at once, so this bounds only
+// one that runs on and never prompts: generous, so that no start a loaded
+// machine merely slows fails. Time the server is saved is not counted
+// (runningTimeout).
+const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 const RESTORE_TIMEOUT_MS = 60_000;
 const RESTORE_POLL_MS = 20;
 
@@ -715,7 +729,7 @@ export class ProcessTransport implements RuntimeTransport {
   private async waitForPrompt(
     handle: TransportSessionHandle,
     seenPromptCount: number,
-    timeoutMs = this.config.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS,
+    timeoutMs: number,
   ): Promise<void> {
     const state = this.requireState(handle);
     if (state.terminalError) throw state.terminalError;
@@ -724,7 +738,9 @@ export class ProcessTransport implements RuntimeTransport {
       const timeout = runningTimeout(() => {
         state.waiters.delete(waiter);
         reject(
-          new Error(`timed out waiting for prompt for ${handle.sessionId}`),
+          new Error(
+            `timed out waiting for prompt for ${handle.sessionId} after ${timeoutMs} ms`,
+          ),
         );
       }, timeoutMs);
       const waiter: PromptWaiter = {
@@ -743,7 +759,11 @@ export class ProcessTransport implements RuntimeTransport {
   ): Promise<void> {
     const state = this.requireState(handle);
     if (state.promptCount > 0) return;
-    await this.waitForPrompt(handle, state.promptCount, timeoutMs);
+    await this.waitForPrompt(
+      handle,
+      state.promptCount,
+      timeoutMs ?? this.config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
+    );
     await sleep(10);
   }
 
