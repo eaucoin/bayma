@@ -523,34 +523,43 @@ test("an install reports its progress as it copies", async () => {
   });
 });
 
+// It writes and copies thousands of files, which takes seconds where each
+// system call is slow, as in a sandbox.
 test("an install a save catches holds no file open while saved, and a restore installs the toolbelt again from the start", async () => {
   await withTempDir(async (dir) => {
     const root = realpathSync(dir);
     const env = { XDG_DATA_HOME: join(root, "data") };
     const payload = writePayload(root, "0.3.0");
-    writeFiles(join(payload, TOOLBELT_DIR, "bulk"), 20_000);
+    // The save comes as the install reports its first 5,000 files and
+    // directories copied, and only the 32 operations it runs at once end
+    // after: so a thousand more, and the save catches it copying, however
+    // fast it copies.
+    const files = 6_000;
+    writeFiles(join(payload, TOOLBELT_DIR, "bulk"), files);
     const reports: string[] = [];
-    const install = startToolbeltInstall(payload, env, (message) =>
-      reports.push(message),
-    );
+    let caughtCopying: (() => void) | undefined;
+    const saved = new Promise<void>((resolve) => (caughtCopying = resolve));
+    const install = startToolbeltInstall(payload, env, (message) => {
+      reports.push(message);
+      if (!caughtCopying || !message.startsWith("bayma: copied ")) return;
+      markSandboxSaved();
+      caughtCopying();
+      caughtCopying = undefined;
+    });
     const parent = dirname(toolbeltPath(env));
     const staged = () =>
       readdirSync(parent).filter((name) =>
         /^toolbelt\.[A-Za-z0-9]{6}$/.test(name),
       );
     const copied = (staging: string) =>
-      existsSync(join(parent, staging, "bulk"))
-        ? readdirSync(join(parent, staging, "bulk")).length
-        : 0;
+      readdirSync(join(parent, staging, "bulk")).length;
     try {
-      while (staged().length === 0 || copied(staged()[0]!) === 0)
-        await sleep(1);
-      const [staging] = staged();
       // Saved: what it copies ends, and nothing more is copied meanwhile.
-      markSandboxSaved();
+      await saved;
       await filesClosed();
+      const [staging] = staged();
       const before = copied(staging!);
-      expect(before).toBeLessThan(20_000);
+      expect(before).toBeLessThan(files);
       await sleep(200);
       expect(copied(staging!)).toBe(before);
 
@@ -564,7 +573,7 @@ test("an install a save catches holds no file open while saved, and a restore in
         "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed",
       );
       expect(installedVersion(env)).toBe("0.3.0\n");
-      expect(readdirSync(join(toolbeltPath(env), "bulk"))).toHaveLength(20_000);
+      expect(readdirSync(join(toolbeltPath(env), "bulk"))).toHaveLength(files);
       expect(staged()).toEqual([]);
 
       // Restored once it has installed, it leaves the toolbelt as it is.
@@ -579,7 +588,7 @@ test("an install a save catches holds no file open while saved, and a restore in
       await install.stop();
     }
   });
-});
+}, 30_000);
 
 test("an install in the background reports how it ended, and stops when told", async () => {
   await withTempDir(async (dir) => {
