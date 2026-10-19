@@ -69,6 +69,25 @@ test("a timeout that would end while the server is saved starts again, whole, on
   expect(ended).toBe(1);
 });
 
+test("a timeout that came due as the server was saved, by what it read then, starts again, whole, once it resumes", async () => {
+  let ended = 0;
+  runningTimeout(() => (ended += 1), 1_000);
+  jest.advanceTimersByTime(1_000);
+  // The poll that follows reads the request to save the server.
+  markSandboxSaved();
+  await polled();
+  expect(ended).toBe(0);
+
+  markSandboxResumed();
+  await settle();
+  jest.advanceTimersByTime(999);
+  await polled();
+  expect(ended).toBe(0);
+  jest.advanceTimersByTime(1);
+  await polled();
+  expect(ended).toBe(1);
+});
+
 test("a cleared timeout never ends, even once the server resumes", async () => {
   let ended = 0;
   const timeout = runningTimeout(() => (ended += 1), 1_000);

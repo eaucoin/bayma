@@ -109,18 +109,23 @@ export function runningTimeout(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let after: ReturnType<typeof setImmediate> | undefined;
   let cleared = false;
+  // Runs `next` unless the timeout was cleared; while the server is saved,
+  // which what the poll read may have made it, arms it anew once it resumes.
+  const running = (next: () => void) => {
+    if (cleared) return;
+    if (!saved) return next();
+    void saved.resumed.then(() => {
+      if (!cleared) arm();
+    });
+  };
   const arm = () => {
-    timer = setTimeout(() => {
-      if (saved) {
-        void saved.resumed.then(() => {
-          if (!cleared) arm();
-        });
-        return;
-      }
-      after = setImmediate(() => {
-        if (!cleared) callback();
-      });
-    }, ms);
+    timer = setTimeout(
+      () =>
+        running(() => {
+          after = setImmediate(() => running(callback));
+        }),
+      ms,
+    );
   };
   arm();
   return {
