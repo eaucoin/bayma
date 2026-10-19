@@ -261,7 +261,8 @@ test("a snapshot hands the dump the stdio its runtime started with, wherever the
     restoreCommand: () => ({ file: "/bin/false", args: [] }),
     restoredPid: () => undefined,
     unrestorableReason: () => undefined,
-    advancePidsPast: () => undefined,
+    pidsPast: () => true,
+    advancePidsPast: async () => undefined,
   };
   const transport = new ProcessTransport({
     platformId: "test",
@@ -315,7 +316,8 @@ test("a restore that fails says how CRIU ended, what it printed, and its log's e
           restoreCommand: () => ({ file: criu, args: [] }),
           restoredPid: () => undefined,
           unrestorableReason: () => undefined,
-          advancePidsPast: () => undefined,
+          pidsPast: () => true,
+          advancePidsPast: async () => undefined,
         },
       });
       try {

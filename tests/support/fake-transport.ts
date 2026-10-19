@@ -338,9 +338,16 @@ export class SnapshottingTransport extends FakeTransport {
  */
 export class PidReservingSnapshotter implements ProcessSnapshotter {
   readonly advancedPast: number[] = [];
+  /** Set to have each advance end only once this does. */
+  advanced?: Promise<void>;
 
-  advancePidsPast(pid: number): void {
+  async advancePidsPast(pid: number): Promise<void> {
     this.advancedPast.push(pid);
+    await this.advanced;
+  }
+
+  pidsPast(): boolean | undefined {
+    throw new Error("the session manager only advances PIDs");
   }
 
   dump(): ProcessSnapshot {

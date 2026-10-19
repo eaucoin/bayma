@@ -358,25 +358,65 @@ test("whether a snapshotter can snapshot sessions here is found once", async () 
   });
 });
 
-test("PIDs are advanced past the highest a snapshot needs, and a helper failure says why", async () => {
-  await withTempDir((dir) => {
+/** The last PID this PID namespace handed out. */
+const lastPid = () =>
+  Number(readFileSync("/proc/sys/kernel/ns_last_pid", "utf8"));
+
+test("PIDs are advanced past one the counter has not reached, and a helper failure says why", async () => {
+  await withTempDir(async (dir) => {
     const recorded = join(dir, "advanced");
-    new CriuSnapshotter(
+    const ahead = lastPid() + 100_000;
+    await new CriuSnapshotter(
       "/opt/criu",
       writeScript(join(dir, "advance"), `printf '%s' "$1" > ${recorded}`),
-    ).advancePidsPast(4_142);
-    expect(readFileSync(recorded, "utf8")).toBe("4143");
+    ).advancePidsPast(ahead);
+    expect(readFileSync(recorded, "utf8")).toBe(String(ahead + 1));
 
-    expect(() =>
+    await expect(
       new CriuSnapshotter(
         "/opt/criu",
         writeScript(
           join(dir, "refuse"),
           "echo 'ns_last_pid: permission denied' >&2; exit 3",
         ),
-      ).advancePidsPast(4_142),
-    ).toThrow(
-      "advancing PIDs past 4142 failed: ns_last_pid: permission denied",
+      ).advancePidsPast(ahead),
+    ).rejects.toThrow(
+      `advancing PIDs past ${ahead} failed: ns_last_pid: permission denied`,
     );
+    await expect(
+      new CriuSnapshotter("/opt/criu", join(dir, "missing")).advancePidsPast(
+        ahead,
+      ),
+    ).rejects.toThrow(/^advancing PIDs past \d+ failed: .*ENOENT/);
+  });
+});
+
+test("a PID counter past the PID already starts no helper", async () => {
+  await withTempDir(async (dir) => {
+    const recorded = join(dir, "advanced");
+    const snapshotter = new CriuSnapshotter(
+      "/opt/criu",
+      writeScript(join(dir, "advance"), `printf '%s' "$1" > ${recorded}`),
+    );
+    expect(snapshotter.pidsPast(lastPid() - 1)).toBe(true);
+    expect(snapshotter.pidsPast(lastPid() + 100_000)).toBe(false);
+
+    await snapshotter.advancePidsPast(lastPid() - 1);
+    expect(existsSync(recorded)).toBe(false);
+  });
+});
+
+test("the event loop runs on while the helper climbs", async () => {
+  await withTempDir(async (dir) => {
+    let fired = false;
+    setTimeout(() => (fired = true), 20);
+    const advanced = new CriuSnapshotter(
+      "/opt/criu",
+      writeScript(join(dir, "advance"), "sleep 0.3"),
+    )
+      .advancePidsPast(lastPid() + 100_000)
+      .then(() => fired);
+
+    expect(await advanced).toBe(true);
   });
 });

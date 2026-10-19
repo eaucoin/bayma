@@ -74,10 +74,17 @@ export interface ProcessSnapshotter {
   /** Why `snapshot` cannot be restored here, or undefined if it can. */
   unrestorableReason(snapshot: ProcessSnapshot): string | undefined;
   /**
-   * Move this PID namespace's PID counter past `pid`, so no process started
-   * from now on takes a PID a stored snapshot needs.
+   * Whether this PID namespace's PID counter is past `pid`, with a PID left
+   * before it wraps, or undefined where that cannot be read.
    */
-  advancePidsPast(pid: number): void;
+  pidsPast(pid: number): boolean | undefined;
+  /**
+   * Move this PID namespace's PID counter past `pid`, never back, so no
+   * process started from now on takes a PID at or below it until the counter
+   * wraps; it starts nothing where the counter is past it already. Rejects
+   * where no PID the namespace hands out lies past it.
+   */
+  advancePidsPast(pid: number): Promise<void>;
 }
 
 const CRIU = "criu";
@@ -86,6 +93,10 @@ const DUMP_LOG = "dump.log";
 const RESTORE_LOG = "restore.log";
 const RESTORED_PID_FILE = "restored.pid";
 const BOOT_ID = "/proc/sys/kernel/random/boot_id";
+// The last PID this PID namespace handed out, which anyone may read, and the
+// one its PIDs end below.
+const NS_LAST_PID = "/proc/sys/kernel/ns_last_pid";
+const PID_MAX = "/proc/sys/kernel/pid_max";
 const DUMP_TIMEOUT_MS = 120_000;
 
 // CRIU's options for every dump and restore: CRIU runs with only the
@@ -118,6 +129,16 @@ function onPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
 
 function readBootId(): string {
   return readFileSync(BOOT_ID, "utf8").trim();
+}
+
+/** The number a /proc/sys file holds, or undefined where it cannot be read. */
+function readCount(path: string): number | undefined {
+  try {
+    const count = Number(readFileSync(path, "utf8").trim());
+    return Number.isSafeInteger(count) ? count : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Every process and thread ID in the tree rooted at `pid`. */
@@ -334,14 +355,34 @@ export class CriuSnapshotter implements ProcessSnapshotter {
     return undefined;
   }
 
-  advancePidsPast(pid: number): void {
-    const result = spawnSync(this.advancePids, [String(pid + 1)], {
-      stdio: ["ignore", "ignore", "pipe"],
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
+  pidsPast(pid: number): boolean | undefined {
+    const last = readCount(NS_LAST_PID);
+    const limit = readCount(PID_MAX);
+    if (last === undefined || limit === undefined) return undefined;
+    return last >= pid && last < limit - 1;
+  }
+
+  async advancePidsPast(pid: number): Promise<void> {
+    if (this.pidsPast(pid)) return;
+    // Off the event loop: climbing to a PID far ahead takes the helper a
+    // process a PID.
+    let stderr = "";
+    let status: number | null;
+    try {
+      const helper = spawn(this.advancePids, [String(pid + 1)], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      helper.stderr.setEncoding("utf8");
+      helper.stderr.on("data", (text: string) => (stderr += text));
+      [status] = await once(helper, "close");
+    } catch (error) {
       throw new Error(
-        `advancing PIDs past ${pid} failed: ${result.stderr.trim() || `status ${result.status}`}`,
+        `advancing PIDs past ${pid} failed: ${failureMessage(error)}`,
+      );
+    }
+    if (status !== 0) {
+      throw new Error(
+        `advancing PIDs past ${pid} failed: ${stderr.trim() || `status ${status}`}`,
       );
     }
   }

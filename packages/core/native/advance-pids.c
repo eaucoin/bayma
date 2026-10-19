@@ -5,10 +5,13 @@
 // Linux hands out PIDs in increasing order, so creating and reaping processes
 // until one gets a PID at or above the target leaves every later process and
 // thread above it, until the counter wraps; a counter already past the target
-// stays where it is. bayma runs this as its server starts, before any runtime,
-// with a target past the highest PID any stored process snapshot uses: a
-// restored tree finds its PIDs free, and a new tree never takes them. vfork
-// keeps each step to a few microseconds.
+// stays where it is. Each step, a vfork, takes some 40 µs: 0.4 s for 10,000
+// PIDs.
+//
+// bayma runs this as its server starts, before any runtime, with a target past
+// the highest PID any stored process snapshot uses: a restored tree finds its
+// PIDs free, and a new tree never takes them. It waits for it off its event
+// loop, and starts it for no target the counter is past already.
 //
 // A target the namespace's PIDs cannot reach, at or above its pid_max, is
 // refused: the counter would wrap to the lowest PIDs instead.

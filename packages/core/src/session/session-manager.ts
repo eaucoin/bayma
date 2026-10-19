@@ -575,7 +575,7 @@ export class SessionManager {
         `could not sweep the sessions' directories: ${failureMessage(error)}`,
       );
     }
-    this.reservePidsForSnapshots();
+    await this.reservePidsForSnapshots();
     // What the hosts of the server before left in the scratch directories of
     // sessions with no process snapshot goes, which a save the generation
     // matched before the bump above may have mapped.
@@ -753,7 +753,7 @@ export class SessionManager {
    * starts anything, its PID counter moves past every stored snapshot's:
    * nothing started from now on can take a PID one of them needs.
    */
-  private reservePidsForSnapshots(): void {
+  private async reservePidsForSnapshots(): Promise<void> {
     const highest = Math.max(
       0,
       ...[...this.sessions.values()].map(
@@ -762,7 +762,7 @@ export class SessionManager {
     );
     if (highest === 0) return;
     try {
-      this.snapshotter()?.advancePidsPast(highest);
+      await this.snapshotter()?.advancePidsPast(highest);
     } catch (error) {
       // A restore that then finds a PID taken fails, and its session comes
       // back from its checkpoint instead.

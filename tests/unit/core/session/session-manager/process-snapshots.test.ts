@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   CheckpointStore,
   ExecHistoryStore,
@@ -394,6 +395,29 @@ test("loading moves the PID counter past every stored snapshot's highest PID", a
     ).loadCatalog();
 
     expect(snapshotter.advancedPast).toEqual([Math.max(...maxPids)]);
+  });
+});
+
+test("loading ends only once the PID counter has moved past the stored snapshots' PIDs", async () => {
+  await withTempDir(async (dir) => {
+    await snapshottedSession(dir);
+    const snapshotter = new PidReservingSnapshotter();
+    let advance!: () => void;
+    snapshotter.advanced = new Promise((resolve) => (advance = resolve));
+    const manager = managerFor(
+      stores(dir),
+      new SnapshottingTransport(),
+      snapshotter,
+    );
+
+    let loaded = false;
+    const loading = manager.loadCatalog().then(() => (loaded = true));
+    await sleep(200);
+    expect(snapshotter.advancedPast).toHaveLength(1);
+    expect(loaded).toBe(false);
+    advance();
+    await loading;
+    expect(loaded).toBe(true);
   });
 });
 

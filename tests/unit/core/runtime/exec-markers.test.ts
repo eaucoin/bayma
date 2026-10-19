@@ -247,7 +247,8 @@ const SNAPSHOTTER: ProcessSnapshotter = {
   restoreCommand: () => ({ file: "/bin/false", args: [] }),
   restoredPid: () => undefined,
   unrestorableReason: () => undefined,
-  advancePidsPast: () => undefined,
+  pidsPast: () => true,
+  advancePidsPast: async () => undefined,
 };
 
 /** Whether a session of `transport` whose runtime is not installed fails, saying `said`. */
