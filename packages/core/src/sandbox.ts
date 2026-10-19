@@ -88,18 +88,34 @@ export interface RunningTimeout {
 /**
  * Calls `callback` once `ms` have passed, as `setTimeout` does, unless that
  * is while the server is saved: then `ms` starts again once it resumes.
+ *
+ * And only once the server has read what came by then, which may have been
+ * what would have cleared it. A timer's time is the clock's, which runs on
+ * while the server does not, as a restored server waits for its pages, and
+ * Node runs the timers that came due meanwhile before it reads what came: so
+ * the callback waits for the poll that follows, which reads it, and is not
+ * called where that cleared the timeout. Checking what the socket holds would
+ * not do: what came is still the kernel's then, not the stream's. A
+ * connection that came meanwhile is only read in the poll after that, so a
+ * request on one does not.
  */
 export function runningTimeout(
   callback: () => void,
   ms: number,
 ): RunningTimeout {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let after: ReturnType<typeof setImmediate> | undefined;
   let cleared = false;
   const arm = () => {
     timer = setTimeout(() => {
-      if (!saved) return callback();
-      void saved.resumed.then(() => {
-        if (!cleared) arm();
+      if (saved) {
+        void saved.resumed.then(() => {
+          if (!cleared) arm();
+        });
+        return;
+      }
+      after = setImmediate(() => {
+        if (!cleared) callback();
       });
     }, ms);
   };
@@ -108,6 +124,7 @@ export function runningTimeout(
     clear: () => {
       cleared = true;
       clearTimeout(timer);
+      clearImmediate(after);
     },
   };
 }

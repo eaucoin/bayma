@@ -24,13 +24,28 @@ afterEach(() => {
 /** Lets the promise callbacks the timers set off run. */
 const settle = () => Promise.resolve().then(() => undefined);
 
-test("a timeout ends as setTimeout's does while the server is not saved", () => {
+/** Lets the server read what came, as it does after the timers came due. */
+const polled = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("a timeout ends as setTimeout's does while the server is not saved, once the server has read what came by then", async () => {
   let ended = 0;
   runningTimeout(() => (ended += 1), 1_000);
   jest.advanceTimersByTime(999);
+  await polled();
   expect(ended).toBe(0);
   jest.advanceTimersByTime(1);
+  expect(ended).toBe(0);
+  await polled();
   expect(ended).toBe(1);
+});
+
+test("a timeout cleared by what the server read once it came due does not end", async () => {
+  let ended = 0;
+  const timeout = runningTimeout(() => (ended += 1), 1_000);
+  jest.advanceTimersByTime(1_000);
+  timeout.clear();
+  await polled();
+  expect(ended).toBe(0);
 });
 
 test("a timeout that would end while the server is saved starts again, whole, once it resumes", async () => {
@@ -47,8 +62,10 @@ test("a timeout that would end while the server is saved starts again, whole, on
   markSandboxResumed();
   await settle();
   jest.advanceTimersByTime(999);
+  await polled();
   expect(ended).toBe(0);
   jest.advanceTimersByTime(1);
+  await polled();
   expect(ended).toBe(1);
 });
 

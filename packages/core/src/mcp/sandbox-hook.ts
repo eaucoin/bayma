@@ -10,6 +10,7 @@ import {
   SandboxSaveOutlived,
   markSandboxSaved,
   resumesWithin,
+  runningTimeout,
 } from "../sandbox.ts";
 import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
 import type { HeldStop } from "./held-stop.ts";
@@ -249,20 +250,28 @@ export async function serveSandboxHook(
   };
   const server = net.createServer((socket) => {
     let request = Buffer.alloc(0);
-    socket.setTimeout(REQUEST_TIMEOUT_MS, () => socket.destroy());
+    // A connection that sends nothing in time is closed, once the server has
+    // read what came by then (runningTimeout): a restored server stops
+    // running while its pages come in, and the hook's request may come
+    // meanwhile.
+    const sendsNothing = runningTimeout(
+      () => socket.destroy(),
+      REQUEST_TIMEOUT_MS,
+    );
+    socket.on("close", () => sendsNothing.clear());
     socket.on("data", (chunk: Buffer) => {
       request = Buffer.concat([request, chunk]);
       const end = request.indexOf("\n");
       if ((end === -1 ? request.length : end + 1) > MAX_REQUEST_BYTES) {
         socket.removeAllListeners("data");
-        socket.setTimeout(0);
+        sendsNothing.clear();
         socket.end("the sandbox hook's request is too long\n");
         return;
       }
       if (end === -1) return;
       socket.removeAllListeners("data");
       // What the mode takes may take longer than a request may.
-      socket.setTimeout(0);
+      sendsNothing.clear();
       queue(() =>
         handle(parseSandboxHookMode(request.subarray(0, end).toString())),
       ).then(

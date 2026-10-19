@@ -14,7 +14,22 @@ import {
   serveSandboxHook,
   type SandboxHookHandlers,
 } from "@bayma/core";
+import { nodeExecutable } from "../../../support/runtimes.ts";
 import { SOCKET_TEMP_ROOT, withTempDir } from "../../../support/temp.ts";
+
+/** The hook's module, as Node runs it from source. */
+const SANDBOX_HOOK_MODULE = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "..",
+  "packages",
+  "core",
+  "src",
+  "mcp",
+  "sandbox-hook.ts",
+);
 
 afterEach(() => {
   markSandboxResumed();
@@ -250,6 +265,54 @@ test("the hook's server closes a connection that sends no request", async () => 
     }
   });
 }, 10_000);
+
+test("the hook's server answers a request that came while it did not run, as a restored server waiting for its pages does not, however long that was", async () => {
+  await withHookDir(async (dir) => {
+    // The server, under Node, as bayma runs: told to, it runs no more for
+    // longer than a request may take to come, in a turn of its event loop
+    // after which Node runs its timers before it reads what came meanwhile.
+    const server = Bun.spawn(
+      [
+        nodeExecutable(),
+        "--disable-warning=ExperimentalWarning",
+        "--input-type=module",
+        "-e",
+        `const { serveSandboxHook } = await import(${JSON.stringify(SANDBOX_HOOK_MODULE)});
+        await serveSandboxHook(${JSON.stringify(dir)}, { save: async () => ({ generation: 0, running: [] }), restore: async () => {} });
+        console.log("serving");
+        process.stdin.on("data", () =>
+          setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 6_500)),
+        );`,
+      ],
+      { stdin: "pipe", stdout: "pipe" },
+    );
+    try {
+      const said = server.stdout.getReader();
+      for (let out = ""; !out.includes("serving\n");)
+        out += new TextDecoder().decode((await said.read()).value);
+      const socket = net.connect(sandboxHookSocket(dir));
+      let answer = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => (answer += chunk));
+      const ended = new Promise<void>((resolve) => {
+        socket.on("close", () => resolve());
+        socket.on("error", () => undefined);
+      });
+      await new Promise((resolve) => socket.once("connect", resolve));
+      // Taken, the server stops running; the hook's request comes meanwhile.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      server.stdin.write("stall\n");
+      server.stdin.flush();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      socket.write("resume\n");
+      await ended;
+      expect(answer).toBe("ok\n");
+    } finally {
+      server.kill();
+      await server.exited;
+    }
+  });
+}, 20_000);
 
 test("the hook fails when no server serves the state directory", async () => {
   await withHookDir(async (dir) => {
