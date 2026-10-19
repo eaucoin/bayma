@@ -336,11 +336,17 @@ export async function serveMcpHttp(
 
     try {
       if (request.method === "POST") {
+        // A request holds its client's MCP session open from when it comes,
+        // not once its body has, which may be past the idle timeout.
+        const existing =
+          headerSessionId === undefined
+            ? undefined
+            : sessions.get(headerSessionId);
+        existing?.track(response);
         const body = await readJsonBody(request);
 
         if (headerSessionId) {
-          const existing = sessions.get(headerSessionId);
-          if (!existing) {
+          if (!existing || sessions.get(headerSessionId) !== existing) {
             sendJson(response, 404, {
               jsonrpc: "2.0",
               error: {
@@ -351,7 +357,6 @@ export async function serveMcpHttp(
             });
             return;
           }
-          existing.track(response);
           await existing.transport.handleRequest(request, response, body);
           return;
         }

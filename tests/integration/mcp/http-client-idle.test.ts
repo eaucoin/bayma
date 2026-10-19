@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import net from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   abandonSession,
@@ -137,6 +138,44 @@ test(
         await successor.callTool("session.close", { session_id: sessionId });
       } finally {
         await successor.close();
+      }
+    } finally {
+      await server.close();
+    }
+  },
+  { timeout: TEST_TIMEOUT_MS },
+);
+
+test(
+  "a client's request keeps its MCP session open from when it comes, however long past the idle timeout its body takes",
+  async () => {
+    const server = await launchMcpHttpServer({
+      clientIdleTimeoutMs: SHORT_IDLE_TIMEOUT_MS,
+    });
+    try {
+      const { mcpSessionId } = await abandonSession(server.url);
+      const { host, hostname, port } = new URL(server.url);
+      const socket = net.connect(Number(port), hostname);
+      let answer = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => (answer += chunk));
+      socket.on("error", () => undefined);
+      await new Promise((resolve) => socket.once("connect", resolve));
+      try {
+        const body = JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 1 });
+        socket.write(
+          `POST /mcp HTTP/1.1\r\nHost: ${host}\r\n` +
+            "Accept: application/json, text/event-stream\r\n" +
+            "Content-Type: application/json\r\n" +
+            `Mcp-Session-Id: ${mcpSessionId}\r\n` +
+            `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n`,
+        );
+        await sleep(SHORT_IDLE_TIMEOUT_MS * 2);
+        socket.write(body);
+        while (!answer.includes("\r\n") && !socket.closed) await sleep(20);
+        expect(answer.slice(0, answer.indexOf("\r\n"))).toBe("HTTP/1.1 200 OK");
+      } finally {
+        socket.destroy();
       }
     } finally {
       await server.close();
