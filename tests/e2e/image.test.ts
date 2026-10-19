@@ -78,13 +78,42 @@ async function run(
 }
 
 /**
- * Serve MCP from a fresh container. Closing the client ends the server,
- * which snapshots its idle REPL sessions on the way out; `stop` waits for
- * the container to be gone, as the next server would have to.
+ * What the image's entrypoint runs, from `docker run`'s arguments on, with
+ * the container's PID counter moved first so that its first process takes
+ * `pid`, as if the container had started that many before.
+ */
+async function entrypointFrom(pid: number): Promise<string[]> {
+  const inspected = await run([
+    "docker",
+    "image",
+    "inspect",
+    "--format",
+    "{{json .Config.Entrypoint}}",
+    IMAGE,
+  ]);
+  expect(inspected.exitCode).toBe(0);
+  const entrypoint = JSON.parse(inspected.stdout) as string[];
+  return [
+    "--entrypoint",
+    "sh",
+    IMAGE,
+    "-c",
+    'bayma-advance-pids "$0" && exec "$@"',
+    String(pid - 1),
+    ...entrypoint,
+  ];
+}
+
+/**
+ * Serve MCP from a fresh container, its server's first process at
+ * `firstPid` if given. Closing the client ends the server, which snapshots
+ * its idle REPL sessions on the way out; `stop` waits for the container to be
+ * gone, as the next server would have to.
  */
 async function serve(
   home: string,
   stateDir: string,
+  firstPid?: number,
 ): Promise<{ client: McpStdioClient; stop: () => Promise<void> }> {
   const name = `bayma-e2e-${process.pid}-${Date.now()}`;
   const client = await McpStdioClient.launch(
@@ -98,7 +127,7 @@ async function serve(
         name,
         ...userFlags(home),
         ...SNAPSHOT_FLAGS,
-        IMAGE,
+        ...(firstPid === undefined ? [IMAGE] : await entrypointFrom(firstPid)),
       ],
       binaryLabel: "bayma image",
     },
@@ -286,6 +315,66 @@ test.serial(
       }
       // Restored snapshots are deleted, and closed sessions leave nothing.
       expect(readdirSync(join(stateDir, "snapshots"))).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+// As many processes as a container might start before its server.
+const CONTAINER_START_PIDS = 1_000;
+
+test.serial(
+  "a REPL session comes back whole to a server whose own threads start where the session's tree would lie, had its server started it low",
+  async () => {
+    const { home, stateDir } = makeHome();
+    try {
+      let sessionId: string;
+      const first = await serve(home, stateDir);
+      try {
+        const created = await first.client.callTool<{
+          session: { session_id: string };
+        }>("session.create", { runtime: "python", title: "pids", cwd: home });
+        sessionId = created.session.session_id;
+        // A thread of its own, so that the tree spans more than one ID.
+        const defined = await execSettled(
+          first.client,
+          sessionId,
+          "import threading\nthreading.Thread(target=threading.Event().wait, daemon=True).start()\nmarker = 41",
+        );
+        expect(defined.status).toBe("ok");
+      } finally {
+        await first.stop();
+      }
+      const { pid } = JSON.parse(
+        readFileSync(join(stateDir, "sessions", `${sessionId}.json`), "utf8"),
+      ).processSnapshot;
+
+      // The next server starts at the tree's root, so far as a container's
+      // first processes reach: its own threads, which start before it can
+      // reserve any PID, take those a tree started that low needs.
+      const second = await serve(
+        home,
+        stateDir,
+        Math.min(pid, CONTAINER_START_PIDS),
+      );
+      try {
+        await second.client.callTool("session.acquire_controller", {
+          session_id: sessionId,
+        });
+        const read = await execSettled(second.client, sessionId, "marker + 1");
+        expect({
+          status: read.status,
+          result: read.result_text?.trim(),
+          error: read.error_text || undefined,
+        }).toEqual({ status: "ok", result: "42", error: undefined });
+        await second.client.callTool("session.close", {
+          session_id: sessionId,
+        });
+      } finally {
+        await second.stop();
+      }
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

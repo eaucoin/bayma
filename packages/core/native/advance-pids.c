@@ -9,9 +9,11 @@
 // PIDs.
 //
 // bayma runs this as its server starts, before any runtime, with a target past
-// the highest PID any stored process snapshot uses: a restored tree finds its
-// PIDs free, and a new tree never takes them. It waits for it off its event
-// loop, and starts it for no target the counter is past already.
+// the highest PID any stored process snapshot uses, and before it starts each
+// runtime it can snapshot, with one past the floor its runtimes start above: a
+// restored tree finds its PIDs free, a new tree never takes them, and every
+// tree lies above what a server starts before it can run this. It waits for it
+// off its event loop, and starts it for no target the counter is past already.
 //
 // A target the namespace's PIDs cannot reach, at or above its pid_max, is
 // refused: the counter would wrap to the lowest PIDs instead.

@@ -4,12 +4,14 @@ import { readlinkSync } from "node:fs";
 import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
-import { aggregateFailure } from "../errors.ts";
+import { aggregateFailure, failureMessage } from "../errors.ts";
 import { runningTimeout, type RunningTimeout } from "../sandbox.ts";
+import { report } from "../telemetry/record.ts";
 import {
   criuEnding,
   processSnapshotter,
   restoreFailure,
+  SESSION_PID_FLOOR,
   snapshotsUnavailableHere,
   type CriuExit,
   type ProcessSnapshot,
@@ -204,12 +206,62 @@ function recentOutput(state: BrokerState): string {
     .slice(-4000);
 }
 
+// The failures to move the PID counter past the floor each snapshotter has
+// reported: one that recurs, as where the namespace's PIDs end below the
+// floor, is said once, not at every runtime's start.
+const reportedFloorFailures = new WeakMap<ProcessSnapshotter, Set<string>>();
+
+// The advance past the floor each snapshotter has under way, which every
+// runtime starting meanwhile waits on.
+const floorAdvances = new WeakMap<ProcessSnapshotter, Promise<boolean>>();
+
+/**
+ * Moves the PID counter past SESSION_PID_FLOOR, where it is not past it
+ * already, as at a fresh container's first runtime or once it wraps in a
+ * server that runs long, for the runtimes about to start, and so any snapshot
+ * of them, to lie above the floor; resolves whether it did.
+ */
+function advancePastFloor(snapshotter: ProcessSnapshotter): Promise<boolean> {
+  let advance = floorAdvances.get(snapshotter);
+  if (!advance) {
+    advance = snapshotter
+      .advancePidsPast(SESSION_PID_FLOOR)
+      .then(
+        () => true,
+        (error: unknown) => {
+          reportFloorFailure(snapshotter, failureMessage(error));
+          return false;
+        },
+      )
+      .finally(() => floorAdvances.delete(snapshotter));
+    floorAdvances.set(snapshotter, advance);
+  }
+  return advance;
+}
+
+function reportFloorFailure(
+  snapshotter: ProcessSnapshotter,
+  failure: string,
+): void {
+  const reported = reportedFloorFailures.get(snapshotter) ?? new Set();
+  reportedFloorFailures.set(snapshotter, reported);
+  if (reported.has(failure)) return;
+  reported.add(failure);
+  // Snapshots of them may then not restore, and their sessions come back from
+  // their checkpoints instead.
+  report(
+    `bayma: sessions' runtimes may start below PID ${SESSION_PID_FLOOR}: ${failure}`,
+  );
+}
+
 export class ProcessTransport implements RuntimeTransport {
   private readonly sessions = new Map<string, BrokerState>();
 
   private readonly config: ProcessTransportConfig;
 
   readonly snapshots?: TransportSnapshots;
+
+  private readonly snapshotter: ProcessSnapshotter | null;
 
   constructor(config: ProcessTransportConfig) {
     this.config = config;
@@ -226,6 +278,7 @@ export class ProcessTransport implements RuntimeTransport {
         : config.snapshotter !== undefined
           ? config.snapshotter
           : processSnapshotter();
+    this.snapshotter = snapshotter;
     if (snapshotter) {
       this.snapshots = {
         snapshot: (handle, directory) =>
@@ -248,7 +301,22 @@ export class ProcessTransport implements RuntimeTransport {
   ): Promise<TransportSessionHandle> {
     this.assertNewSession(input.sessionId);
     await this.config.prepare?.();
+    // Where no snapshot can be taken, a runtime may start anywhere.
+    const snapshotter =
+      this.snapshotter &&
+      (await snapshotsUnavailableHere(this.snapshotter)) === undefined
+        ? this.snapshotter
+        : null;
+    let floored = snapshotter !== null && (await advancePastFloor(snapshotter));
     this.assertNewSession(input.sessionId);
+    // Checked again once the advance has ended: a counter that wrapped since,
+    // as processes outside the server could wrap it, is moved past the floor
+    // again. Nothing is awaited between the check that finds it past and the
+    // start.
+    while (floored && snapshotter?.pidsPast(SESSION_PID_FLOOR) === false) {
+      floored = await advancePastFloor(snapshotter);
+      this.assertNewSession(input.sessionId);
+    }
     const resolved = this.config.command(input);
     const state = this.launch(
       input,

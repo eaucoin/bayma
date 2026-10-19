@@ -87,6 +87,19 @@ export interface ProcessSnapshotter {
   advancePidsPast(pid: number): Promise<void>;
 }
 
+/**
+ * The PID every session's runtime starts above where its processes can be
+ * snapshotted, so that each snapshot's tree, restored at the PIDs it had,
+ * lies above everything the restoring server starts before it reserves them:
+ * its own threads, V8's and libuv's, which no reservation can come before,
+ * and what its container ran before it, a few dozen PIDs in a fresh one. Far
+ * above those, and far below the 32768 a kernel's PID limit is at its lowest
+ * by default (gVisor's is 65536), it leaves the counter more than 20,000 PIDs
+ * to climb before it wraps. Where the limit is below it, it cannot be
+ * reached, and that is reported.
+ */
+export const SESSION_PID_FLOOR = 10_000;
+
 const CRIU = "criu";
 const ADVANCE_PIDS = "bayma-advance-pids";
 const DUMP_LOG = "dump.log";

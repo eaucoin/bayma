@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmodSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import {
   CriuSnapshotter,
   describeFailure,
   ProcessTransport,
+  SESSION_PID_FLOOR,
   type ProcessSnapshotter,
 } from "@bayma/core";
 import { withTempDir } from "../../../support/temp.ts";
@@ -241,6 +242,222 @@ test("a transport offers process snapshots only where it has a snapshotter", () 
   ).toBeUndefined();
 });
 
+/**
+ * A snapshotter that notes, in `steps`, the dumps it is asked for, which end
+ * their tree, the PIDs it is asked past, and each check of the counter. Its
+ * dumps fail as CRIU's do where it cannot run if `unavailable` is given; its
+ * advances fail with `failure`, and end once `advanced` does; its checks
+ * find the counter past the PID as `past` says, in turn, and then always.
+ */
+function pidAdvancingSnapshotter(
+  steps: string[],
+  {
+    unavailable,
+    failure,
+    advanced,
+    past = [],
+  }: {
+    unavailable?: string;
+    failure?: string;
+    advanced?: Promise<void>;
+    past?: boolean[];
+  } = {},
+): ProcessSnapshotter {
+  return {
+    dump(pid, _directory, stdio) {
+      steps.push("dump");
+      if (unavailable) throw new Error(unavailable);
+      process.kill(pid, "SIGKILL");
+      return {
+        pid,
+        maxPid: pid,
+        stdio,
+        stdioFds: [0, 1, 2],
+        bootId: "boot",
+        baymaVersion: "0.0.0",
+        createdAtMs: 0,
+      };
+    },
+    restoreCommand: () => ({ file: "/bin/false", args: [] }),
+    restoredPid: () => undefined,
+    unrestorableReason: () => undefined,
+    pidsPast(pid) {
+      steps.push(`check ${pid}`);
+      return past.shift() ?? true;
+    },
+    async advancePidsPast(pid) {
+      steps.push(`past ${pid}`);
+      await advanced;
+      if (failure) throw new Error(failure);
+    },
+  };
+}
+
+/** A transport whose runtime, a shell, prompts once; it notes its steps. */
+function promptingTransport(
+  steps: string[],
+  snapshotter: ProcessSnapshotter,
+): ProcessTransport {
+  return new ProcessTransport({
+    platformId: "test",
+    promptRe: /READY> /g,
+    prepare: async () => {
+      steps.push("prepare");
+    },
+    command: () => {
+      steps.push("start");
+      return { file: "/bin/sh", args: ["-c", 'printf "READY> "; sleep 30'] };
+    },
+    snapshotter,
+  });
+}
+
+/** Start each of `sessionIds` in `transport`, one after another. */
+async function startEach(
+  transport: ProcessTransport,
+  sessionIds: string[],
+): Promise<void> {
+  for (const sessionId of sessionIds)
+    await transport.waitForInitialPrompt(
+      await transport.startSession({
+        sessionId,
+        title: sessionId,
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+        scratchDir: tmpdir(),
+      }),
+    );
+}
+
+const floor = SESSION_PID_FLOOR;
+
+test("every runtime starts once the PID counter is past the floor, checked after what prepares it, where snapshots can be taken", async () => {
+  const steps: string[] = [];
+  const transport = promptingTransport(steps, pidAdvancingSnapshotter(steps));
+  try {
+    await startEach(transport, ["sess_floor_first", "sess_floor_second"]);
+
+    // Whether snapshots can be taken here is found by a dump, once.
+    expect(steps).toEqual([
+      "prepare",
+      "dump",
+      `past ${floor}`,
+      `check ${floor}`,
+      "start",
+      "prepare",
+      `past ${floor}`,
+      `check ${floor}`,
+      "start",
+    ]);
+  } finally {
+    await transport.shutdown();
+  }
+});
+
+test("a PID counter found below the floor as a runtime is about to start is moved past it again first", async () => {
+  const steps: string[] = [];
+  const transport = promptingTransport(
+    steps,
+    pidAdvancingSnapshotter(steps, { past: [false] }),
+  );
+  try {
+    await startEach(transport, ["sess_wrapped"]);
+
+    expect(steps).toEqual([
+      "prepare",
+      "dump",
+      `past ${floor}`,
+      `check ${floor}`,
+      `past ${floor}`,
+      `check ${floor}`,
+      "start",
+    ]);
+  } finally {
+    await transport.shutdown();
+  }
+});
+
+test("runtimes starting together wait on one advance past the floor, the event loop running on meanwhile", async () => {
+  const steps: string[] = [];
+  let advance!: () => void;
+  const advanced = new Promise<void>((resolve) => (advance = resolve));
+  const snapshotter = pidAdvancingSnapshotter(steps, { advanced });
+  const transports = [
+    promptingTransport(steps, snapshotter),
+    promptingTransport(steps, snapshotter),
+  ];
+  try {
+    const started = Promise.all([
+      startEach(transports[0]!, ["sess_together_first"]),
+      startEach(transports[1]!, ["sess_together_second"]),
+    ]);
+    while (!steps.includes(`past ${floor}`)) await sleep(5);
+    // A timer fires while the advance is under way, and no runtime starts.
+    await sleep(20);
+    expect(steps.filter((step) => step === "start")).toEqual([]);
+    advance();
+    await started;
+
+    expect(steps.filter((step) => step === `past ${floor}`)).toHaveLength(1);
+    expect(steps.filter((step) => step === "start")).toHaveLength(2);
+  } finally {
+    await Promise.all(transports.map((transport) => transport.shutdown()));
+  }
+});
+
+test("where no snapshot can be taken, runtimes start wherever the PID counter is", async () => {
+  const steps: string[] = [];
+  const transport = promptingTransport(
+    steps,
+    pidAdvancingSnapshotter(steps, { unavailable: "CRIU could not start" }),
+  );
+  try {
+    await startEach(transport, [
+      "sess_unfloored_first",
+      "sess_unfloored_second",
+    ]);
+
+    expect(steps).toEqual(["prepare", "dump", "start", "prepare", "start"]);
+  } finally {
+    await transport.shutdown();
+  }
+});
+
+test("runtimes the PID counter cannot be moved past the floor for start all the same, said once", async () => {
+  const reports: string[] = [];
+  const stderr = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    reports.push(String(chunk));
+    return true;
+  });
+  const steps: string[] = [];
+  const failure =
+    "advancing PIDs past 10000 failed: bayma-advance-pids: PID 10001 is not below this namespace's pid_max, 8192";
+  const transport = promptingTransport(
+    steps,
+    pidAdvancingSnapshotter(steps, { failure }),
+  );
+  try {
+    await startEach(transport, ["sess_below_first", "sess_below_second"]);
+
+    expect(steps).toEqual([
+      "prepare",
+      "dump",
+      `past ${floor}`,
+      "start",
+      "prepare",
+      `past ${floor}`,
+      "start",
+    ]);
+    expect(reports).toEqual([
+      `bayma: sessions' runtimes may start below PID ${floor}: ${failure}\n`,
+    ]);
+  } finally {
+    stderr.mockRestore();
+    await transport.shutdown();
+  }
+});
+
 test("a snapshot hands the dump the stdio its runtime started with, wherever the runtime moved them", async () => {
   const dumped: { pid: number; stdio: string[] }[] = [];
   const snapshotter: ProcessSnapshotter = {
@@ -290,7 +507,9 @@ test("a snapshot hands the dump the stdio its runtime started with, wherever the
 
     const snapshot = await transport.snapshots!.snapshot(handle, tmpdir());
 
+    // After the dump that found snapshots can be taken here.
     expect(dumped).toEqual([
+      expect.anything(),
       {
         pid: handle.pid,
         stdio: [expect.any(String), stdout, expect.any(String)],
