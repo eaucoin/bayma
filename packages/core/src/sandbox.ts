@@ -1,3 +1,6 @@
+import type { Server } from "node:http";
+import type { Socket } from "node:net";
+
 // The sandbox bayma runs in, as a host that saves it whole and restores it,
 // maybe much later and elsewhere, runs it: from the save until the restore,
 // or the resume, the server is saved (mcp/sandbox-hook.ts hears when). A
@@ -127,6 +130,22 @@ export function runningTimeout(
       clearImmediate(after);
     },
   };
+}
+
+/**
+ * Has `server` close a connection it keeps alive for a next request that
+ * did not come in its keep-alive timeout only once it has read what came by
+ * then, as `runningTimeout` calls its callback: Node itself closes it as the
+ * timeout fires, before it reads a request that came while it did not run.
+ * What came is the connection's bytes read on, a request or part of one.
+ */
+export function keepAliveRunning(server: Server): void {
+  server.on("timeout", (socket: Socket) => {
+    const read = socket.bytesRead;
+    setImmediate(() => {
+      if (socket.bytesRead === read) socket.destroy();
+    });
+  });
 }
 
 /** Settles once `ms` have passed as `runningTimeout` counts them. */

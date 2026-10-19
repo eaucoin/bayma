@@ -17,7 +17,8 @@ import { withTempDir } from "../../support/temp.ts";
 // that SIGUSR2 tells to run no more, for as long, in a turn of its loop.
 
 const TEST_TIMEOUT_MS = 60_000;
-// Longer than the idle timeout a client's MCP session is given here.
+// Longer than Node keeps a connection alive for a next request, five
+// seconds and its one second to spare.
 const STALL_MS = 7_500;
 const SHORT_IDLE_TIMEOUT_MS = 2_000;
 
@@ -76,6 +77,31 @@ async function connect(url: string) {
     },
   };
 }
+
+test(
+  "the server answers a next request on a connection it keeps alive that came while it did not run, however long past its keep-alive timeout that was",
+  async () => {
+    await withStallingServer({}, async (server, stall) => {
+      const { host } = new URL(server.url);
+      const request = `GET /status HTTP/1.1\r\nHost: ${host}\r\n\r\n`;
+      const connection = await connect(server.url);
+      try {
+        connection.socket.write(request);
+        expect(await connection.answered(0)).toEqual(["HTTP/1.1 200"]);
+        stall();
+        await sleep(300);
+        connection.socket.write(request);
+        expect(await connection.answered(1)).toEqual([
+          "HTTP/1.1 200",
+          "HTTP/1.1 200",
+        ]);
+      } finally {
+        connection.socket.destroy();
+      }
+    });
+  },
+  { timeout: TEST_TIMEOUT_MS },
+);
 
 test(
   "a client's request that came while the server did not run keeps its MCP session open, however long past its idle timeout that was",

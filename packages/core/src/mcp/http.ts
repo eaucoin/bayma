@@ -28,6 +28,7 @@ import { restoreSandboxServer, serveSandboxHook } from "./sandbox-hook.ts";
 import { HeldStop } from "./held-stop.ts";
 import { readTokenFile } from "../token-file.ts";
 import {
+  keepAliveRunning,
   resumesWithin,
   runningTimeout,
   sandboxSaved,
@@ -550,6 +551,7 @@ export async function serveMcpHttp(
       }
     }
   });
+  keepAliveRunning(server);
 
   // SIGTERM's stop, held for a save of the sandbox where the config says to.
   const heldStop = new HeldStop(stopWaitMs, manager, () => shutdown(0));
