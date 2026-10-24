@@ -471,7 +471,7 @@ test.serial(
 );
 
 test.serial(
-  "a REPL session's runtime the kernel kills for its memory, started fresh or restored from its process snapshot, is said to have run out of its container's",
+  "a REPL session's runtime the kernel kills for its memory, started fresh or restored from its process snapshot, is said to have run out of its container's, and comes back",
   async () => {
     const { home, stateDir } = makeHome();
     // Its container limited, as a pod is, below what the runtime comes to
@@ -481,7 +481,7 @@ test.serial(
       "held = bytearray(1024 << 20)\nfor at in range(0, len(held), 4096): held[at] = 1";
     // The exec ends in error saying why, and how what ran it ended: the
     // runtime, of the kernel's SIGKILL; CRIU, which ran a restored one, of
-    // itself, as its tree did. Its session, quarantined, runs no more.
+    // itself, as its tree did.
     const killed = (snapshot: ExecSnapshot, ended: string) => ({
       status: snapshot.status,
       killed: snapshot.error_text?.includes(
@@ -489,7 +489,25 @@ test.serial(
       ),
       snapshot,
     });
-
+    // Its runtime started again, the next exec is told how.
+    const cameBack = async (
+      client: McpStdioClient,
+      sessionId: string,
+      started: string,
+    ) => {
+      const next = await execSettled(client, sessionId, "1 + 1");
+      expect({
+        status: next.status,
+        result: next.result_text?.trim(),
+        notice: next.notice,
+      }).toMatchObject({
+        status: "ok",
+        result: "2",
+        notice: expect.stringContaining(
+          `ran out of its container's memory (768Mi) and was killed by the kernel, so it was started again ${started}`,
+        ),
+      });
+    };
     const python = async (client: McpStdioClient, title: string) =>
       (
         await client.callTool<{ session: { session_id: string } }>(
@@ -509,6 +527,8 @@ test.serial(
             "(code=null, signal=SIGKILL)",
           ),
         ).toMatchObject({ status: "error", killed: true });
+        // Its only exec ended so, it committed no checkpoint.
+        await cameBack(first.client, fresh, "afresh");
         await first.client.callTool("session.close", { session_id: fresh });
         // One that holds what the stop snapshots, for the next server to restore.
         restored = await python(first.client, "restored");
@@ -536,6 +556,11 @@ test.serial(
             "(code=0, signal=none)",
           ),
         ).toMatchObject({ status: "error", killed: true });
+        await cameBack(
+          second.client,
+          restored,
+          "from its checkpoint committed at",
+        );
         await second.client.callTool("session.close", {
           session_id: restored,
         });

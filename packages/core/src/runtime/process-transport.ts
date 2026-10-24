@@ -5,7 +5,11 @@ import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure, failureMessage } from "../errors.ts";
-import { ranOutOf, watchMemoryKills } from "./memory-kills.ts";
+import {
+  ranOutOf,
+  RuntimeMemoryKilled,
+  watchMemoryKills,
+} from "./memory-kills.ts";
 import { runningTimeout, type RunningTimeout } from "../sandbox.ts";
 import { report } from "../telemetry/record.ts";
 import {
@@ -556,10 +560,9 @@ export class ProcessTransport implements RuntimeTransport {
       const how = kill
         ? `${ranOutOf(kill)} and was killed by the kernel`
         : "exited unexpectedly";
+      const message = `transport session ${input.sessionId} ${how} (code=${code ?? "null"}, signal=${signal ?? "none"})`;
       notifyExit(
-        new Error(
-          `transport session ${input.sessionId} ${how} (code=${code ?? "null"}, signal=${signal ?? "none"})`,
-        ),
+        kill ? new RuntimeMemoryKilled(message, kill) : new Error(message),
       );
     });
 

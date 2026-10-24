@@ -29,6 +29,7 @@ export * from "./session/exec-types.ts";
 export * from "./session/events.ts";
 export {
   DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES,
+  MEMORY_KILLS_APART_MS,
   runtimeMemoryBudgetOf,
   ServerStopping,
   SessionManager,
@@ -69,6 +70,7 @@ export * from "./runtime/adapter.ts";
 export * from "./runtime/transport.ts";
 export * from "./runtime/process-snapshots.ts";
 export * from "./runtime/process-transport.ts";
+export * from "./runtime/memory-kills.ts";
 export * from "./runtime/exec-files.ts";
 export * from "./runtime/exec-markers.ts";
 export * from "./runtime/output-capture.ts";

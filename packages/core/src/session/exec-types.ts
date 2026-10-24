@@ -57,12 +57,15 @@ export type RecoverySource = (typeof RECOVERY_SOURCES)[number];
 
 /**
  * How a session came back: as a session does after its server stopped, or
- * whole, with the sandbox bayma runs in, from a snapshot of the sandbox.
+ * whole, with the sandbox bayma runs in, from a snapshot of the sandbox, or
+ * its runtime started again, as it outgrew the runtime memory budget, or as
+ * the kernel killed it for its memory.
  */
 export const SESSION_RETURNS = [
   ...RECOVERY_SOURCES,
   "sandbox_snapshot",
   "memory_budget",
+  "memory_kill",
 ] as const;
 export type SessionReturn = (typeof SESSION_RETURNS)[number];
 
@@ -92,6 +95,17 @@ export interface ExecNotice {
     keepsOfEachCell?: string;
     from: "checkpoint" | "fresh";
     stoodDownBytes?: number;
+  };
+  /**
+   * For `memory_kill`, a runtime the kernel killed for its memory started
+   * again: the limit it ran out of, null for none, and whether the session
+   * came back from its checkpoint, committed at `checkpointAtMs`, or afresh,
+   * as one that committed none does.
+   */
+  memoryKill?: {
+    limit: string | null;
+    from: "checkpoint" | "fresh";
+    checkpointAtMs?: number;
   };
 }
 

@@ -204,6 +204,22 @@ export function describeExecNotice(notice: ExecNotice): string {
           : ` Restored, it already holds ${mib(memory.stoodDownBytes)} more than it started with, past the budget too, so the budget stands down for this session until it is closed.`;
       return `bayma: this session's runtime ${grew}, so it was started again ${started}.${stoodDown}`;
     }
+    case "memory_kill": {
+      const kill = notice.memoryKill;
+      const ranOut =
+        kill === undefined || kill.limit === null
+          ? "ran out of memory"
+          : `ran out of its container's memory (${kill.limit})`;
+      const started =
+        kill?.from === "fresh"
+          ? "afresh: the session had no checkpoint committed, and none of its state survived"
+          : `from its checkpoint${
+              kill?.checkpointAtMs === undefined
+                ? ""
+                : ` committed at ${new Date(kill.checkpointAtMs).toISOString()}`
+            }: only its checkpointed state survived, and the rest of its live state is gone`;
+      return `bayma: this session's runtime ${ranOut} and was killed by the kernel, so it was started again ${started}.`;
+    }
   }
 }
 

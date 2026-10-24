@@ -985,21 +985,23 @@ test("a runtime the kernel kills for its memory, as the server's cgroup counts a
       try {
         return await transport.waitForInitialPrompt(handle).then(
           () => "it prompted",
-          (error: unknown) => (error as Error).message,
+          // Its name too, as the session manager tells a kill for memory by it.
+          (error: unknown) =>
+            `${(error as Error).name}: ${(error as Error).message}`,
         );
       } finally {
         await transport.shutdown();
       }
     };
     expect(await killed("sess_oom", limited, 3)).toContain(
-      "transport session sess_oom ran out of its memory (1536Mi) and was killed by the kernel (code=null, signal=SIGKILL)",
+      "RuntimeMemoryKilled: transport session sess_oom ran out of its memory (1536Mi) and was killed by the kernel (code=null, signal=SIGKILL)",
     );
     // No kill counted since it started.
     expect(await killed("sess_killed", limited, 3)).toContain(
-      "transport session sess_killed exited unexpectedly (code=null, signal=SIGKILL)",
+      "Error: transport session sess_killed exited unexpectedly (code=null, signal=SIGKILL)",
     );
     expect(await killed("sess_free", unlimited, 3)).toContain(
-      "transport session sess_free ran out of memory and was killed by the kernel",
+      "RuntimeMemoryKilled: transport session sess_free ran out of memory and was killed by the kernel",
     );
     // Under cgroup v1, or none: nothing said of memory.
     expect(await killed("sess_unread", join(root, "none"), 3)).toContain(

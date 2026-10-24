@@ -81,3 +81,18 @@ export function ranOutOf({ limit }: MemoryKill): string {
     ? "ran out of memory"
     : `ran out of its memory (${limit})`;
 }
+
+/**
+ * How a runtime ended that the kernel killed for its memory, as its
+ * transport tells it, which its session comes back from rather than being
+ * quarantined.
+ */
+export class RuntimeMemoryKilled extends Error {
+  readonly kill: MemoryKill;
+
+  constructor(message: string, kill: MemoryKill) {
+    super(message);
+    this.name = "RuntimeMemoryKilled";
+    this.kill = kill;
+  }
+}

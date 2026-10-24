@@ -32,6 +32,11 @@ import type {
   RuntimeOutputCollector,
 } from "../runtime/adapter.ts";
 import { assertRuntimeCheckpointCompatible } from "../runtime/adapter.ts";
+import {
+  type MemoryKill,
+  ranOutOf,
+  RuntimeMemoryKilled,
+} from "../runtime/memory-kills.ts";
 import type {
   RuntimeTransport,
   StartSessionInput,
@@ -162,6 +167,11 @@ interface LiveRuntimeSession {
   startedHolding?: number;
   /** Whether the server has been told the host's memory cannot be told, as it is once for each host. */
   untoldReported?: boolean;
+  /**
+   * Whether the host has ended, the kernel having killed it for its memory,
+   * and waits to be started again: no exec starts on it meanwhile.
+   */
+  memoryKilled?: boolean;
 }
 
 interface RecoveryState {
@@ -186,6 +196,12 @@ interface SessionEntry {
    * it.
    */
   budgetStoodDown?: boolean;
+  /**
+   * When the kernel last killed the session's runtime for its memory, by the
+   * monotonic clock (performance.now): one it kills again sooner than
+   * MEMORY_KILLS_APART_MS after is not started again.
+   */
+  memoryKilledAtMs?: number;
   eventLog: EventLog;
   persistable?: boolean;
   catalogFailure?: {
@@ -273,6 +289,14 @@ export interface RuntimeMemoryBudget {
 
 /** The runtime memory budget of a server that is told none: 2 GiB. */
 export const DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES = 2 * 1024 ** 3;
+
+/**
+ * How long after the kernel killed a session's runtime for its memory one
+ * it kills again is not started again, its session quarantined instead: a
+ * runtime that runs out of memory as it comes back, or at once after, would
+ * otherwise be started again without end.
+ */
+export const MEMORY_KILLS_APART_MS = 60_000;
 
 /** `bytes` in MiB, whole, as the budget's reports say them. */
 function mebibytes(bytes: number): string {
@@ -2621,6 +2645,7 @@ export class SessionManager {
     while (
       session.runtime &&
       !session.runtime.activeExec &&
+      !session.runtime.memoryKilled &&
       session.runtime.queue.length > 0
     ) {
       if (sandboxSaved()) {
@@ -2709,6 +2734,7 @@ export class SessionManager {
       session.budgetStoodDown ||
       !runtime ||
       runtime.activeExec ||
+      runtime.memoryKilled ||
       runtime.startedHolding === undefined ||
       session.record.status === "quarantined"
     )
@@ -2895,11 +2921,132 @@ export class SessionManager {
     error: Error,
   ): void {
     if (session.runtime?.handle !== handle) return;
-    this.containRuntimeFailure(
-      session,
-      session.runtime.activeExec,
-      `runtime process exited: ${failureDetail(error)}`,
+    const reason = `runtime process exited: ${failureDetail(error)}`;
+    if (!(error instanceof RuntimeMemoryKilled)) {
+      this.containRuntimeFailure(session, session.runtime.activeExec, reason);
+      return;
+    }
+    const lastKilledAtMs = session.memoryKilledAtMs;
+    // The monotonic clock, as the wall clock may be set back or forth.
+    session.memoryKilledAtMs = performance.now();
+    if (
+      lastKilledAtMs !== undefined &&
+      session.memoryKilledAtMs - lastKilledAtMs < MEMORY_KILLS_APART_MS
+    ) {
+      this.containRuntimeFailure(
+        session,
+        session.runtime.activeExec,
+        `${reason}\nthe kernel killed it for its memory again within ${MEMORY_KILLS_APART_MS / 1_000} s of the last time, so it is not started again`,
+      );
+      return;
+    }
+    this.comeBackFromMemoryKill(session, session.runtime, error.kill, reason);
+  }
+
+  /**
+   * Has a session whose runtime the kernel killed for its memory come back
+   * from its checkpoint, or afresh where it committed none, rather than be
+   * quarantined, as a host past the runtime memory budget is started again:
+   * the exec it ran ends with `reason`, its queued execs wait for the runtime
+   * started again, and the next exec, queued or not yet submitted, is told.
+   */
+  private comeBackFromMemoryKill(
+    session: SessionEntry,
+    runtime: LiveRuntimeSession,
+    kill: MemoryKill,
+    reason: string,
+  ): void {
+    const { sessionId } = session.record;
+    runtime.memoryKilled = true;
+    const active = runtime.activeExec;
+    let message: ExecMessageRecord | undefined;
+    if (active) {
+      active.capture.completionStatus = "error";
+      finishExec(
+        active.record,
+        "error",
+        execTimestampAtOrAfterHistory(active.record, Date.now()),
+      );
+      message = appendExecMessage(active.record, "error", reason);
+      runtime.activeExec = undefined;
+    }
+    let checkpoint: SessionCheckpoint | null = null;
+    try {
+      if (session.record.durabilityMode === "checkpointed")
+        checkpoint = this.compatibleCheckpoint(sessionId);
+    } catch {
+      // The recycle fails as it reads it, and quarantines the session.
+    }
+    const notice: ExecNotice = {
+      returnedFrom: "memory_kill",
+      memoryKill: {
+        limit: kill.limit,
+        from: checkpoint === null ? "fresh" : "checkpoint",
+        ...(checkpoint === null
+          ? {}
+          : { checkpointAtMs: checkpoint.updatedAtMs }),
+      },
+    };
+    const pending = session.history.find(isPendingExec);
+    if (pending) pending.notice = notice;
+    else session.notice = notice;
+    session.record.status = "recovering";
+    this.touchSession(session);
+    // Told only once the state generation has moved on.
+    let tellable = true;
+    try {
+      this.persist(session);
+    } catch (error) {
+      tellable = !(error instanceof StateGenerationNotMoved);
+      report(
+        `session ${sessionId}'s exec the kernel killed its runtime in was not persisted: ${failureDetail(error)}`,
+        session.record,
+      );
+    }
+    if (tellable) {
+      const actorIds = this.actorRecipients(session.record);
+      if (active?.emitActors && message) {
+        this.emitToActors(
+          actorIds,
+          execMessageEvent(sessionId, active.record.execId, message),
+        );
+        this.emitToActors(
+          actorIds,
+          execFinishedEvent(sessionId, active.record),
+        );
+      }
+      this.emitToActors(actorIds, {
+        type: "session/statusChanged",
+        sessionId,
+        status: "recovering",
+        reason,
+      });
+    }
+    if (active) {
+      this.disposeActive(active);
+      active.resolveCompletion();
+    }
+    report(
+      `session ${sessionId}'s ${this.adapter(session).runtimeId} runtime ${ranOutOf(kill)} and was killed by the kernel: it is started again ${checkpoint === null ? "afresh, the session having no checkpoint" : "from the session's checkpoint"}`,
+      session.record,
     );
+    void this.withSessionMutation(
+      sessionId,
+      async (entry) => {
+        if (entry.runtime !== runtime) return;
+        // None is started again while the sandbox is saved.
+        if (sandboxSaved()) await sandboxRunsOn();
+        await this.recycleRuntime(entry, "memory kill", { allowFresh: true });
+      },
+      { admittedBeforeShutdown: true },
+    ).catch((error) => {
+      // A recycle that failed quarantined the session; a server stopping
+      // starts nothing again.
+      report(
+        `session ${sessionId}'s runtime was not started again after the kernel killed it for its memory: ${failureDetail(error)}`,
+        session.record,
+      );
+    });
   }
 
   private processBrokerChunk(session: SessionEntry, chunk: Uint8Array): void {

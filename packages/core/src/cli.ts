@@ -27,6 +27,7 @@ import { BAYMA_VERSION } from "./version.ts";
 import type { DurabilityMode } from "./session/model.ts";
 import {
   DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES,
+  MEMORY_KILLS_APART_MS,
   type RuntimeMemoryBudget,
 } from "./session/session-manager.ts";
 
@@ -255,7 +256,10 @@ their cells. The option takes a list: N for those, all=N for every runtime,
 RUNTIME=N for one, each in MiB, 0 for none, a runtime's own before all=N. A
 host its checkpoint restores already past the budget would be started again
 after every exec: the budget stands down for that session until it closes,
-and its next exec is told so.
+and its next exec is told so. A host the kernel kills as it runs out of the
+memory of the cgroup bayma runs in is started again the same way, the exec
+it ran ending in error, unless the kernel kills it so again within
+${MEMORY_KILLS_APART_MS / 1_000} s, which quarantines its session.
 
 OpenTelemetry traces, metrics, and logs of bayma's work are exported over
 OTLP to wherever OTEL_EXPORTER_OTLP_ENDPOINT and OpenTelemetry's other

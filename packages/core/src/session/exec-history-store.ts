@@ -71,6 +71,13 @@ const ExecRecordSchema: z.ZodType<ExecRecord> = z
             stoodDownBytes: z.number().int().positive().optional(),
           })
           .optional(),
+        memoryKill: z
+          .strictObject({
+            limit: z.string().nullable(),
+            from: z.enum(["checkpoint", "fresh"]),
+            checkpointAtMs: z.number().finite().nonnegative().optional(),
+          })
+          .optional(),
       })
       .optional(),
     messages: z.array(ExecMessageRecordSchema),
