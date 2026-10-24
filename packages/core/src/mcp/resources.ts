@@ -1,12 +1,6 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import type { SessionManager } from "../session/session-manager.ts";
-import {
-  SERVER_EVENTS_URI,
-  SESSIONS_URI,
-  sessionExecMessagesUri,
-  sessionExecUri,
-  sessionUri,
-} from "./uris.ts";
+import { SERVER_EVENTS_URI, SESSIONS_URI, sessionUri } from "./uris.ts";
 
 function jsonText(value: unknown): string {
   return JSON.stringify(value, null, 2) + "\n";
@@ -93,17 +87,13 @@ export function registerMcpResources(
     }),
   );
 
+  // An exec's resources are its template's alone, never listed: every exec of every session
+  // listed came to more than a client takes in one message (16.9 MB from about 200 sessions).
+  // A client knows its execs' IDs from exec and wait, and a session's latest from its resource.
   server.registerResource(
     "session-exec",
     new ResourceTemplate("bayma:///session/{sessionId}/exec/{execId}", {
-      list: async () => ({
-        resources: manager.list().flatMap((session) =>
-          manager.execIds(session.sessionId).map((execId) => ({
-            uri: sessionExecUri(session.sessionId, execId),
-            name: `${session.title} ${execId}`,
-          })),
-        ),
-      }),
+      list: undefined,
     }),
     {
       title: "Execution",
@@ -132,16 +122,7 @@ export function registerMcpResources(
     "session-exec-messages",
     new ResourceTemplate(
       "bayma:///session/{sessionId}/exec/{execId}/messages",
-      {
-        list: async () => ({
-          resources: manager.list().flatMap((session) =>
-            manager.execIds(session.sessionId).map((execId) => ({
-              uri: sessionExecMessagesUri(session.sessionId, execId),
-              name: `${session.title} ${execId} Messages`,
-            })),
-          ),
-        }),
-      },
+      { list: undefined },
     ),
     {
       title: "Execution Messages",

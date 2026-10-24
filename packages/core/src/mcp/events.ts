@@ -8,12 +8,9 @@ import {
   sessionUri,
 } from "./uris.ts";
 
+// The resource list holds sessions, not execs, so an exec's start leaves it as it was.
 function isSessionListMutation(event: SessionEvent): boolean {
-  return (
-    event.type === "session/started" ||
-    event.type === "session/closed" ||
-    event.type === "exec/started"
-  );
+  return event.type === "session/started" || event.type === "session/closed";
 }
 
 function resourceUpdateUris(event: SessionEvent): Set<string> {

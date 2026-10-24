@@ -24,8 +24,9 @@ export const MCP_RESOURCE_TEMPLATES = [
 
 export const MCP_FIXED_RESOURCES = [SESSIONS_URI, SERVER_EVENTS_URI] as const;
 
+// Sessions alone: an exec's resources are its templates', never listed.
 const DYNAMIC_RESOURCE_URI =
-  /^bayma:\/\/\/session\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?:\/exec\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?:\/messages)?)?$/;
+  /^bayma:\/\/\/session\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export function expectExactMcpSurface(surface: {
   tools: readonly string[];

@@ -242,7 +242,7 @@ test("a session comes back from its process snapshot, not its checkpoint", async
     ]);
     // The restored runtime answered its doctor probe, which left no history.
     expect(transport.requireSession(sessionId).writes).toHaveLength(1);
-    expect(manager.execIds(sessionId)).toEqual([]);
+    expect(manager.execs(sessionId)).toEqual([]);
     expect(catalogStore.read(sessionId)).toEqual(
       expect.objectContaining({
         status: "live_idle",

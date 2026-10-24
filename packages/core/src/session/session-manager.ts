@@ -796,12 +796,6 @@ export class SessionManager {
     return this.requireSession(sessionId).history.map(cloneExecRecord);
   }
 
-  execIds(sessionId: string): string[] {
-    return this.requireSession(sessionId).history.map(
-      (record) => record.execId,
-    );
-  }
-
   exec(sessionId: string, execId: string): ExecRecord {
     return cloneExecRecord(
       this.requireExec(this.requireSession(sessionId), execId),
