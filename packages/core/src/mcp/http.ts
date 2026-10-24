@@ -571,8 +571,12 @@ export async function serveMcpHttp(
         await manager.syncToStorage();
         return manager.sandboxSaving();
       },
-      restore: async (savedAtMs) => {
-        restoreSandboxServer({ manager, toolbelt: config.toolbelt }, savedAtMs);
+      restore: async (savedAtMs, stopReason) => {
+        restoreSandboxServer(
+          { manager, toolbelt: config.toolbelt },
+          savedAtMs,
+          stopReason,
+        );
         try {
           // The restored sandbox may serve another host, with a token of
           // its own; with no token it can read, it lets no request in.

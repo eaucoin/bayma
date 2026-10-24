@@ -61,6 +61,7 @@ const ExecRecordSchema: z.ZodType<ExecRecord> = z
       .strictObject({
         returnedFrom: z.enum(SESSION_RETURNS),
         snapshotAtMs: z.number().finite().nonnegative().optional(),
+        stopReason: z.string().optional(),
         memory: z
           .strictObject({
             grewBytes: z.number().int().positive(),

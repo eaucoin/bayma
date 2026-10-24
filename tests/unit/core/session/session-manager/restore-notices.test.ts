@@ -169,12 +169,14 @@ test("a sandbox's restore is told to the exec still running or queued, else to t
     transport.completeNext(ended);
     await Bun.sleep(0);
     manager.sandboxRestored(1_000);
-    // A later restore, before the execs it told ended, tells of itself.
-    manager.sandboxRestored(2_000);
+    // A later restore, before the execs it told ended, tells of itself, and
+    // of why its host stopped the sandbox.
+    manager.sandboxRestored(2_000, "it ran out of its memory (4Gi)");
 
     const told: ExecNotice = {
       returnedFrom: "sandbox_snapshot",
       snapshotAtMs: 2_000,
+      stopReason: "it ran out of its memory (4Gi)",
     };
     expect(manager.exec(running, runningExec).notice).toEqual(told);
     expect(manager.execs(queued).map(({ notice }) => notice)).toEqual([

@@ -79,8 +79,12 @@ export async function serveMcpStdio(
         await manager.syncToStorage();
         return manager.sandboxSaving();
       },
-      restore: async (savedAtMs) =>
-        restoreSandboxServer({ manager, toolbelt: config.toolbelt }, savedAtMs),
+      restore: async (savedAtMs, stopReason) =>
+        restoreSandboxServer(
+          { manager, toolbelt: config.toolbelt },
+          savedAtMs,
+          stopReason,
+        ),
     });
   } catch (error) {
     try {

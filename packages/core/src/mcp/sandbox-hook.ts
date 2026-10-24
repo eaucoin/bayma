@@ -26,7 +26,10 @@ import { inSpan, report } from "../telemetry/record.ts";
 // mode on to the server over a Unix socket in the server's state directory.
 // It needs no network, which the restored sandbox may not have yet, and no
 // token, which the restore may be about to replace; the state directory's
-// mode keeps it to the server's own user.
+// mode keeps it to the server's own user. A host that knows why it stopped
+// the sandbox it restores, as one stopped as it ran out of its memory, says
+// so in BAYMA_SANDBOX_STOP_REASON, which the restore passes on with its mode,
+// for each live session's next exec to be told.
 
 export const SANDBOX_HOOK_MODES = [
   "save",
@@ -38,6 +41,15 @@ export type SandboxHookMode = (typeof SANDBOX_HOOK_MODES)[number];
 
 /** Where gVisor names the mode of the command it runs. */
 export const SANDBOX_HOOK_MODE_VARIABLE = "GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE";
+
+/**
+ * Where a host names why it stopped the sandbox it restores, as the end of
+ * a sentence: "it ran out of its memory (4Gi)".
+ */
+export const SANDBOX_STOP_REASON_VARIABLE = "BAYMA_SANDBOX_STOP_REASON";
+
+/** The longest reason a restore passes on, in bytes. */
+const MAX_STOP_REASON_BYTES = 256;
 
 /**
  * What the server does at a save and at a restore, while it is saved (see
@@ -55,7 +67,7 @@ export interface SandboxHookHandlers {
    * After the sandbox was restored from what it saved at `savedAtMs`: its
    * connections to the outside are gone, and it may serve another host.
    */
-  restore: (savedAtMs: number) => Promise<void>;
+  restore: (savedAtMs: number, stopReason?: string) => Promise<void>;
   /**
    * The stop the server holds for a save, if it holds stops: a restore lets
    * it go, a resume goes on with it, and `stop` goes on with it at once, or
@@ -77,17 +89,19 @@ export interface RestoredServer {
  * What a server does as its sandbox is restored from a save of `savedAtMs`:
  * it refuses the restore, by throwing, where the state directory has moved on
  * since the save, and then does nothing else of it, as the restore fails.
- * Otherwise it tells each live session's next exec how it came back, and
+ * Otherwise it tells each live session's next exec how it came back, and why
+ * the sandbox stopped where its host said (`stopReason`), and
  * installs the toolbelt again where the save caught it installing, even when
  * telling the sessions fails.
  */
 export function restoreSandboxServer(
   { manager, toolbelt }: RestoredServer,
   savedAtMs: number,
+  stopReason?: string,
 ): void {
   manager.assertSandboxRestorable();
   try {
-    manager.sandboxRestored(savedAtMs);
+    manager.sandboxRestored(savedAtMs, stopReason);
   } finally {
     toolbelt?.restored();
   }
@@ -95,8 +109,9 @@ export function restoreSandboxServer(
 
 // A Unix socket's path is at most this many bytes long.
 const MAX_SOCKET_PATH_BYTES = 107;
-// The longest request the hook sends: its mode, and a newline.
-const MAX_REQUEST_BYTES = 16;
+// The longest request the hook sends: its mode, a restore's reason the
+// sandbox stopped after a space, and a newline.
+const MAX_REQUEST_BYTES = 16 + MAX_STOP_REASON_BYTES;
 // The hook sends its request as soon as it connects: a connection that has
 // sent none within this long is closed.
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -118,6 +133,39 @@ export function parseSandboxHookMode(
       `the sandbox hook's mode must be ${SANDBOX_HOOK_MODES.join(", ")}, not ${value ?? "none"}`,
     );
   return value as SandboxHookMode;
+}
+
+/**
+ * The mode a request to the server names, and the reason the sandbox stopped
+ * it names after a space, where it names one (parseSandboxStopReason).
+ */
+export function parseSandboxHookRequest(
+  request: string,
+): [SandboxHookMode, string | undefined] {
+  const space = request.indexOf(" ");
+  if (space === -1) return [parseSandboxHookMode(request), undefined];
+  return [
+    parseSandboxHookMode(request.slice(0, space)),
+    parseSandboxStopReason(request.slice(space + 1)),
+  ];
+}
+
+/**
+ * The reason a host gave why it stopped the sandbox, as the hook sends it
+ * and the server takes it: none where it gave none, or an empty one, and
+ * refused where it is not one line of at most MAX_STOP_REASON_BYTES.
+ */
+export function parseSandboxStopReason(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (/[\r\n]/u.test(value))
+    throw new Error("the reason the sandbox stopped must be one line");
+  if (Buffer.byteLength(value) > MAX_STOP_REASON_BYTES)
+    throw new Error(
+      `the reason the sandbox stopped must be at most ${MAX_STOP_REASON_BYTES} bytes`,
+    );
+  return value;
 }
 
 /**
@@ -170,7 +218,12 @@ export async function serveSandboxHook(
     }
   };
   // What each mode answers, past its "ok": a save, what it caught.
-  const handle = async (mode: SandboxHookMode): Promise<string | undefined> => {
+  const handle = async (
+    mode: SandboxHookMode,
+    stopReason: string | undefined,
+  ): Promise<string | undefined> => {
+    if (stopReason !== undefined && mode !== "restore")
+      throw new Error(`a ${mode} is told no reason the sandbox stopped`);
     switch (mode) {
       case "save": {
         markSandboxSaved();
@@ -212,7 +265,7 @@ export async function serveSandboxHook(
               "bayma.sandbox.saved.duration":
                 (Date.now() - restoredFrom) / 1000,
             },
-            () => handlers.restore(restoredFrom),
+            () => handlers.restore(restoredFrom, stopReason),
           );
         } catch (error) {
           // Restored from a save its state directory has moved on from, the
@@ -273,7 +326,7 @@ export async function serveSandboxHook(
       // What the mode takes may take longer than a request may.
       sendsNothing.clear();
       queue(() =>
-        handle(parseSandboxHookMode(request.subarray(0, end).toString())),
+        handle(...parseSandboxHookRequest(request.subarray(0, end).toString())),
       ).then(
         (answer) =>
           socket.end(answer === undefined ? "ok\n" : `ok ${answer}\n`),
@@ -307,20 +360,24 @@ export async function serveSandboxHook(
 }
 
 /**
- * Tells the server of `stateDir` that its sandbox is at `mode`, and waits
- * for it to have done what that takes: what it answers, a save what it
+ * Tells the server of `stateDir` that its sandbox is at `mode`, a restore
+ * with why its host stopped the sandbox where it says (`stopReason`), and
+ * waits for it to have done what that takes: what it answers, a save what it
  * caught, as JSON (SandboxSave), the others nothing. Throws what it could
  * not do.
  */
 export async function runSandboxHook(
   stateDir: string,
   mode: SandboxHookMode,
+  stopReason?: string,
 ): Promise<string | undefined> {
+  const reason = parseSandboxStopReason(stopReason);
+  const request = reason === undefined ? `${mode}\n` : `${mode} ${reason}\n`;
   // The server's state directory is where its lease resolved it to.
   const path = sandboxHookSocket(realpathSync(resolve(stateDir)));
   const answer = await new Promise<string>((resolveAnswer, rejectAnswer) => {
     let received = "";
-    const socket = net.connect(path, () => socket.write(`${mode}\n`));
+    const socket = net.connect(path, () => socket.write(request));
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
       received += chunk;

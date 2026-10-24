@@ -15,6 +15,7 @@ import {
   parseSandboxHookMode,
   runSandboxHook,
   SANDBOX_HOOK_MODE_VARIABLE,
+  SANDBOX_STOP_REASON_VARIABLE,
 } from "./mcp/sandbox-hook.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
 import { defaultStateDir } from "./paths.ts";
@@ -185,11 +186,13 @@ Commands:
       sessionId, execId), which the state directory's last-save.json says
       too. A restore reads the token file again, starts clients' reconnect
       grace and idle timeouts again, tells each live session's next exec
-      how it came back, and starts over the toolbelt's install that the
-      save paused. A host whose save fails runs resume, and a save neither
-      follows within ten minutes is given up on. A gVisor sandbox's file
-      locks hold within it alone, so such a host runs one server per state
-      directory.
+      how it came back, and why the sandbox was stopped where
+      BAYMA_SANDBOX_STOP_REASON says, as the end of a sentence ("it ran
+      out of its memory (4Gi)"), and starts over the toolbelt's install
+      that the save paused. A host whose save fails runs resume, and a
+      save neither follows within ten minutes is given up on. A gVisor
+      sandbox's file locks hold within it alone, so such a host runs one
+      server per state directory.
       The state generation, in the state directory's generation.json as
       { "schemaVersion": 1, "generation": N }, is moved on, on the disk,
       before the server persists any change or tells a client of one as
@@ -385,9 +388,15 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         throw new Error("sandbox-hook needs --state-dir, its server's");
       // The server records what the hook sets off; this process only asks
       // it to, so it exports no telemetry of its own.
+      const mode = parseSandboxHookMode(
+        named ?? process.env[SANDBOX_HOOK_MODE_VARIABLE],
+      );
       const caught = await runSandboxHook(
         stateDir,
-        parseSandboxHookMode(named ?? process.env[SANDBOX_HOOK_MODE_VARIABLE]),
+        mode,
+        mode === "restore"
+          ? process.env[SANDBOX_STOP_REASON_VARIABLE]
+          : undefined,
       );
       if (caught !== undefined) console.log(caught);
       return;

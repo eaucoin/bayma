@@ -1386,16 +1386,18 @@ export class SessionManager {
 
   /**
    * Tells each live session it came back whole with the sandbox bayma runs
-   * in, restored from a snapshot taken at `snapshotAtMs`: through the exec it
+   * in, restored from a snapshot taken at `snapshotAtMs`, stopped before as
+   * `stopReason` says, where its host said why: through the exec it
    * is running or runs next, which a client still waits on, or else the next
    * it runs. A restore after one told of earlier tells of itself instead; a
    * session told it came back from its checkpoint, or its process snapshot,
    * keeps what it was told.
    */
-  sandboxRestored(snapshotAtMs: number): void {
+  sandboxRestored(snapshotAtMs: number, stopReason?: string): void {
     const notice: ExecNotice = {
       returnedFrom: "sandbox_snapshot",
       snapshotAtMs,
+      ...(stopReason === undefined ? {} : { stopReason }),
     };
     const failures: unknown[] = [];
     for (const session of this.sessions.values()) {

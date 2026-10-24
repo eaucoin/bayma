@@ -26,8 +26,14 @@ async function answeredWithin(
   return Promise.race([response.then(() => true), sleep(ms).then(() => false)]);
 }
 
-async function hook(stateDir: string, mode: string): Promise<void> {
-  expect(await runSandboxHookCommand(stateDir, mode)).toEqual({
+async function hook(
+  stateDir: string,
+  mode: string,
+  env: Readonly<Record<string, string>> = {},
+): Promise<void> {
+  expect(
+    await runSandboxHookCommand(stateDir, mode, "environment", env),
+  ).toEqual({
     status: 0,
     stderr: "",
   });
@@ -223,7 +229,7 @@ test(
 );
 
 test(
-  "a session's exec running at the save, and the next exec of one idle, are told of the restore",
+  "a session's exec running at the save, and the next exec of one idle, are told of the restore, and of why its host stopped the sandbox",
   async () => {
     const server = await launchMcpHttpServer();
     const client = await server.spawnClient();
@@ -250,12 +256,14 @@ test(
 
       const savedAtMs = Date.now();
       await hook(server.stateDir, "save");
-      await hook(server.stateDir, "restore");
+      await hook(server.stateDir, "restore", {
+        BAYMA_SANDBOX_STOP_REASON: "it ran out of its memory (4Gi)",
+      });
       writeFileSync(flag, "");
 
       const told = (snapshot: { notice?: string }) =>
         snapshot.notice?.match(
-          /^bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at (\S+); its live state is as it was then, but its network connections were closed\.$/,
+          /^bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at (\S+), after the sandbox was stopped as it ran out of its memory \(4Gi\); its live state is as it was then, so what ran in it since is gone, but its network connections were closed\.$/,
         )?.[1];
       const finished = await client.callTool<{
         done: boolean;

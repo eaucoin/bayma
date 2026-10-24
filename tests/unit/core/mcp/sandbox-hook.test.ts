@@ -58,8 +58,10 @@ function recording(): { calls: string[]; handlers: SandboxHookHandlers } {
         calls.push(`save, ${saved()}`);
         return CAUGHT;
       },
-      restore: async (savedAtMs) => {
-        calls.push(`restore from ${typeof savedAtMs}, ${saved()}`);
+      restore: async (savedAtMs, stopReason) => {
+        calls.push(
+          `restore from ${typeof savedAtMs}${stopReason === undefined ? "" : `, stopped as ${stopReason}`}, ${saved()}`,
+        );
       },
     },
   };
@@ -229,22 +231,68 @@ test("a second save is given up on only once it, too, is followed by nothing", a
   });
 });
 
-test("the hook's server answers no request longer than a mode", async () => {
+test("the hook's server answers no request longer than a mode and a restore's reason", async () => {
   await withHookDir(async (dir) => {
     const { calls, handlers } = recording();
     const stop = await serveSandboxHook(dir, handlers);
     try {
-      expect(await ask(dir, "s".repeat(64))).toBe(
+      expect(await ask(dir, "s".repeat(300))).toBe(
         "the sandbox hook's request is too long\n",
       );
-      // Ten characters, nineteen bytes with the newline.
-      expect(await ask(dir, `${"é".repeat(9)}\n`)).toBe(
+      // 141 characters, 273 bytes with the newline.
+      expect(await ask(dir, `restore ${"é".repeat(132)}\n`)).toBe(
         "the sandbox hook's request is too long\n",
       );
       expect(await ask(dir, "checkpoint\n")).toBe(
         "the sandbox hook's mode must be save, restore, resume, stop, not checkpoint\n",
       );
       expect(calls).toEqual([]);
+    } finally {
+      await stop();
+    }
+  });
+});
+
+test("a restore passes on why its host stopped the sandbox, which no other mode is told, and which the hook and the server both take as one line of at most 256 bytes, an empty one as none", async () => {
+  await withHookDir(async (dir) => {
+    const { calls, handlers } = recording();
+    const stop = await serveSandboxHook(dir, handlers);
+    try {
+      await runSandboxHook(dir, "save");
+      expect(
+        await runSandboxHook(dir, "restore", "it ran out of its memory (4Gi)"),
+      ).toBeUndefined();
+      // None, as a host that says nothing gives an empty variable, and as a
+      // request with nothing after its space says.
+      await runSandboxHook(dir, "save");
+      await runSandboxHook(dir, "restore", "");
+      await runSandboxHook(dir, "save");
+      expect(await ask(dir, "restore \n")).toBe("ok\n");
+      expect(calls).toEqual([
+        "save, saved",
+        "restore from number, stopped as it ran out of its memory (4Gi), saved",
+        "save, saved",
+        "restore from number, saved",
+        "save, saved",
+        "restore from number, saved",
+      ]);
+      expect(await ask(dir, "resume as it was stopped\n")).toBe(
+        "a resume is told no reason the sandbox stopped\n",
+      );
+      await expect(
+        runSandboxHook(dir, "restore", "it ran out\nof its memory"),
+      ).rejects.toThrow("the reason the sandbox stopped must be one line");
+      await expect(
+        runSandboxHook(dir, "restore", "é".repeat(129)),
+      ).rejects.toThrow(
+        "the reason the sandbox stopped must be at most 256 bytes",
+      );
+      // Sent to the server as is, past what the hook refuses.
+      await runSandboxHook(dir, "save");
+      expect(await ask(dir, `restore ${"é".repeat(129)}\n`)).toBe(
+        "the reason the sandbox stopped must be at most 256 bytes\n",
+      );
+      expect(calls).toHaveLength(7);
     } finally {
       await stop();
     }
@@ -362,8 +410,10 @@ test("a restored server tells its sessions, then installs the toolbelt again, ev
         calls.push("fence");
         if (refuses) throw new Error("the state directory has moved on");
       },
-      sandboxRestored: (savedAtMs: number) => {
-        calls.push(`sessions told of ${savedAtMs}`);
+      sandboxRestored: (savedAtMs: number, stopReason?: string) => {
+        calls.push(
+          `sessions told of ${savedAtMs}${stopReason === undefined ? "" : `, stopped as ${stopReason}`}`,
+        );
         if (fails) throw new Error("the notices were not persisted");
       },
     },
@@ -372,6 +422,16 @@ test("a restored server tells its sessions, then installs the toolbelt again, ev
 
   restoreSandboxServer(server(false, false), 7);
   expect(calls.splice(0)).toEqual(["fence", "sessions told of 7", "toolbelt"]);
+  restoreSandboxServer(
+    server(false, false),
+    7,
+    "it ran out of its memory (4Gi)",
+  );
+  expect(calls.splice(0)).toEqual([
+    "fence",
+    "sessions told of 7, stopped as it ran out of its memory (4Gi)",
+    "toolbelt",
+  ]);
   expect(() => restoreSandboxServer(server(false, true), 7)).toThrow(
     "the notices were not persisted",
   );

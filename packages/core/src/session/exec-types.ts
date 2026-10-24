@@ -72,6 +72,11 @@ export interface ExecNotice {
   /** When the sandbox's snapshot was taken, if bayma knows, for `sandbox_snapshot`. */
   snapshotAtMs?: number;
   /**
+   * For `sandbox_snapshot`, why the sandbox was stopped before it was
+   * restored, as its host said it, where it said.
+   */
+  stopReason?: string;
+  /**
    * For `memory_budget`, a host started again as it came to hold more of its
    * own than the server's runtime memory budget past what it held as it
    * started: how much more, the budget, what the runtime keeps of each cell

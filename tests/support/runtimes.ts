@@ -47,12 +47,14 @@ export function launchSpec(): LaunchSpec {
 /**
  * Runs `bayma sandbox-hook` for the server of `stateDir`, unless none is
  * named, as gVisor runs it, with its mode in the environment, or else named
- * first. Returns how it exited, and its stderr.
+ * first, and the variables `env` beside. Returns how it exited, and its
+ * stderr.
  */
 export async function runSandboxHookCommand(
   stateDir: string | undefined,
   mode: string,
   modeIn: "environment" | "arguments" = "environment",
+  env: Readonly<Record<string, string>> = {},
 ): Promise<{ status: number; stderr: string }> {
   const launch = launchSpec();
   const child = Bun.spawn(
@@ -66,8 +68,8 @@ export async function runSandboxHookCommand(
     {
       env:
         modeIn === "environment"
-          ? { ...process.env, GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE: mode }
-          : process.env,
+          ? { ...process.env, ...env, GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE: mode }
+          : { ...process.env, ...env },
       stdout: "ignore",
       stderr: "pipe",
     },

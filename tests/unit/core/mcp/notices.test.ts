@@ -65,6 +65,21 @@ test("a notice opens a snapshot's text, which is the notice alone without output
   );
 });
 
+test("a sandbox's restore is told with when its snapshot was taken, and why its host stopped the sandbox where it said", () => {
+  const notice = { returnedFrom: "sandbox_snapshot", snapshotAtMs: 0 } as const;
+  expect(describeExecNotice(notice)).toBe(
+    "bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at 1970-01-01T00:00:00.000Z; its live state is as it was then, but its network connections were closed.",
+  );
+  expect(
+    describeExecNotice({
+      ...notice,
+      stopReason: "it ran out of its memory (4Gi)",
+    }),
+  ).toBe(
+    "bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at 1970-01-01T00:00:00.000Z, after the sandbox was stopped as it ran out of its memory (4Gi); its live state is as it was then, so what ran in it since is gone, but its network connections were closed.",
+  );
+});
+
 test("exec tells the model how its session came back, once", async () => {
   await withTempDir(async (dir) => {
     const stopped = managerFor(dir, new SnapshottingTransport());

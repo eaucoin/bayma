@@ -183,7 +183,11 @@ export function describeExecNotice(notice: ExecNotice): string {
         notice.snapshotAtMs === undefined
           ? ""
           : ` taken at ${new Date(notice.snapshotAtMs).toISOString()}`
-      }; its live state is as it was then, but its network connections were closed.`;
+      }${
+        notice.stopReason === undefined
+          ? "; its live state is as it was then"
+          : `, after the sandbox was stopped as ${notice.stopReason}; its live state is as it was then, so what ran in it since is gone`
+      }, but its network connections were closed.`;
     case "memory_budget": {
       const memory = notice.memory;
       const mib = (bytes: number) => `${Math.round(bytes / 1024 ** 2)} MiB`;
