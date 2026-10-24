@@ -106,14 +106,15 @@ async function entrypointFrom(pid: number): Promise<string[]> {
 
 /**
  * Serve MCP from a fresh container, its server's first process at
- * `firstPid` if given. Closing the client ends the server, which snapshots
- * its idle REPL sessions on the way out; `stop` waits for the container to be
- * gone, as the next server would have to.
+ * `firstPid` if given, `docker run` given `docker` besides. Closing the
+ * client ends the server, which snapshots its idle REPL sessions on the way
+ * out; `stop` waits for the container to be gone, as the next server would
+ * have to.
  */
 async function serve(
   home: string,
   stateDir: string,
-  firstPid?: number,
+  { firstPid, docker = [] }: { firstPid?: number; docker?: string[] } = {},
 ): Promise<{ client: McpStdioClient; stop: () => Promise<void> }> {
   const name = `bayma-e2e-${process.pid}-${Date.now()}`;
   const client = await McpStdioClient.launch(
@@ -127,6 +128,7 @@ async function serve(
         name,
         ...userFlags(home),
         ...SNAPSHOT_FLAGS,
+        ...docker,
         ...(firstPid === undefined ? [IMAGE] : await entrypointFrom(firstPid)),
       ],
       binaryLabel: "bayma image",
@@ -354,11 +356,9 @@ test.serial(
       // The next server starts at the tree's root, so far as a container's
       // first processes reach: its own threads, which start before it can
       // reserve any PID, take those a tree started that low needs.
-      const second = await serve(
-        home,
-        stateDir,
-        Math.min(pid, CONTAINER_START_PIDS),
-      );
+      const second = await serve(home, stateDir, {
+        firstPid: Math.min(pid, CONTAINER_START_PIDS),
+      });
       try {
         await second.client.callTool("session.acquire_controller", {
           session_id: sessionId,
@@ -459,6 +459,85 @@ test.serial(
         expect(read.result_text?.trim()).toBe("(False, 42)");
         await second.client.callTool("session.close", {
           session_id: sessionId,
+        });
+      } finally {
+        await second.stop();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+test.serial(
+  "a REPL session's runtime the kernel kills for its memory, started fresh or restored from its process snapshot, is said to have run out of its container's",
+  async () => {
+    const { home, stateDir } = makeHome();
+    // Its container limited, as a pod is, below what the runtime comes to
+    // hold, with no swap to hold it in instead.
+    const limited = ["--memory", "768m", "--memory-swap", "768m"];
+    const hog =
+      "held = bytearray(1024 << 20)\nfor at in range(0, len(held), 4096): held[at] = 1";
+    // The exec ends in error saying why, and how what ran it ended: the
+    // runtime, of the kernel's SIGKILL; CRIU, which ran a restored one, of
+    // itself, as its tree did. Its session, quarantined, runs no more.
+    const killed = (snapshot: ExecSnapshot, ended: string) => ({
+      status: snapshot.status,
+      killed: snapshot.error_text?.includes(
+        `ran out of its memory (768Mi) and was killed by the kernel ${ended}`,
+      ),
+      snapshot,
+    });
+
+    const python = async (client: McpStdioClient, title: string) =>
+      (
+        await client.callTool<{ session: { session_id: string } }>(
+          "session.create",
+          { runtime: "python", title, cwd: home },
+        )
+      ).session.session_id;
+    try {
+      let restored: string;
+      const first = await serve(home, stateDir, { docker: limited });
+      try {
+        // A runtime started fresh.
+        const fresh = await python(first.client, "fresh");
+        expect(
+          killed(
+            await execSettled(first.client, fresh, hog),
+            "(code=null, signal=SIGKILL)",
+          ),
+        ).toMatchObject({ status: "error", killed: true });
+        await first.client.callTool("session.close", { session_id: fresh });
+        // One that holds what the stop snapshots, for the next server to restore.
+        restored = await python(first.client, "restored");
+        const defined = await execSettled(
+          first.client,
+          restored,
+          "marker = 41",
+        );
+        expect(defined.status).toBe("ok");
+      } finally {
+        await first.stop();
+      }
+
+      // Restored by CRIU, which runs it, from its process snapshot.
+      const second = await serve(home, stateDir, { docker: limited });
+      try {
+        await second.client.callTool("session.acquire_controller", {
+          session_id: restored,
+        });
+        const read = await execSettled(second.client, restored, "marker + 1");
+        expect(read.result_text?.trim()).toBe("42");
+        expect(
+          killed(
+            await execSettled(second.client, restored, hog),
+            "(code=0, signal=none)",
+          ),
+        ).toMatchObject({ status: "error", killed: true });
+        await second.client.callTool("session.close", {
+          session_id: restored,
         });
       } finally {
         await second.stop();

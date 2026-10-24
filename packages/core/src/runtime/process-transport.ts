@@ -5,6 +5,7 @@ import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure, failureMessage } from "../errors.ts";
+import { ranOutOf, watchMemoryKills } from "./memory-kills.ts";
 import { runningTimeout, type RunningTimeout } from "../sandbox.ts";
 import { report } from "../telemetry/record.ts";
 import {
@@ -75,6 +76,11 @@ interface BrokerState {
   waiters: Set<PromptWaiter>;
   readinessWaiters: Set<ReadinessWaiter>;
   interrupting: boolean;
+  /**
+   * Whether the server sent the session SIGKILL itself, as a termination
+   * does: such a death is never taken for a kill for memory.
+   */
+  killedByServer: boolean;
   terminalError?: Error;
 }
 
@@ -109,6 +115,11 @@ export interface ProcessTransportConfig {
    * (RuntimeTransport.endedHostFiles).
    */
   endedHostFiles?(scratchDir: string, pid: number): string[];
+  /**
+   * Where the cgroup the server runs in is, which tells a runtime the kernel
+   * killed for its memory (./memory-kills.ts): CGROUP_DIR unless given.
+   */
+  cgroupDir?: string;
 }
 
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -356,7 +367,8 @@ export class ProcessTransport implements RuntimeTransport {
   /**
    * Start `file` for a session, leading a process group of its own, so the
    * session's processes are one tree, signalled and snapshotted together;
-   * with `recordStdio`, noting the stdio it starts with.
+   * with `recordStdio`, noting the stdio it starts with; `restoring`, as CRIU
+   * restoring the session's tree, which it waits on and exits as it does.
    */
   private launch(
     input: StartSessionInput,
@@ -364,8 +376,12 @@ export class ProcessTransport implements RuntimeTransport {
     args: string[],
     env: NodeJS.ProcessEnv,
     recordStdio = false,
+    restoring = false,
   ): BrokerState {
     const options = { cwd: input.cwd, env, detached: true };
+    // Counted as it starts, so no kill before it started is taken for its own
+    // (./memory-kills.ts says what the count cannot tell apart).
+    const killedForMemory = watchMemoryKills(this.config.cgroupDir);
     const child = (
       recordStdio
         ? spawn("/bin/sh", ["-c", RECORD_STDIO, file, ...args], {
@@ -398,6 +414,7 @@ export class ProcessTransport implements RuntimeTransport {
       waiters: new Set(),
       readinessWaiters: new Set(),
       interrupting: false,
+      killedByServer: false,
     };
 
     const onData = (chunk: Buffer, scanControlOutput: boolean) => {
@@ -529,9 +546,19 @@ export class ProcessTransport implements RuntimeTransport {
     // diagnostics must not decode an incomplete final UTF-8 scalar merely
     // because the OS reported process termination before Node drained pipes.
     child.on("close", (code, signal) => {
+      // Killed by the kernel for its memory, the server living on, it says so;
+      // killed by the server itself, never. CRIU exits 0 as the tree it
+      // restored is killed, so of a restored session any end is looked at.
+      const kill =
+        !state.killedByServer && (signal === "SIGKILL" || restoring)
+          ? killedForMemory()
+          : null;
+      const how = kill
+        ? `${ranOutOf(kill)} and was killed by the kernel`
+        : "exited unexpectedly";
       notifyExit(
         new Error(
-          `transport session ${input.sessionId} exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "none"})`,
+          `transport session ${input.sessionId} ${how} (code=${code ?? "null"}, signal=${signal ?? "none"})`,
         ),
       );
     });
@@ -603,7 +630,14 @@ export class ProcessTransport implements RuntimeTransport {
       );
     let state: BrokerState;
     try {
-      state = this.launch(input, command.file, command.args, process.env);
+      state = this.launch(
+        input,
+        command.file,
+        command.args,
+        process.env,
+        false,
+        true,
+      );
     } catch (error) {
       // Node throws the spawn errors it does not expect, EPERM among them,
       // rather than emitting them.
@@ -823,7 +857,10 @@ export class ProcessTransport implements RuntimeTransport {
       // Whatever the session started goes with it.
       this.signal(state, "SIGKILL");
       // A restored session's CRIU exits once its tree has; it goes too.
-      if (!childHasExited(state.child)) state.child.kill("SIGKILL");
+      if (!childHasExited(state.child)) {
+        state.killedByServer = true;
+        state.child.kill("SIGKILL");
+      }
       if (!childHasExited(state.child)) {
         await waitForChildExit(state.child, FORCED_TERMINATION_TIMEOUT_MS);
       }
@@ -866,6 +903,7 @@ export class ProcessTransport implements RuntimeTransport {
   /** Signal the session's process group, which its runtime leads. */
   private signal(state: BrokerState, signal: NodeJS.Signals): void {
     if (state.pid <= 0) return;
+    if (signal === "SIGKILL") state.killedByServer = true;
     try {
       process.kill(-state.pid, signal);
     } catch (error) {

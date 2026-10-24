@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { chmodSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -939,4 +939,118 @@ test("exit diagnostics preserve UTF-8 split across stdout chunks", async () => {
     "€",
   );
   await transport.terminate(handle);
+});
+
+test("a runtime the kernel kills for its memory, as the server's cgroup counts a kill since it started, says so, with the cgroup's limit where it has one; one killed otherwise, or under a cgroup it cannot read, as it was", async () => {
+  await withTempDir(async (root) => {
+    // Cgroups of the test's own, limited and not, each counting two kills.
+    const limited = join(root, "limited");
+    const unlimited = join(root, "unlimited");
+    for (const [dir, max] of [
+      [limited, String(1536 * 2 ** 20)],
+      [unlimited, "max"],
+    ] as const) {
+      mkdirSync(dir);
+      writeFileSync(join(dir, "memory.events"), "oom 0\noom_kill 2\n");
+      writeFileSync(join(dir, "memory.max"), `${max}\n`);
+    }
+    // A runtime that counts its cgroup's kills at `kills`, then is killed.
+    const killed = async (
+      sessionId: string,
+      cgroupDir: string,
+      kills: number,
+    ) => {
+      const transport = new ProcessTransport({
+        platformId: "test",
+        promptRe: /(?:^|[\r\n])READY> /g,
+        startupTimeoutMs: 2_000,
+        command: () => ({
+          file: "/bin/sh",
+          args: [
+            "-c",
+            `printf 'oom 1\\noom_kill ${kills}\\n' > '${join(cgroupDir, "memory.events")}' 2>/dev/null; kill -9 $$`,
+          ],
+        }),
+        snapshots: false,
+        cgroupDir,
+      });
+      const handle = await transport.startSession({
+        sessionId,
+        title: "killed",
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+        scratchDir: tmpdir(),
+      });
+      try {
+        return await transport.waitForInitialPrompt(handle).then(
+          () => "it prompted",
+          (error: unknown) => (error as Error).message,
+        );
+      } finally {
+        await transport.shutdown();
+      }
+    };
+    expect(await killed("sess_oom", limited, 3)).toContain(
+      "transport session sess_oom ran out of its memory (1536Mi) and was killed by the kernel (code=null, signal=SIGKILL)",
+    );
+    // No kill counted since it started.
+    expect(await killed("sess_killed", limited, 3)).toContain(
+      "transport session sess_killed exited unexpectedly (code=null, signal=SIGKILL)",
+    );
+    expect(await killed("sess_free", unlimited, 3)).toContain(
+      "transport session sess_free ran out of memory and was killed by the kernel",
+    );
+    // Under cgroup v1, or none: nothing said of memory.
+    expect(await killed("sess_unread", join(root, "none"), 3)).toContain(
+      "transport session sess_unread exited unexpectedly (code=null, signal=SIGKILL)",
+    );
+  });
+});
+
+test("a runtime the server kills itself, as its termination kills one that holds out against SIGTERM, is never taken for one killed for its memory, however the cgroup counted", async () => {
+  await withTempDir(async (dir) => {
+    const events = join(dir, "memory.events");
+    writeFileSync(events, "oom 0\noom_kill 2\n");
+    writeFileSync(join(dir, "memory.max"), `${1536 * 2 ** 20}\n`);
+    const transport = new ProcessTransport({
+      platformId: "test",
+      promptRe: /(?:^|[\r\n])READY> /g,
+      startupTimeoutMs: 2_000,
+      command: () => ({
+        file: "/bin/sh",
+        // Another process of the cgroup killed for its memory meanwhile.
+        args: [
+          "-c",
+          `trap '' TERM; printf 'oom 1\\noom_kill 3\\n' > '${events}'; printf 'READY> '; while :; do sleep 1; done`,
+        ],
+      }),
+      snapshots: false,
+      cgroupDir: dir,
+    });
+    const handle = await transport.startSession({
+      sessionId: "sess_terminated",
+      title: "terminated",
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      scratchDir: tmpdir(),
+    });
+    try {
+      await transport.waitForInitialPrompt(handle);
+      const ended = new Promise<string>((resolve) => {
+        void transport.subscribe(
+          handle,
+          () => undefined,
+          (error) => resolve(error.message),
+        );
+      });
+      await transport.terminate(handle);
+      expect(await ended).toContain(
+        "transport session sess_terminated exited unexpectedly (code=null, signal=SIGKILL)",
+      );
+    } finally {
+      await transport.shutdown();
+    }
+  });
 });
