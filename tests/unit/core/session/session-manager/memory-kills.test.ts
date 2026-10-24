@@ -96,6 +96,19 @@ async function settle(): Promise<void> {
   for (let tick = 0; tick < 20; tick += 1) await Bun.sleep(0);
 }
 
+/**
+ * Waits for the session's runtime started again to be live, so subscribed to
+ * its end: one ended before is ended unheard.
+ */
+async function liveAgain(manager: SessionManager, sessionId: string) {
+  // By ticks, as a test's clocks may be held still.
+  for (let tick = 0; tick < 5_000; tick += 1) {
+    if (manager.detail(sessionId).status === "live_idle") return;
+    await Bun.sleep(1);
+  }
+  throw new Error(`session ${sessionId} was not live again in time`);
+}
+
 /** How a transport tells a runtime the kernel killed for its memory, as a container's cgroup of 768Mi counts it. */
 function killed(sessionId: string): RuntimeMemoryKilled {
   return new RuntimeMemoryKilled(
@@ -203,16 +216,15 @@ test("a runtime the kernel kills for its memory again within MEMORY_KILLS_APART_
     const wall = spyOn(Date, "now").mockImplementation(() => wallMs);
     try {
       setup.transport.exit(sessionId, killed(sessionId));
-      await settle();
+      await liveAgain(setup.manager, sessionId);
       expect(setup.transport.starts).toBe(2);
 
       // Past the bound, the wall clock set back meanwhile: it comes back again.
       monotonicMs += MEMORY_KILLS_APART_MS;
       wallMs -= 3_600_000;
       setup.transport.exit(sessionId, killed(sessionId));
-      await settle();
+      await liveAgain(setup.manager, sessionId);
       expect(setup.transport.starts).toBe(3);
-      expect(setup.manager.detail(sessionId).status).not.toBe("quarantined");
 
       // Within it, the wall clock set forth an hour meanwhile: it does not.
       monotonicMs += MEMORY_KILLS_APART_MS - 1;
