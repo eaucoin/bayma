@@ -243,6 +243,8 @@ export interface McpHttpServerOptions {
   stateDir?: string;
   defaultDurability?: "ephemeral" | "checkpointed";
   clientIdleTimeoutMs?: number;
+  /** Serve with --client-ping-ms. */
+  clientPingMs?: number;
   /** Serve with --token-file, a file holding this token. */
   bearerToken?: string;
   /** Serve with --telemetry-token-file naming the token's file too. */
@@ -303,6 +305,9 @@ export async function launchMcpHttpServer(
       ...(options.clientIdleTimeoutMs === undefined
         ? []
         : ["--client-idle-timeout-ms", String(options.clientIdleTimeoutMs)]),
+      ...(options.clientPingMs === undefined
+        ? []
+        : ["--client-ping-ms", String(options.clientPingMs)]),
       ...(options.bearerToken === undefined ? [] : ["--token-file", tokenFile]),
       ...(options.telemetryToken ? ["--telemetry-token-file", tokenFile] : []),
       ...(options.stopWaitMs === undefined

@@ -53,6 +53,11 @@ export interface McpHttpConfig extends Pick<
   /** How long a client session with no request or stream open stays open. */
   clientIdleTimeoutMs: number;
   /**
+   * How often a client holding a stream open is pinged, and how long it has
+   * to answer before its MCP session is closed: CLIENT_PING_MS unless given.
+   */
+  clientPingMs?: number;
+  /**
    * When given, every request must carry the token this file holds as
    * `Authorization: Bearer`. The file is read as the server starts, and
    * again as its sandbox is restored, for a restored server to answer its
@@ -74,6 +79,8 @@ interface HttpClientSession {
   updates: SubscribedResourceUpdatePublisher;
   /** Count this response as the client's open connection until it ends. */
   track: (response: http.ServerResponse) => void;
+  /** Count this response as the client's stream of the server's messages, which it is pinged on, until it ends. */
+  trackStream: (response: http.ServerResponse) => void;
   /** Whether the client has a connection open, or had one a moment ago. */
   live: () => boolean;
   /** How long until a client with no connection open is no longer live; 0 when it has one. */
@@ -94,6 +101,19 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // after that, its controller leases can be taken over, as when its process
 // was replaced or its connections were lost to a sandbox's restore.
 const CLIENT_RECONNECT_GRACE_MS = 10_000;
+// A client's stream open counts as the client alive only while the client
+// answers: one whose process went on holding it but no longer reads it, as a
+// client does that took up a new MCP session without ending the old, or whose
+// connection is held open by a proxy past the client's end, would hold its
+// controller leases for ever. So a client holding a stream open is pinged on
+// it this often, and its MCP session closed, its leases with it, where it
+// has not answered in as long again: within twice this of its going. A ping
+// whose stream ends before its answer, as a proxy's recycling, a dropped
+// connection or a restore ends it, counts for nothing, and the next stream
+// is pinged anew. An answer that came during a stall of the server's event
+// loop is read before the timeout's end is (runningTimeout), so a stall
+// alone closes no client that answered.
+const CLIENT_PING_MS = 30_000;
 const HTTP_ACTOR_ID_PREFIX = "actor_mcp_http_";
 // The longest a request waits for a saved server to run on, of the time it
 // runs: long enough for a restored sandbox's hook to reach it.
@@ -225,6 +245,16 @@ export async function serveMcpHttp(
   ) {
     throw new Error(
       `MCP HTTP client idle timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`,
+    );
+  }
+  const clientPingMs = config.clientPingMs ?? CLIENT_PING_MS;
+  if (
+    !Number.isSafeInteger(clientPingMs) ||
+    clientPingMs < 1 ||
+    clientPingMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new Error(
+      `MCP HTTP client ping interval must be an integer between 1 and ${MAX_TIMER_DELAY_MS} ms`,
     );
   }
   const stopWaitMs = config.stopWaitMs ?? 0;
@@ -386,6 +416,7 @@ export async function serveMcpHttp(
         ): Promise<void> => {
           if (!closingSessionId) return Promise.resolve();
           idleTimer?.clear();
+          pingTimer?.clear();
           cleanupPromise ??= (async () => {
             sessions.delete(closingSessionId);
             await manager.releaseActor(actorIdForSession(closingSessionId));
@@ -436,6 +467,58 @@ export async function serveMcpHttp(
             config.clientIdleTimeoutMs,
           );
         };
+        // Pinged while it holds a stream open, on it, each answer timed by a
+        // timeout that, as every one of the server's, waits while it is saved.
+        let openStreams = 0;
+        let pingTimer: RunningTimeout | undefined;
+        // The ping out on the stream, until it is answered, given up on, or
+        // voided, as the stream's end voids it.
+        let outstanding: AbortController | undefined;
+        const pingLater = () => {
+          if (pingTimer || outstanding || openStreams === 0 || cleanupPromise)
+            return;
+          pingTimer = runningTimeout(() => {
+            pingTimer = undefined;
+            void ping();
+          }, clientPingMs);
+        };
+        const ping = async (): Promise<void> => {
+          const voided = new AbortController();
+          outstanding = voided;
+          const unanswered = new AbortController();
+          const answerTimer = runningTimeout(
+            () => unanswered.abort(),
+            clientPingMs,
+          );
+          try {
+            await application.server.server.request(
+              { method: "ping" },
+              {
+                signal: AbortSignal.any([unanswered.signal, voided.signal]),
+                timeout: MAX_TIMER_DELAY_MS,
+              },
+            );
+          } catch {
+            // An answer, even of an error, is the client's; none in time is
+            // not, and one whose stream ended first is no ping's.
+          } finally {
+            answerTimer.clear();
+            outstanding = undefined;
+          }
+          if (
+            unanswered.signal.aborted &&
+            !voided.signal.aborted &&
+            openStreams > 0 &&
+            !cleanupPromise
+          ) {
+            report(
+              `MCP HTTP client session ${transport.sessionId ?? "(uninitialized)"} answered no ping on its open stream within ${clientPingMs} ms: it is closed, and its controller leases with it`,
+            );
+            await closeIdleClientSession();
+            return;
+          }
+          pingLater();
+        };
         clientSession = {
           application,
           transport,
@@ -453,6 +536,18 @@ export async function serveMcpHttp(
               lastResponseEndedAtMs = Date.now();
               armIdleTimer();
             });
+          },
+          trackStream: (trackedResponse) => {
+            clientSession!.track(trackedResponse);
+            openStreams += 1;
+            finished(trackedResponse, () => {
+              openStreams -= 1;
+              outstanding?.abort();
+              if (openStreams > 0) return;
+              pingTimer?.clear();
+              pingTimer = undefined;
+            });
+            pingLater();
           },
           // A saved server's clients keep the grace they had, which starts
           // again once it runs on.
@@ -525,7 +620,8 @@ export async function serveMcpHttp(
           response.end("unknown MCP session");
           return;
         }
-        existing.track(response);
+        if (request.method === "GET") existing.trackStream(response);
+        else existing.track(response);
         await existing.transport.handleRequest(request, response);
         return;
       }

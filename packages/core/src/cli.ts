@@ -148,11 +148,13 @@ Commands:
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
       [--runtime-memory-budget-mb N]
-      [--client-idle-timeout-ms N] [--token-file PATH]
-      [--telemetry-token-file PATH] [--stop-wait-ms N]
+      [--client-idle-timeout-ms N] [--client-ping-ms N]
+      [--token-file PATH] [--telemetry-token-file PATH] [--stop-wait-ms N]
       serve MCP over Streamable HTTP; a client session with no request or
       stream open for the idle timeout, five minutes unless given, is
-      closed; with --token-file, every request must carry the file's
+      closed, as is one holding a stream open that answers no ping on it,
+      sent every --client-ping-ms, 30 seconds unless given, within as long
+      again; with --token-file, every request must carry the file's
       token as Authorization: Bearer, read again once its sandbox is
       restored, for its new host's token; with --telemetry-token-file,
       each export of its telemetry carries that file's token as its
@@ -345,6 +347,7 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
         "--port",
         "--path",
         "--client-idle-timeout-ms",
+        "--client-ping-ms",
         "--token-file",
         "--telemetry-token-file",
         "--stop-wait-ms",
@@ -369,6 +372,7 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
           clientIdleTimeoutMs: Number(
             option(parsed, "--client-idle-timeout-ms", "300000"),
           ),
+          clientPingMs: Number(option(parsed, "--client-ping-ms", "30000")),
           tokenFile: parsed.get("--token-file"),
           stopWaitMs: Number(option(parsed, "--stop-wait-ms", "0")),
           ...serverConfig(parsed),
