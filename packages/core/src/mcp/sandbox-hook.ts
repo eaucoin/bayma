@@ -153,17 +153,20 @@ export function parseSandboxHookRequest(
 /**
  * The reason a host gave why it stopped the sandbox, as the hook sends it
  * and the server takes it: none where it gave none, or an empty one, and
- * refused where it is not one line of at most MAX_STOP_REASON_BYTES.
+ * refused where it is not one line of at most MAX_STOP_REASON_BYTES, the
+ * refusal naming where it was given, `from`, where it says.
  */
 export function parseSandboxStopReason(
   value: string | undefined,
+  from?: string,
 ): string | undefined {
   if (value === undefined || value === "") return undefined;
+  const of = from === undefined ? "" : ` (${from})`;
   if (/[\r\n]/u.test(value))
-    throw new Error("the reason the sandbox stopped must be one line");
+    throw new Error(`the reason the sandbox stopped must be one line${of}`);
   if (Buffer.byteLength(value) > MAX_STOP_REASON_BYTES)
     throw new Error(
-      `the reason the sandbox stopped must be at most ${MAX_STOP_REASON_BYTES} bytes`,
+      `the reason the sandbox stopped must be at most ${MAX_STOP_REASON_BYTES} bytes${of}`,
     );
   return value;
 }
@@ -371,7 +374,10 @@ export async function runSandboxHook(
   mode: SandboxHookMode,
   stopReason?: string,
 ): Promise<string | undefined> {
-  const reason = parseSandboxStopReason(stopReason);
+  const reason = parseSandboxStopReason(
+    stopReason,
+    SANDBOX_STOP_REASON_VARIABLE,
+  );
   const request = reason === undefined ? `${mode}\n` : `${mode} ${reason}\n`;
   // The server's state directory is where its lease resolved it to.
   const path = sandboxHookSocket(realpathSync(resolve(stateDir)));

@@ -281,11 +281,13 @@ test("a restore passes on why its host stopped the sandbox, which no other mode 
       );
       await expect(
         runSandboxHook(dir, "restore", "it ran out\nof its memory"),
-      ).rejects.toThrow("the reason the sandbox stopped must be one line");
+      ).rejects.toThrow(
+        "the reason the sandbox stopped must be one line (BAYMA_SANDBOX_STOP_REASON)",
+      );
       await expect(
         runSandboxHook(dir, "restore", "é".repeat(129)),
       ).rejects.toThrow(
-        "the reason the sandbox stopped must be at most 256 bytes",
+        "the reason the sandbox stopped must be at most 256 bytes (BAYMA_SANDBOX_STOP_REASON)",
       );
       // Sent to the server as is, past what the hook refuses.
       await runSandboxHook(dir, "save");
