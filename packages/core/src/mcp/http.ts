@@ -108,11 +108,12 @@ const CLIENT_RECONNECT_GRACE_MS = 10_000;
 // controller leases for ever. So a client holding a stream open is pinged on
 // it this often, and its MCP session closed, its leases with it, where it
 // has not answered in as long again: within twice this of its going. A ping
-// whose stream ends before its answer, as a proxy's recycling, a dropped
-// connection or a restore ends it, counts for nothing, and the next stream
-// is pinged anew. An answer that came during a stall of the server's event
-// loop is read before the timeout's end is (runningTimeout), so a stall
-// alone closes no client that answered.
+// out as any of the client's streams ends, as a proxy's recycling, a dropped
+// connection or a restore ends one, counts for nothing, and the stream open
+// next is pinged anew. A timeout runs only after what had come by its end is
+// read (runningTimeout), so an answer that came while the server's event
+// loop stalled is read first, and a stall alone closes no client that
+// answered.
 const CLIENT_PING_MS = 30_000;
 const HTTP_ACTOR_ID_PREFIX = "actor_mcp_http_";
 // The longest a request waits for a saved server to run on, of the time it

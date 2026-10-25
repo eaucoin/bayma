@@ -79,44 +79,57 @@ async function post(
 
 /**
  * The server's stream of messages to the MCP session `mcpSessionId`, opened
- * as a client opens it, with each ping it is sent, as it comes, and a way to
- * drop it, as a connection is dropped.
+ * as a client opens it, asked for again while the server still holds the
+ * session's last one open, as a client asks again for one it lost, with each
+ * ping it is sent, as it comes, and a way to drop it, as a connection is
+ * dropped.
  */
-function openStream(
+async function openStream(
   url: string,
   mcpSessionId: string,
-): { pings: AsyncGenerator<string | number>; drop: () => void } {
-  const dropped = new AbortController();
-  const response = fetch(url, {
-    headers: { accept: "text/event-stream", "mcp-session-id": mcpSessionId },
-    signal: dropped.signal,
-  });
-  async function* pings(): AsyncGenerator<string | number> {
-    const body = (await response).body!.pipeThrough(new TextDecoderStream());
-    let buffered = "";
-    try {
-      for await (const chunk of body) {
-        buffered += chunk;
-        let end: number;
-        while ((end = buffered.indexOf("\n\n")) !== -1) {
-          const event = buffered.slice(0, end);
-          buffered = buffered.slice(end + 2);
-          for (const line of event.split("\n")) {
-            if (!line.startsWith("data: ")) continue;
-            const message = JSON.parse(line.slice("data: ".length)) as {
-              method?: string;
-              id?: string | number;
-            };
-            if (message.method === "ping" && message.id !== undefined)
-              yield message.id;
-          }
+): Promise<{ pings: AsyncGenerator<string | number>; drop: () => void }> {
+  for (let attempt = 0; ; attempt += 1) {
+    const dropped = new AbortController();
+    const response = await fetch(url, {
+      headers: { accept: "text/event-stream", "mcp-session-id": mcpSessionId },
+      signal: dropped.signal,
+    });
+    // One stream at a time: the last, dropped, may not yet be seen to end.
+    if (response.status === 409 && attempt < 100) {
+      await response.body?.cancel();
+      await sleep(50);
+      continue;
+    }
+    expect(response.status).toBe(200);
+    return { pings: pings(response), drop: () => dropped.abort() };
+  }
+}
+
+/** Each ping the stream `response` brings, as it comes, until it ends. */
+async function* pings(response: Response): AsyncGenerator<string | number> {
+  const body = response.body!.pipeThrough(new TextDecoderStream());
+  let buffered = "";
+  try {
+    for await (const chunk of body) {
+      buffered += chunk;
+      let end: number;
+      while ((end = buffered.indexOf("\n\n")) !== -1) {
+        const event = buffered.slice(0, end);
+        buffered = buffered.slice(end + 2);
+        for (const line of event.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const message = JSON.parse(line.slice("data: ".length)) as {
+            method?: string;
+            id?: string | number;
+          };
+          if (message.method === "ping" && message.id !== undefined)
+            yield message.id;
         }
       }
-    } catch {
-      // Dropped.
     }
+  } catch {
+    // Dropped.
   }
-  return { pings: pings(), drop: () => dropped.abort() };
 }
 
 test(
@@ -232,11 +245,11 @@ test(
       const sessionId = created.result!.structuredContent!.session!.session_id!;
 
       // A ping comes on the first stream, which drops before it is answered.
-      const first = openStream(server.url, mcpSessionId);
+      const first = await openStream(server.url, mcpSessionId);
       await first.pings.next();
       first.drop();
       // The client opens its stream again, and answers each ping on it.
-      const second = openStream(server.url, mcpSessionId);
+      const second = await openStream(server.url, mcpSessionId);
       const answering = (async () => {
         for await (const id of second.pings)
           await post(server.url, mcpSessionId, { id, result: {} });
