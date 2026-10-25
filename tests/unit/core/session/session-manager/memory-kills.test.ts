@@ -103,7 +103,12 @@ async function settle(): Promise<void> {
 async function liveAgain(manager: SessionManager, sessionId: string) {
   // By ticks, as a test's clocks may be held still.
   for (let tick = 0; tick < 5_000; tick += 1) {
-    if (manager.detail(sessionId).status === "live_idle") return;
+    const { status, quarantineReason } = manager.detail(sessionId);
+    if (status === "live_idle") return;
+    if (status === "quarantined")
+      throw new Error(
+        `session ${sessionId} was quarantined: ${quarantineReason}`,
+      );
     await Bun.sleep(1);
   }
   throw new Error(`session ${sessionId} was not live again in time`);
@@ -208,7 +213,10 @@ test("a runtime the kernel kills for its memory again within MEMORY_KILLS_APART_
   await withTempDir(async (dir) => {
     const setup = managerFor(dir);
     const sessionId = await session(setup, dir, "checkpointed");
-    let monotonicMs = performance.now();
+    // A whole number of milliseconds, as the bound is checked by the
+    // difference of two readings: one with a fraction, as performance.now()
+    // has, may come 60 s later to a difference of a little under 60 s.
+    let monotonicMs = 1_000_000;
     let wallMs = Date.now();
     const monotonic = spyOn(performance, "now").mockImplementation(
       () => monotonicMs,
