@@ -281,6 +281,7 @@ function pidAdvancingSnapshotter(
     restoreCommand: () => ({ file: "/bin/false", args: [] }),
     restoredPid: () => undefined,
     unrestorableReason: () => undefined,
+    pidCounter: () => undefined,
     pidsPast(pid) {
       steps.push(`check ${pid}`);
       return past.shift() ?? true;
@@ -479,6 +480,7 @@ test("a snapshot hands the dump the stdio its runtime started with, wherever the
     restoredPid: () => undefined,
     unrestorableReason: () => undefined,
     pidsPast: () => true,
+    pidCounter: () => undefined,
     advancePidsPast: async () => undefined,
   };
   const transport = new ProcessTransport({
@@ -536,6 +538,7 @@ test("a restore that fails says how CRIU ended, what it printed, and its log's e
           restoredPid: () => undefined,
           unrestorableReason: () => undefined,
           pidsPast: () => true,
+          pidCounter: () => undefined,
           advancePidsPast: async () => undefined,
         },
       });

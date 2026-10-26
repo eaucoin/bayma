@@ -12,8 +12,12 @@ import {
   BAYMA_VERSION,
   criuEnding,
   CriuSnapshotter,
+  PID_ADVANCE_BUDGET,
+  pidReservation,
+  pidsBefore,
   processSnapshotter,
   restoreFailure,
+  restoreLostPids,
   snapshotsUnavailableHere,
   snapshotsUnavailableReason,
   type ProcessSnapshot,
@@ -389,6 +393,103 @@ test("PIDs are advanced past one the counter has not reached, and a helper failu
       ),
     ).rejects.toThrow(/^advancing PIDs past \d+ failed: .*ENOENT/);
   });
+});
+
+test("a helper is asked to go round the counter's wrap only where the PID lies behind it", async () => {
+  await withTempDir(async (dir) => {
+    const recorded = join(dir, "advanced");
+    const snapshotter = new CriuSnapshotter(
+      "/opt/criu",
+      writeScript(join(dir, "advance"), `printf '%s ' "$@" >> ${recorded}`),
+    );
+    // Behind the counter, where the counter is past it already: round its wrap, asked.
+    await snapshotter.advancePidsPast(500, { wrapping: true });
+    expect(readFileSync(recorded, "utf8")).toBe("--wrap 501 ");
+  });
+});
+
+/** A PID counter of a namespace whose PIDs end below 4,194,304, as many machines' do, its last PID `last`. */
+const counterAt = (last: number) => ({ last, max: 4_194_304 });
+
+test("a PID that is its namespace's last is moved past as the counter's end, from which it wraps", async () => {
+  await withTempDir(async (dir) => {
+    const recorded = join(dir, "advanced");
+    const max = Number(readFileSync("/proc/sys/kernel/pid_max", "utf8"));
+    await new CriuSnapshotter(
+      "/opt/criu",
+      writeScript(join(dir, "advance"), `printf '%s ' "$@" >> ${recorded}`),
+    ).advancePidsPast(max - 1);
+    expect(readFileSync(recorded, "utf8")).toBe(`${max - 1} `);
+  });
+});
+
+test("the PIDs a counter hands out before a PID are counted round its wrap", () => {
+  expect(pidsBefore(counterAt(10_000), 10_001)).toBe(0);
+  expect(pidsBefore(counterAt(10_000), 3_000_000)).toBe(2_989_999);
+  // Behind it: up to pid_max first, then up from the lowest PID a wrapped counter hands out.
+  expect(pidsBefore(counterAt(4_194_000), 12_000)).toBe(303 + 11_700);
+  expect(pidsBefore(counterAt(10_000), 9_000)).toBe(4_184_303 + 8_700);
+  // Never handed out again: past pid_max, or among those a wrapped counter keeps.
+  expect(pidsBefore(counterAt(10_000), 4_194_304)).toBe(Infinity);
+  expect(pidsBefore(counterAt(10_000), 200)).toBe(Infinity);
+});
+
+test("a start moves the counter past the snapshots it is near, and leaves those further ahead than its budget, whose PIDs stay free that long", () => {
+  const near = { pid: 12_000, maxPid: 12_042 };
+  const nearer = { pid: 11_000, maxPid: 11_042 };
+  const far = { pid: 2_645_000, maxPid: 2_645_398 };
+  expect(pidReservation(counterAt(10_000), [far, near, nearer])).toEqual({
+    advance: { past: 12_042, wrapping: false },
+    beyond: { count: 1, nearest: 2_635_398 },
+  });
+  // Only far ones: the counter is left as it is.
+  expect(pidReservation(counterAt(10_000), [far])).toEqual({
+    advance: undefined,
+    beyond: { count: 1, nearest: 2_635_398 },
+  });
+  // Behind the counter, and far round its wrap: left too.
+  expect(pidReservation(counterAt(3_000_000), [far]).advance).toBeUndefined();
+  // One just within the budget is moved past; one just past it is not.
+  expect(
+    pidReservation(counterAt(10_000), [
+      { pid: 10_001, maxPid: 10_000 + PID_ADVANCE_BUDGET },
+    ]).advance,
+  ).toEqual({ past: 10_000 + PID_ADVANCE_BUDGET, wrapping: false });
+  expect(
+    pidReservation(counterAt(10_000), [
+      { pid: 10_001, maxPid: 10_001 + PID_ADVANCE_BUDGET },
+    ]).advance,
+  ).toBeUndefined();
+});
+
+test("a counter near pid_max is moved round its wrap past the snapshots at low PIDs it is about to hand out, and not past those it has just handed out", () => {
+  const low = { pid: 12_000, maxPid: 12_042 };
+  const justBehind = { pid: 4_190_000, maxPid: 4_190_042 };
+  expect(pidReservation(counterAt(4_194_000), [low, justBehind])).toEqual({
+    advance: { past: 12_042, wrapping: true },
+    // The one just behind, handed out only once the counter has gone round to it again.
+    beyond: { count: 1, nearest: 303 + (4_190_042 - 300) + 1 },
+  });
+});
+
+test("a restore whose tree's PID was taken is told apart from other failures", () => {
+  // As CRIU logs a set_tid refused (criu/cr-restore.c fork_with_pid).
+  expect(
+    restoreLostPids(
+      "Error (criu/cr-restore.c:1495): Can't fork for 27: File exists",
+    ),
+  ).toBe(true);
+  // Another file there being, which is no PID's.
+  expect(
+    restoreLostPids(
+      "Error (criu/files-reg.c:2123): Can't link /tmp/x: File exists",
+    ),
+  ).toBe(false);
+  expect(
+    restoreLostPids(
+      "Error (criu/files-reg.c:2123): Can't open file: No such file or directory",
+    ),
+  ).toBe(false);
 });
 
 test("a PID counter past the PID already starts no helper", async () => {

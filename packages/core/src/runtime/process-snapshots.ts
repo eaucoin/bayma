@@ -79,12 +79,108 @@ export interface ProcessSnapshotter {
    */
   pidsPast(pid: number): boolean | undefined;
   /**
+   * This PID namespace's PID counter: the last PID it handed out, and the
+   * pid_max its PIDs end below, past which it wraps to its lowest free ones;
+   * undefined where either cannot be read.
+   */
+  pidCounter(): PidCounter | undefined;
+  /**
    * Move this PID namespace's PID counter past `pid`, never back, so no
    * process started from now on takes a PID at or below it until the counter
-   * wraps; it starts nothing where the counter is past it already. Rejects
-   * where no PID the namespace hands out lies past it.
+   * wraps; it starts nothing where the counter is past it already. With
+   * `wrapping`, `pid` lies past the counter's wrap, behind it: the counter is
+   * moved round past pid_max to it. Rejects where no PID the namespace hands
+   * out lies past it.
    */
-  advancePidsPast(pid: number): Promise<void>;
+  advancePidsPast(pid: number, options?: { wrapping?: boolean }): Promise<void>;
+}
+
+/** A PID namespace's PID counter, as ProcessSnapshotter.pidCounter reads it. */
+export interface PidCounter {
+  /** The last PID it handed out. */
+  last: number;
+  /** The pid_max its PIDs end below. */
+  max: number;
+}
+
+/**
+ * How many PIDs a server's start moves its PID counter through at most for
+ * the process snapshots it holds: some 8 s where it climbs them a process a
+ * PID, at the 12,000 a second a machine forks, well within the time a server
+ * is given to start.
+ */
+export const PID_ADVANCE_BUDGET = 100_000;
+
+/** What a server's start does with its PID counter for the snapshots it holds (pidReservation). */
+export interface PidReservation {
+  /** The PID it moves the counter past, and whether round its wrap; none where no snapshot needs it. */
+  advance: { past: number; wrapping: boolean } | undefined;
+  /**
+   * The snapshots it moves the counter past none of the PIDs of, as they lie
+   * further ahead of it than PID_ADVANCE_BUDGET: how many, and how far the
+   * nearest's last PID is, in PIDs the counter hands out before it.
+   */
+  beyond: { count: number; nearest: number } | undefined;
+}
+
+/**
+ * What a server's start does with `counter` for the stored process snapshots
+ * `snapshots`, which restore their trees at the PIDs they had, as a restore
+ * places each with clone3's set_tid: of those the counter would hand out
+ * PIDs of within `budget` PIDs, it is moved past the last's highest, round
+ * its wrap where that lies behind it, so nothing started from now on takes a
+ * PID one of them needs; the others are left, each to restore while its PIDs
+ * stay free, as they do until the counter has climbed that far, and else, as
+ * a restore that finds a PID taken does, from its checkpoint. Pure, for
+ * tests.
+ */
+export function pidReservation(
+  counter: PidCounter,
+  snapshots: readonly Pick<ProcessSnapshot, "pid" | "maxPid">[],
+  budget = PID_ADVANCE_BUDGET,
+): PidReservation {
+  let advance: { past: number; need: number } | undefined;
+  let beyond: { count: number; nearest: number } | undefined;
+  for (const { maxPid } of snapshots) {
+    // The PIDs handed out before the counter is past the snapshot's highest.
+    const need = pidsBefore(counter, maxPid) + 1;
+    if (need <= budget) {
+      if (!advance || need > advance.need) advance = { past: maxPid, need };
+    } else {
+      beyond = {
+        count: (beyond?.count ?? 0) + 1,
+        nearest: Math.min(beyond?.nearest ?? Infinity, need),
+      };
+    }
+  }
+  return {
+    advance: advance && {
+      past: advance.past,
+      wrapping: advance.past <= counter.last,
+    },
+    beyond,
+  };
+}
+
+/**
+ * The lowest PID a namespace's counter hands out once it has wrapped, as
+ * Linux's RESERVED_PIDS keeps those below it for the processes a system
+ * starts first.
+ */
+export const LOWEST_WRAPPED_PID = 300;
+
+/**
+ * How many PIDs the counter `counter` hands out before it hands out `pid`:
+ * those up to its pid_max first, and then, once it has wrapped, those from
+ * LOWEST_WRAPPED_PID up; Infinity for a PID it never hands out again, at or
+ * past its pid_max, or below LOWEST_WRAPPED_PID and behind it. Pure, for
+ * tests.
+ */
+export function pidsBefore(counter: PidCounter, pid: number): number {
+  if (pid >= counter.max) return Infinity;
+  if (pid > counter.last) return pid - counter.last - 1;
+  if (pid < LOWEST_WRAPPED_PID) return Infinity;
+  return counter.max - counter.last - 1 + (pid - LOWEST_WRAPPED_PID);
 }
 
 /**
@@ -369,20 +465,33 @@ export class CriuSnapshotter implements ProcessSnapshotter {
   }
 
   pidsPast(pid: number): boolean | undefined {
-    const last = readCount(NS_LAST_PID);
-    const limit = readCount(PID_MAX);
-    if (last === undefined || limit === undefined) return undefined;
-    return last >= pid && last < limit - 1;
+    const counter = this.pidCounter();
+    if (!counter) return undefined;
+    return counter.last >= pid && counter.last < counter.max - 1;
   }
 
-  async advancePidsPast(pid: number): Promise<void> {
-    if (this.pidsPast(pid)) return;
-    // Off the event loop: climbing to a PID far ahead takes the helper a
-    // process a PID.
+  pidCounter(): PidCounter | undefined {
+    const last = readCount(NS_LAST_PID);
+    const max = readCount(PID_MAX);
+    return last === undefined || max === undefined ? undefined : { last, max };
+  }
+
+  async advancePidsPast(
+    pid: number,
+    { wrapping = false }: { wrapping?: boolean } = {},
+  ): Promise<void> {
+    if (!wrapping && this.pidsPast(pid)) return;
+    // Past the namespace's last PID is its end, from which the counter wraps:
+    // the helper takes that last PID, as none past it can be taken.
+    const max = readCount(PID_MAX);
+    const target = max !== undefined && pid === max - 1 ? pid : pid + 1;
+    // Off the event loop: climbing to a PID ahead, where the counter cannot
+    // be set, takes the helper a process a PID.
     let stderr = "";
     let status: number | null;
     try {
-      const helper = spawn(this.advancePids, [String(pid + 1)], {
+      const args = [...(wrapping ? ["--wrap"] : []), String(target)];
+      const helper = spawn(this.advancePids, args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
       helper.stderr.setEncoding("utf8");
@@ -399,6 +508,17 @@ export class CriuSnapshotter implements ProcessSnapshotter {
       );
     }
   }
+}
+
+/**
+ * Whether a restore's `failure`, as restoreFailure says it, is that a PID its
+ * tree needs was taken, by a process started since it was dumped: CRIU places
+ * each at its PID with clone3's set_tid, which the kernel refuses with EEXIST
+ * where it is in use, as CRIU logs it, "Can't fork for 27: File exists".
+ * Pure, for tests.
+ */
+export function restoreLostPids(failure: string): boolean {
+  return /Can't fork for \d+: File exists/.test(failure);
 }
 
 /**

@@ -80,9 +80,14 @@ async function run(
 /**
  * What the image's entrypoint runs, from `docker run`'s arguments on, with
  * the container's PID counter moved first so that its first process takes
- * `pid`, as if the container had started that many before.
+ * `pid`, as if the container had started that many before; set at once as
+ * root, `settingCounter`, the server then run as the invoking user, where
+ * the counter is far ahead.
  */
-async function entrypointFrom(pid: number): Promise<string[]> {
+async function entrypointFrom(
+  pid: number,
+  settingCounter = false,
+): Promise<string[]> {
   const inspected = await run([
     "docker",
     "image",
@@ -93,6 +98,14 @@ async function entrypointFrom(pid: number): Promise<string[]> {
   ]);
   expect(inspected.exitCode).toBe(0);
   const entrypoint = JSON.parse(inspected.stdout) as string[];
+  const asUser = settingCounter
+    ? [
+        "setpriv",
+        `--reuid=${process.getuid!()}`,
+        `--regid=${process.getgid!()}`,
+        "--clear-groups",
+      ]
+    : [];
   return [
     "--entrypoint",
     "sh",
@@ -100,9 +113,22 @@ async function entrypointFrom(pid: number): Promise<string[]> {
     "-c",
     'bayma-advance-pids "$0" && exec "$@"',
     String(pid - 1),
+    ...asUser,
     ...entrypoint,
   ];
 }
+
+// What lets the PID helper set the counter at once, as root in a container
+// whose /proc/sys is writable, and which no AppArmor profile keeps from
+// writing it, as Docker's own does, rather than climb to it.
+const COUNTER_SETTING_FLAGS = [
+  "--user",
+  "0:0",
+  "--security-opt",
+  "systempaths=unconfined",
+  "--security-opt",
+  "apparmor=unconfined",
+];
 
 /**
  * Serve MCP from a fresh container, its server's first process at
@@ -114,7 +140,11 @@ async function entrypointFrom(pid: number): Promise<string[]> {
 async function serve(
   home: string,
   stateDir: string,
-  { firstPid, docker = [] }: { firstPid?: number; docker?: string[] } = {},
+  {
+    firstPid,
+    settingCounter = false,
+    docker = [],
+  }: { firstPid?: number; settingCounter?: boolean; docker?: string[] } = {},
 ): Promise<{ client: McpStdioClient; stop: () => Promise<void> }> {
   const name = `bayma-e2e-${process.pid}-${Date.now()}`;
   const client = await McpStdioClient.launch(
@@ -128,8 +158,11 @@ async function serve(
         name,
         ...userFlags(home),
         ...SNAPSHOT_FLAGS,
+        ...(settingCounter ? COUNTER_SETTING_FLAGS : []),
         ...docker,
-        ...(firstPid === undefined ? [IMAGE] : await entrypointFrom(firstPid)),
+        ...(firstPid === undefined
+          ? [IMAGE]
+          : await entrypointFrom(firstPid, settingCounter)),
       ],
       binaryLabel: "bayma image",
     },
@@ -369,6 +402,100 @@ test.serial(
           result: read.result_text?.trim(),
           error: read.error_text || undefined,
         }).toEqual({ status: "ok", result: "42", error: undefined });
+        await second.client.callTool("session.close", {
+          session_id: sessionId,
+        });
+      } finally {
+        await second.stop();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+// A tree's highest PID after a container's PIDs have climbed for days, as the
+// folder server's did, past which the server before this fix moved its PID
+// counter a process a PID, some 250 s, before it served.
+const FAR_PID = 3_000_000;
+// How long a server may take to serve with such a snapshot stored, well
+// within the 120 s a server is given to start where it is pooled.
+const FAR_START_MS = 45_000;
+
+test.serial(
+  "a REPL session snapshotted with PIDs in the millions comes back whole to a server that starts at once, its PID counter left low",
+  async () => {
+    expect(
+      Number(readFileSync("/proc/sys/kernel/pid_max", "utf8")),
+    ).toBeGreaterThan(FAR_PID + 1_000);
+    const { home, stateDir } = makeHome();
+    try {
+      let sessionId: string;
+      // The counter set at once where the helper may write it: a process
+      // started after takes the PID asked for, within seconds, not the
+      // minutes a climb there takes.
+      const set = await run([
+        "timeout",
+        "20",
+        "docker",
+        "run",
+        "--rm",
+        ...SNAPSHOT_FLAGS,
+        ...COUNTER_SETTING_FLAGS,
+        "--entrypoint",
+        "sh",
+        IMAGE,
+        "-c",
+        `bayma-advance-pids ${FAR_PID} && sh -c 'echo $$'`,
+      ]);
+      expect({ exitCode: set.exitCode, output: set.output.trim() }).toEqual({
+        exitCode: 0,
+        output: String(FAR_PID),
+      });
+      // Its PIDs where a long-running container's reach, the counter set to
+      // them before its server starts, as climbing there would take minutes.
+      const first = await serve(home, stateDir, {
+        firstPid: FAR_PID,
+        settingCounter: true,
+      });
+      try {
+        const created = await first.client.callTool<{
+          session: { session_id: string };
+        }>("session.create", { runtime: "python", title: "far", cwd: home });
+        sessionId = created.session.session_id;
+        const defined = await execSettled(
+          first.client,
+          sessionId,
+          "marker = 41",
+        );
+        expect(defined.status).toBe("ok");
+      } finally {
+        await first.stop();
+      }
+      const { maxPid } = JSON.parse(
+        readFileSync(join(stateDir, "sessions", `${sessionId}.json`), "utf8"),
+      ).processSnapshot;
+      expect(maxPid).toBeGreaterThanOrEqual(FAR_PID);
+
+      // A fresh container, its /proc/sys read-only and its counter low.
+      const started = Date.now();
+      const second = await serve(home, stateDir);
+      try {
+        await second.client.listTools();
+        expect(Date.now() - started).toBeLessThan(FAR_START_MS);
+        await second.client.callTool("session.acquire_controller", {
+          session_id: sessionId,
+        });
+        const read = await execSettled(second.client, sessionId, "marker + 1");
+        expect({
+          status: read.status,
+          result: read.result_text?.trim(),
+          error: read.error_text || undefined,
+        }).toEqual({ status: "ok", result: "42", error: undefined });
+        expect(second.client.serverOutput()).toContain(
+          "1 process snapshot(s) lie further ahead of the PID counter than a start moves it",
+        );
         await second.client.callTool("session.close", {
           session_id: sessionId,
         });

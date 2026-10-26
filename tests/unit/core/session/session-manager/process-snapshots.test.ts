@@ -375,7 +375,7 @@ test("a session that comes back from neither its snapshot nor its checkpoint is 
   });
 });
 
-test("loading moves the PID counter past every stored snapshot's highest PID", async () => {
+test("loading moves the PID counter past every stored snapshot's highest PID it is near", async () => {
   await withTempDir(async (dir) => {
     const { catalogStore } = stores(dir);
     const original = managerFor(stores(dir), new SnapshottingTransport());
@@ -395,6 +395,85 @@ test("loading moves the PID counter past every stored snapshot's highest PID", a
     ).loadCatalog();
 
     expect(snapshotter.advancedPast).toEqual([Math.max(...maxPids)]);
+  });
+});
+
+test("loading moves the PID counter past no snapshot whose PIDs lie millions ahead of it, only past those it is near, and says so, so the start does not wait the climb", async () => {
+  await withTempDir(async (dir) => {
+    const { catalogStore } = stores(dir);
+    const original = managerFor(stores(dir), new SnapshottingTransport());
+    const near = await createCheckpointed(original, dir);
+    const far = await createCheckpointed(original, dir);
+    await original.shutdown();
+    // As a pod's PIDs climb for two days before its server stops.
+    const record = catalogStore.read(far)!;
+    catalogStore.write({
+      ...record,
+      processSnapshot: {
+        ...record.processSnapshot!,
+        pid: 2_645_000,
+        maxPid: 2_645_398,
+      },
+    });
+    const nearMax = catalogStore.read(near)!.processSnapshot!.maxPid;
+    const snapshotter = new PidReservingSnapshotter();
+    snapshotter.counter = { last: 1_000, max: 4_194_304 };
+
+    await managerFor(
+      stores(dir),
+      new SnapshottingTransport(),
+      snapshotter,
+    ).loadCatalog();
+
+    expect(snapshotter.advancedPast).toEqual([nearMax]);
+    expect(snapshotter.wrapped).toEqual([false]);
+    expect(reports).toEqual([
+      "bayma: 1 process snapshot(s) lie further ahead of the PID counter than a start moves it, 100000 PIDs, the nearest 2644398 PIDs ahead: each restores while its PIDs stay free, and else from its checkpoint\n",
+    ]);
+    // Kept, to restore from.
+    expect(catalogStore.read(far)?.processSnapshot?.maxPid).toBe(2_645_398);
+  });
+});
+
+test("loading with the PID counter near pid_max moves it round its wrap past the snapshots at low PIDs it is about to hand out", async () => {
+  await withTempDir(async (dir) => {
+    const { catalogStore } = stores(dir);
+    const sessionId = await snapshottedSession(dir);
+    const maxPid = catalogStore.read(sessionId)!.processSnapshot!.maxPid;
+    const snapshotter = new PidReservingSnapshotter();
+    snapshotter.counter = { last: 4_194_000, max: 4_194_304 };
+
+    await managerFor(
+      stores(dir),
+      new SnapshottingTransport(),
+      snapshotter,
+    ).loadCatalog();
+
+    expect(snapshotter.advancedPast).toEqual([maxPid]);
+    expect(snapshotter.wrapped).toEqual([true]);
+    expect(reports).toEqual([]);
+  });
+});
+
+test("a session whose snapshot lost a PID its tree needs to a process started since comes back from its checkpoint, saying so", async () => {
+  await withTempDir(async (dir) => {
+    const sessionId = await snapshottedSession(dir);
+    const transport = new SnapshottingTransport();
+    const failure =
+      "Error (criu/cr-restore.c:1495): Can't fork for 4100: File exists";
+    transport.restoreFailure = failure;
+    const manager = managerFor(stores(dir), transport);
+    await manager.loadCatalog();
+
+    expect((await recoverAfterReload(manager, sessionId)).status).toBe(
+      "live_idle",
+    );
+
+    expect(transport.starts).toHaveLength(1);
+    expect(reports).toEqual([
+      `bayma: session ${sessionId}'s process snapshot did not restore, as a PID its tree needs is held by a process started since it was dumped: ${failure}\n`,
+    ]);
+    await manager.shutdown();
   });
 });
 

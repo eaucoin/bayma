@@ -22,7 +22,10 @@ import {
 } from "../sandbox.ts";
 import type { RuntimeId } from "../runtime/id.ts";
 import {
+  PID_ADVANCE_BUDGET,
+  pidReservation,
   processSnapshotter,
+  restoreLostPids,
   type ProcessSnapshot,
   type ProcessSnapshotter,
 } from "../runtime/process-snapshots.ts";
@@ -774,19 +777,37 @@ export class SessionManager {
 
   /**
    * A snapshot restores its tree at the PIDs it had, so before this server
-   * starts anything, its PID counter moves past every stored snapshot's:
-   * nothing started from now on can take a PID one of them needs.
+   * starts anything, its PID counter moves past the stored snapshots' it is
+   * near, within PID_ADVANCE_BUDGET, round its wrap where they lie behind it:
+   * nothing started from now on can take a PID one of them needs. One
+   * further ahead is left, as the counter takes as long to climb to it as it
+   * took the server before, and no start waits that long: it restores while
+   * its PIDs stay free, and else from its checkpoint (pidReservation).
    */
   private async reservePidsForSnapshots(): Promise<void> {
-    const highest = Math.max(
-      0,
-      ...[...this.sessions.values()].map(
-        (session) => session.record.processSnapshot?.maxPid ?? 0,
-      ),
+    const snapshots = [...this.sessions.values()].flatMap(
+      (session) => session.record.processSnapshot ?? [],
     );
-    if (highest === 0) return;
+    const snapshotter = this.snapshotter();
+    if (snapshots.length === 0 || !snapshotter) return;
+    const counter = snapshotter.pidCounter();
+    if (!counter) {
+      report(
+        "process snapshots may not restore: this PID namespace's PID counter cannot be read, so it is moved past none of their PIDs",
+      );
+      return;
+    }
+    const { advance, beyond } = pidReservation(counter, snapshots);
+    if (beyond) {
+      report(
+        `${beyond.count} process snapshot(s) lie further ahead of the PID counter than a start moves it, ${PID_ADVANCE_BUDGET} PIDs, the nearest ${beyond.nearest} PIDs ahead: each restores while its PIDs stay free, and else from its checkpoint`,
+      );
+    }
+    if (!advance) return;
     try {
-      await this.snapshotter()?.advancePidsPast(highest);
+      await snapshotter.advancePidsPast(advance.past, {
+        wrapping: advance.wrapping,
+      });
     } catch (error) {
       // A restore that then finds a PID taken fails, and its session comes
       // back from its checkpoint instead.
@@ -2246,7 +2267,9 @@ export class SessionManager {
     } catch (error) {
       const failure = failureMessage(error);
       report(
-        `session ${sessionId}'s process snapshot did not restore: ${failure}`,
+        restoreLostPids(failure)
+          ? `session ${sessionId}'s process snapshot did not restore, as a PID its tree needs is held by a process started since it was dumped: ${failure}`
+          : `session ${sessionId}'s process snapshot did not restore: ${failure}`,
         session.record,
       );
       // A restored runtime that failed its probe quarantined its session on

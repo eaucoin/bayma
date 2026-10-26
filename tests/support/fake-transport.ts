@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ProcessSnapshot,
+  PidCounter,
   ProcessSnapshotter,
   RuntimeTransport,
   StartSessionInput,
@@ -338,12 +339,24 @@ export class SnapshottingTransport extends FakeTransport {
  */
 export class PidReservingSnapshotter implements ProcessSnapshotter {
   readonly advancedPast: number[] = [];
+  /** Of each advance, whether it went round the counter's wrap. */
+  readonly wrapped: boolean[] = [];
   /** Set to have each advance end only once this does. */
   advanced?: Promise<void>;
+  /** The PID counter it reads, a fresh container's unless set: none where it reads none. */
+  counter: PidCounter | undefined = { last: 1_000, max: 4_194_304 };
 
-  async advancePidsPast(pid: number): Promise<void> {
+  async advancePidsPast(
+    pid: number,
+    { wrapping = false }: { wrapping?: boolean } = {},
+  ): Promise<void> {
     this.advancedPast.push(pid);
+    this.wrapped.push(wrapping);
     await this.advanced;
+  }
+
+  pidCounter(): PidCounter | undefined {
+    return this.counter;
   }
 
   pidsPast(): boolean | undefined {

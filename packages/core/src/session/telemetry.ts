@@ -8,6 +8,7 @@ import {
   observeGauge,
   SeverityNumber,
 } from "../telemetry/record.ts";
+import { restoreLostPids } from "../runtime/process-snapshots.ts";
 import type { SessionEvent } from "./events.ts";
 import type { ExecRecord, RecoverySource } from "./exec-types.ts";
 import type { SessionSummary } from "./model.ts";
@@ -61,6 +62,10 @@ const quarantines = counter("bayma.session.quarantines", {
 });
 const evictions = counter("bayma.session.evictions", {
   description: "Sessions evicted to make room for another.",
+});
+const restores = counter("bayma.runtime.restores", {
+  description:
+    "Restores of sessions' runtimes from their process snapshots, by outcome: restored; pids_taken, a PID the tree needs held by a process started since it was dumped; or failed otherwise.",
 });
 
 /** A session's identity and runtime, as attributes. */
@@ -203,6 +208,14 @@ export async function traceRestore(
     async (span) => {
       const unrestored = await work();
       if (unrestored !== undefined) markFailed(span, unrestored);
+      restores.add(1, {
+        "bayma.restore.outcome":
+          unrestored === undefined
+            ? "restored"
+            : restoreLostPids(unrestored)
+              ? "pids_taken"
+              : "failed",
+      });
       return unrestored;
     },
   );

@@ -248,6 +248,7 @@ const SNAPSHOTTER: ProcessSnapshotter = {
   restoredPid: () => undefined,
   unrestorableReason: () => undefined,
   pidsPast: () => true,
+  pidCounter: () => undefined,
   advancePidsPast: async () => undefined,
 };
 
