@@ -1066,6 +1066,25 @@ test("a runtime that exits while a process it started holds its stdio and writes
   }
 });
 
+test("terminating a session whose runtime has exited ends what it started that lives on", async () => {
+  const transport = stdioHoldingTransport(QUIET_HOLDER);
+  let holderPid: number | undefined;
+  try {
+    const exited = await exitHeld(transport, "sess_held_after_exit");
+    holderPid = exited.holderPid;
+    expect(processExists(exited.handle.pid)).toBe(false);
+
+    await transport.terminate(exited.handle);
+    await waitForProcessExit(holderPid);
+
+    expect(processExists(holderPid)).toBe(false);
+  } finally {
+    if (holderPid && processExists(holderPid))
+      process.kill(holderPid, "SIGKILL");
+    await transport.shutdown();
+  }
+});
+
 test("a runtime the kernel kills for its memory, as the server's cgroup counts a kill since it started, says so, with the cgroup's limit where it has one; one killed otherwise, or under a cgroup it cannot read, as it was", async () => {
   await withTempDir(async (root) => {
     // Cgroups of the test's own, limited and not, each counting two kills.

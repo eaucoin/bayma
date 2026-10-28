@@ -893,6 +893,14 @@ export class ProcessTransport implements RuntimeTransport {
       if (!childHasExited(state.child)) {
         await waitForChildExit(state.child, FORCED_TERMINATION_TIMEOUT_MS);
       }
+    } else if (
+      processStarted &&
+      !(state.child.stdout.closed && state.child.stderr.closed)
+    ) {
+      // The runtime has exited, and what it started holds its stdio still:
+      // that goes too. Its group keeps the runtime's PID as long as any of it
+      // lives.
+      this.signal(state, "SIGKILL");
     }
     if (processStarted && !childHasExited(state.child)) {
       throw new Error(
