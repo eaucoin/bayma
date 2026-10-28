@@ -131,6 +131,11 @@ const MAX_RECENT_OUTPUT_BYTES = 4 * 1024 * 1024;
 const PROMPT_SCAN_TAIL_CHARACTERS = 1024;
 const GRACEFUL_TERMINATION_TIMEOUT_MS = 250;
 const FORCED_TERMINATION_TIMEOUT_MS = 5_000;
+// Once a runtime has exited, what it wrote is read until its stdio fall quiet
+// for an interval, and for no more intervals than these, which bound its
+// session's end where a process it started holds them and writes on.
+const EXIT_DRAIN_INTERVAL_MS = 50;
+const EXIT_DRAIN_INTERVALS = 20;
 // How long a runtime may take from its start to its first prompt, unless it
 // says otherwise. Bun, Python and C prompt within half a second, and C++,
 // which loads Clang to JIT its cells, within 0.9 s, and 2.3 s on a CI runner
@@ -421,7 +426,9 @@ export class ProcessTransport implements RuntimeTransport {
       killedByServer: false,
     };
 
+    let chunksRead = 0;
     const onData = (chunk: Buffer, scanControlOutput: boolean) => {
+      chunksRead += 1;
       // Child-process stream buffers may be pooled and reused after this
       // callback. Retained diagnostics and asynchronous listeners need an
       // owned snapshot, especially when a UTF-8 scalar spans chunks.
@@ -546,10 +553,7 @@ export class ProcessTransport implements RuntimeTransport {
         ),
       );
     });
-    // `close` follows process exit and the closing of all stdio streams. Exit
-    // diagnostics must not decode an incomplete final UTF-8 scalar merely
-    // because the OS reported process termination before Node drained pipes.
-    child.on("close", (code, signal) => {
+    const ended = (code: number | null, signal: NodeJS.Signals | null) => {
       // Killed by the kernel for its memory, the server living on, it says so;
       // killed by the server itself, never. CRIU exits 0 as the tree it
       // restored is killed, so of a restored session any end is looked at.
@@ -564,6 +568,28 @@ export class ProcessTransport implements RuntimeTransport {
       notifyExit(
         kill ? new RuntimeMemoryKilled(message, kill) : new Error(message),
       );
+    };
+    // `close` follows process exit and the closing of all stdio streams. Exit
+    // diagnostics must not decode an incomplete final UTF-8 scalar merely
+    // because the OS reported process termination before Node drained pipes.
+    child.on("close", ended);
+    // A process the runtime started holds its stdio for as long as it lives,
+    // `close` waiting on it, and writes to the runtime's stdin go on into the
+    // pipe: the session ends instead once what the runtime wrote before it
+    // exited, an exec's output among it, is read.
+    child.on("exit", (code, signal) => {
+      let intervals = 0;
+      let chunksSeen = chunksRead;
+      const drain = setInterval(() => {
+        intervals += 1;
+        if (chunksRead > chunksSeen && intervals < EXIT_DRAIN_INTERVALS) {
+          chunksSeen = chunksRead;
+          return;
+        }
+        clearInterval(drain);
+        ended(code, signal);
+      }, EXIT_DRAIN_INTERVAL_MS);
+      child.once("close", () => clearInterval(drain));
     });
 
     const record = recordStdio ? (child.stdio[3] as Readable | null) : null;

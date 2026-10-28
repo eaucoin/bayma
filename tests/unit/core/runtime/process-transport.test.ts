@@ -10,6 +10,7 @@ import {
   ProcessTransport,
   SESSION_PID_FLOOR,
   type ProcessSnapshotter,
+  type TransportSessionHandle,
 } from "@bayma/core";
 import { withTempDir } from "../../../support/temp.ts";
 
@@ -942,6 +943,127 @@ test("exit diagnostics preserve UTF-8 split across stdout chunks", async () => {
     "€",
   );
   await transport.terminate(handle);
+});
+
+/**
+ * A transport whose runtime, a shell, starts `holder`, a process that holds
+ * its stdout and stderr and outlives it, says that process's PID, prompts, and
+ * at a line prints its last words and exits 3.
+ */
+function stdioHoldingTransport(holder: string): ProcessTransport {
+  return new ProcessTransport({
+    platformId: "test",
+    promptRe: /(?:^|[\r\n])READY> /g,
+    command: () => ({
+      file: "/bin/sh",
+      args: [
+        "-c",
+        `${holder} & printf "HOLDER=%s\\nREADY> " $!; read line; printf "LAST WORDS\\n"; exit 3`,
+      ],
+    }),
+    snapshots: false,
+  });
+}
+
+/** A holder that only sleeps. */
+const QUIET_HOLDER = "sleep 30";
+
+/**
+ * A holder that, once the runtime has exited, prints its own last words and
+ * then a dot every 10 ms.
+ */
+const CHATTY_HOLDER = `sh -c 'while kill -0 $0 2>/dev/null; do sleep 0.01; done; printf "LATE WORDS\\n"; while :; do printf .; sleep 0.01; done' $$`;
+
+/**
+ * Start `sessionId` in `transport` and have its runtime exit; resolves its
+ * handle, its holder's PID, how its session ended, what it printed by then,
+ * and how long after its exit was asked for, or "none" for no end within 2 s.
+ */
+async function exitHeld(
+  transport: ProcessTransport,
+  sessionId: string,
+): Promise<{
+  handle: TransportSessionHandle;
+  holderPid: number;
+  end: string;
+  outputAtEnd: string;
+  endedAfterMs: number;
+}> {
+  const handle = await transport.startSession({
+    sessionId,
+    title: sessionId,
+    cwd: process.cwd(),
+    cols: 80,
+    rows: 24,
+    scratchDir: tmpdir(),
+  });
+  let output = "";
+  let outputAtEnd = "";
+  const ended = new Promise<string>((resolve) => {
+    void transport.subscribe(
+      handle,
+      (chunk) => {
+        output += Buffer.from(chunk).toString("utf8");
+      },
+      (error) => {
+        outputAtEnd = output;
+        resolve(error.message);
+      },
+    );
+  });
+  await transport.waitForInitialPrompt(handle);
+  const holderPid = Number(output.match(/HOLDER=(\d+)/)?.[1]);
+  expect(processExists(holderPid)).toBe(true);
+  const exiting = performance.now();
+  await transport.write(handle, "exit\n");
+  const end = await Promise.race([ended, sleep(2_000).then(() => "none")]);
+  return {
+    handle,
+    holderPid,
+    end,
+    outputAtEnd,
+    endedAfterMs: performance.now() - exiting,
+  };
+}
+
+test("a runtime that exits while a process it started holds its stdio ends its session as soon as its stdio fall quiet, its last output read first", async () => {
+  const transport = stdioHoldingTransport(QUIET_HOLDER);
+  let holderPid: number | undefined;
+  try {
+    const exited = await exitHeld(transport, "sess_held_stdio");
+    holderPid = exited.holderPid;
+
+    expect(exited.end).toBe(
+      "transport session sess_held_stdio exited unexpectedly (code=3, signal=none)",
+    );
+    expect(exited.outputAtEnd).toContain("LAST WORDS\n");
+    // Half the second the drain is bounded at.
+    expect(exited.endedAfterMs).toBeLessThan(500);
+    await expect(transport.write(exited.handle, "1\n")).rejects.toThrow(
+      exited.end,
+    );
+  } finally {
+    if (holderPid) process.kill(holderPid, "SIGKILL");
+    await transport.shutdown();
+  }
+});
+
+test("a runtime that exits while a process it started holds its stdio and writes on ends its session within a second, what was written as it ended read first", async () => {
+  const transport = stdioHoldingTransport(CHATTY_HOLDER);
+  let holderPid: number | undefined;
+  try {
+    const exited = await exitHeld(transport, "sess_held_chatty_stdio");
+    holderPid = exited.holderPid;
+
+    expect(exited.end).toBe(
+      "transport session sess_held_chatty_stdio exited unexpectedly (code=3, signal=none)",
+    );
+    expect(exited.outputAtEnd).toContain("LAST WORDS\n");
+    expect(exited.outputAtEnd).toContain("LATE WORDS\n");
+  } finally {
+    if (holderPid) process.kill(holderPid, "SIGKILL");
+    await transport.shutdown();
+  }
 });
 
 test("a runtime the kernel kills for its memory, as the server's cgroup counts a kill since it started, says so, with the cgroup's limit where it has one; one killed otherwise, or under a cgroup it cannot read, as it was", async () => {
