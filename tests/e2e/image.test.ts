@@ -272,6 +272,61 @@ test.serial(
 );
 
 test.serial(
+  "what the image's REPL sessions run writes no core file as it crashes, as on an Ubuntu host, unless it raises its limit, under tini as the container's first process",
+  async () => {
+    const { home, stateDir } = makeHome();
+    try {
+      // The hard limit the container is given, which the image leaves as is.
+      const container = await run([
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "sh",
+        IMAGE,
+        "-c",
+        "ulimit -H -c",
+      ]);
+      expect(container.exitCode).toBe(0);
+      const server = await serve(home, stateDir);
+      try {
+        const created = await server.client.callTool<{
+          session: { session_id: string };
+        }>("session.create", { runtime: "python", title: "core", cwd: home });
+        const sessionId = created.session.session_id;
+        const limits = await execSettled(
+          server.client,
+          sessionId,
+          [
+            "import resource",
+            "soft, hard = resource.getrlimit(resource.RLIMIT_CORE)",
+            "resource.setrlimit(resource.RLIMIT_CORE, (hard, hard))",
+            "raised = resource.getrlimit(resource.RLIMIT_CORE)[0] == hard",
+            'first = open("/proc/1/cmdline").read().split("\\0")[0]',
+            '(soft, "unlimited" if hard == resource.RLIM_INFINITY else str(hard), raised, first)',
+          ].join("\n"),
+        );
+        expect({
+          status: limits.status,
+          result: limits.result_text?.trim(),
+        }).toEqual({
+          status: "ok",
+          result: `(0, '${container.stdout.trim()}', True, 'tini')`,
+        });
+        await server.client.callTool("session.close", {
+          session_id: sessionId,
+        });
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+test.serial(
   "REPL sessions in every runtime keep their live state across servers in fresh containers, again and again",
   async () => {
     const { home, stateDir } = makeHome();

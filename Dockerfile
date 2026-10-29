@@ -68,5 +68,12 @@ COPY dist/payload/payload.json /opt/bayma/payload/payload.json
 COPY dist/bayma.js /opt/bayma/bayma.js
 ENV BAYMA_PAYLOAD_DIR=/opt/bayma/payload
 
-ENTRYPOINT ["tini", "--", "node", "--disable-warning=ExperimentalWarning", "/opt/bayma/bayma.js"]
+# The server, and every runtime and program its REPL sessions start, write no
+# core file as they crash, as on an Ubuntu host (a soft limit of 0, which code
+# a session runs may raise): the container runtime leaves the limit unlimited,
+# and the kernel's default core_pattern writes a core into the crashing
+# process's directory, one of the user's own mounted from their machine: a
+# runtime's whole memory, of GBs, at each crash. prlimit execs tini, which
+# stays the container's first process.
+ENTRYPOINT ["prlimit", "--core=0:", "--", "tini", "--", "node", "--disable-warning=ExperimentalWarning", "/opt/bayma/bayma.js"]
 CMD ["mcp-stdio"]

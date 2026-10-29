@@ -123,8 +123,8 @@ async function hookArgv(stateDir: string): Promise<string> {
       IMAGE,
     ]),
   ) as string[];
-  // What tini runs, after its `--`.
-  const [command, ...args] = entrypoint.slice(entrypoint.indexOf("--") + 1);
+  // What tini runs, after its `--`, the last of prlimit's and its own.
+  const [command, ...args] = entrypoint.slice(entrypoint.lastIndexOf("--") + 1);
   const path = await run([
     "docker",
     "run",
