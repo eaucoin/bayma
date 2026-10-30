@@ -2,7 +2,9 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  rmSync,
   statSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -15,7 +17,14 @@ import { recordArtifact } from "./telemetry/index.ts";
 // product version, which the image is tagged with.
 export const PACKAGE_DIR = "packages/server";
 const ENTRYPOINT = join(PACKAGE_DIR, "src", "main.ts");
-export const BUNDLE = "bayma.js";
+/**
+ * The server, bundled for Node into a directory of its own, the image's
+ * /opt/bayma: its entry, bayma.js, and its chunks beside it, which every
+ * command imports but the sandbox hook, which runs on the path of a sandbox's
+ * every save and restore, the entry's own chunk alone loaded.
+ */
+export const BUNDLE_DIR = "bayma";
+export const BUNDLE = join(BUNDLE_DIR, "bayma.js");
 
 // Node prints an ExperimentalWarning for node:sqlite on every start; the
 // state-directory lease is the one thing bayma uses it for, and the warning
@@ -57,7 +66,10 @@ export async function build(
   outDir: string,
 ): Promise<BuildResult> {
   const { version } = packageManifest(repoRoot);
-  mkdirSync(outDir, { recursive: true });
+  const bundleDir = join(outDir, BUNDLE_DIR);
+  // A build's chunks are named by their content: those of one before go.
+  rmSync(bundleDir, { recursive: true, force: true });
+  mkdirSync(bundleDir, { recursive: true });
   const bundle = join(outDir, BUNDLE);
   await runOrThrow(
     [
@@ -68,20 +80,27 @@ export async function build(
       "node",
       "--format",
       "esm",
+      "--splitting",
       "--external",
       "bun:sqlite",
       "--banner",
       SHEBANG,
-      "--outfile",
-      bundle,
+      "--entry-naming",
+      basename(BUNDLE),
+      "--outdir",
+      bundleDir,
     ],
     { cwd: repoRoot },
   );
   if (!existsSync(bundle) || !readFileSync(bundle, "utf8").startsWith(SHEBANG))
     throw new Error(`bun build produced no bundle at ${bundle}`);
-  assertBundleShipsOwnTelemetry(bundle);
+  const files = readdirSync(bundleDir).map((file) => join(bundleDir, file));
+  for (const file of files) assertBundleShipsOwnTelemetry(file);
   chmodSync(bundle, 0o755);
-  recordArtifact(basename(bundle), statSync(bundle).size);
+  recordArtifact(
+    BUNDLE_DIR,
+    files.reduce((bytes, file) => bytes + statSync(file).size, 0),
+  );
   const reported = (
     await runOrThrow(["node", bundle, "version"])
   ).stdout.trim();

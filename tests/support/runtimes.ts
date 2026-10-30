@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { BUNDLE } from "../../tooling/src/build.ts";
 
 export { RUNTIME_IDS, type RuntimeId } from "@bayma/core";
 
@@ -27,7 +28,7 @@ export function nodeExecutable(): string {
 }
 
 /**
- * `BAYMA_BUNDLE` names a built dist/bayma.js; otherwise Node runs the source
+ * `BAYMA_BUNDLE` names a built dist/bayma/bayma.js; otherwise Node runs the source
  * entrypoint, stripping types itself.
  */
 export function launchSpec(): LaunchSpec {
@@ -81,10 +82,10 @@ export async function runSandboxHookCommand(
   return { status, stderr };
 }
 
-/** The bundle e2e tests exercise: `BAYMA_BUNDLE`, else dist/bayma.js. */
+/** The bundle e2e tests exercise: `BAYMA_BUNDLE`, else the build's (dist/bayma/bayma.js). */
 export function bundlePath(): string {
   const path = resolve(
-    process.env.BAYMA_BUNDLE ?? resolve(repoRoot, "dist", "bayma.js"),
+    process.env.BAYMA_BUNDLE ?? resolve(repoRoot, "dist", BUNDLE),
   );
   if (!existsSync(path))
     throw new Error(`bundle ${path} is missing; run bun run build`);

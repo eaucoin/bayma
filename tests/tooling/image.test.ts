@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TOOLBELT_DIR } from "@bayma/core";
-import { BUNDLE, packageManifest } from "../../tooling/src/build.ts";
+import {
+  BUNDLE,
+  BUNDLE_DIR,
+  packageManifest,
+} from "../../tooling/src/build.ts";
 import {
   buildImage,
   imageBuildCommand,
@@ -57,6 +61,7 @@ test("the image carries each of the payload's directories as a layer", () => {
 test("an image is not built from a payload the Dockerfile does not copy whole", async () => {
   const { version } = packageManifest(repoRoot);
   await withTempDir(async (dist) => {
+    mkdirSync(join(dist, BUNDLE_DIR));
     writeFileSync(
       join(dist, BUNDLE),
       `console.log(${JSON.stringify(version)});\n`,

@@ -65,7 +65,7 @@ COPY dist/payload/lean /opt/bayma/payload/lean
 COPY dist/payload/go /opt/bayma/payload/go
 COPY dist/payload/toolbelt /opt/bayma/payload/toolbelt
 COPY dist/payload/payload.json /opt/bayma/payload/payload.json
-COPY dist/bayma.js /opt/bayma/bayma.js
+COPY dist/bayma /opt/bayma
 ENV BAYMA_PAYLOAD_DIR=/opt/bayma/payload
 
 # The server, and every runtime and program its REPL sessions start, write no
