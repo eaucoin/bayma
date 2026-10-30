@@ -16,12 +16,8 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   bindToolbelt,
-  filesClosed,
   installToolbelt,
-  markSandboxResumed,
-  markSandboxSaved,
   PAYLOAD_MANIFEST,
-  startToolbeltInstall,
   TOOLBELT_DIR,
   TOOLBELT_INSTALL_LOCK,
   TOOLBELT_VERSION_FILE,
@@ -520,109 +516,5 @@ test("an install reports its progress as it copies", async () => {
       "bayma: copied 5000 of the toolbelt's files and directories",
       `bayma: installed the 0.3.0 toolbelt at ${toolbeltPath(env)}`,
     ]);
-  });
-});
-
-// It writes and copies thousands of files, which takes seconds where each
-// system call is slow, as in a sandbox.
-test("an install a save catches holds no file open while saved, and a restore installs the toolbelt again from the start", async () => {
-  await withTempDir(async (dir) => {
-    const root = realpathSync(dir);
-    const env = { XDG_DATA_HOME: join(root, "data") };
-    const payload = writePayload(root, "0.3.0");
-    // The save comes as the install reports its first 5,000 files and
-    // directories copied, and only the 32 operations it runs at once end
-    // after: so a thousand more, and the save catches it copying, however
-    // fast it copies.
-    const files = 6_000;
-    writeFiles(join(payload, TOOLBELT_DIR, "bulk"), files);
-    const reports: string[] = [];
-    let caughtCopying: (() => void) | undefined;
-    const saved = new Promise<void>((resolve) => (caughtCopying = resolve));
-    const install = startToolbeltInstall(payload, env, (message) => {
-      reports.push(message);
-      if (!caughtCopying || !message.startsWith("bayma: copied ")) return;
-      markSandboxSaved();
-      caughtCopying();
-      caughtCopying = undefined;
-    });
-    const parent = dirname(toolbeltPath(env));
-    const staged = () =>
-      readdirSync(parent).filter((name) =>
-        /^toolbelt\.[A-Za-z0-9]{6}$/.test(name),
-      );
-    const copied = (staging: string) =>
-      readdirSync(join(parent, staging, "bulk")).length;
-    try {
-      // Saved: what it copies ends, and nothing more is copied meanwhile.
-      await saved;
-      await filesClosed();
-      const [staging] = staged();
-      const before = copied(staging!);
-      expect(before).toBeLessThan(files);
-      await sleep(200);
-      expect(copied(staging!)).toBe(before);
-
-      // Saved live, the sandbox ran on, and stopped, removing what the install
-      // had assembled; then it was restored from the save.
-      rmSync(join(parent, staging!), { recursive: true, force: true });
-      install.restored();
-      markSandboxResumed();
-      await reported(reports, "bayma: installed");
-      expect(reports).toContain(
-        "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed",
-      );
-      expect(installedVersion(env)).toBe("0.3.0\n");
-      expect(readdirSync(join(toolbeltPath(env), "bulk"))).toHaveLength(files);
-      expect(staged()).toEqual([]);
-
-      // Restored once it has installed, it leaves the toolbelt as it is.
-      const said = reports.length;
-      install.restored();
-      await sleep(50);
-      await install.stop();
-      expect(reports.slice(said)).toEqual([]);
-      expect(installedVersion(env)).toBe("0.3.0\n");
-    } finally {
-      markSandboxResumed();
-      await install.stop();
-    }
-  });
-}, 30_000);
-
-test("an install in the background reports how it ended, and stops when told", async () => {
-  await withTempDir(async (dir) => {
-    const root = realpathSync(dir);
-    const payload = writePayload(root, "0.3.0");
-    const reports: string[] = [];
-    const report = (message: string) => reports.push(message);
-
-    const env = { XDG_DATA_HOME: join(root, "data") };
-    const release = holdToolbeltInstallLock(env);
-    const install = startToolbeltInstall(payload, env, report);
-    await reported(reports, "bayma: waiting for another bayma");
-    await install.stop();
-    release();
-    expect(reports.at(-1)).toBe(
-      "bayma: stopped installing the toolbelt, which the next start installs",
-    );
-    expect(existsSync(toolbeltPath(env))).toBe(false);
-
-    // Where the data root cannot be made, the install fails, and says so.
-    writeFileSync(join(root, "file"), "");
-    const failing = startToolbeltInstall(
-      payload,
-      { XDG_DATA_HOME: join(root, "file") },
-      report,
-    );
-    await reported(reports, "bayma: installing the toolbelt failed: ");
-    await failing.stop();
-
-    // Stopping an install that has finished leaves what it installed.
-    const finishing = startToolbeltInstall(payload, env, report);
-    await reported(reports, "bayma: installed");
-    await finishing.stop();
-    expect(installedVersion(env)).toBe("0.3.0\n");
-    expect(reports.at(-1)).toStartWith("bayma: installed");
   });
 });

@@ -158,20 +158,19 @@ Commands:
       --stop-wait-ms): gVisor's runsc
       checkpoint --save-restore-exec-argv, naming the mode in
       GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE. Saving puts what sessions
-      committed on storage, holds requests, timeouts and exec starts, and
-      pauses the toolbelt's install with none of its files open, until the
-      restore or resume; it prints, as JSON, what the save caught: the
-      state generation and the execs running (generation, running:
-      sessionId, execId), which the state directory's last-save.json says
-      too. A restore reads the token file again, starts clients' reconnect
-      grace and idle timeouts again, tells each live session's next exec
-      how it came back, and why the sandbox was stopped where
-      BAYMA_SANDBOX_STOP_REASON says, as the end of a sentence ("it ran
-      out of its memory (4Gi)"), and starts over the toolbelt's install
-      that the save paused. A host whose save fails runs resume, and a
-      save neither follows within ten minutes is given up on. A gVisor
-      sandbox's file locks hold within it alone, so such a host runs one
-      server per state directory.
+      committed on storage, holds requests, timeouts and exec starts
+      until the restore or resume, and stops the toolbelt's install, which
+      runs again from the start once the server runs on; it prints, as
+      JSON, what the save caught: the state generation and the execs
+      running (generation, running: sessionId, execId), which the state
+      directory's last-save.json says too. A restore reads the token file
+      again, starts clients' reconnect grace and idle timeouts again, tells
+      each live session's next exec how it came back, and why the sandbox
+      was stopped where BAYMA_SANDBOX_STOP_REASON says, as the end of a
+      sentence ("it ran out of its memory (4Gi)"). A host whose save fails
+      runs resume, and a save neither follows within ten minutes is given
+      up on. A gVisor sandbox's file locks hold within it alone, so such a
+      host runs one server per state directory.
       The state generation, in the state directory's generation.json as
       { "schemaVersion": 1, "generation": N }, is moved on, on the disk,
       before the server persists any change or tells a client of one as
@@ -213,8 +212,9 @@ Commands:
   install-toolbelt
       install the toolbelt bundled with bayma where the runtime skills name
       it, unless the toolbelt there is already this version's; a server
-      installs it in the background as it starts, and doctor before it
-      reports
+      runs it in the background as it starts, and doctor installs the
+      toolbelt before it reports. SIGTERM stops it once it has removed
+      what it assembled
   help
       show this help
 
@@ -268,15 +268,23 @@ function reportInstall(message: string): void {
 
 /**
  * Serve from the payload, with its environment, while its toolbelt installs
- * in the background: a server answers its clients at once, however long the
- * copy takes, and stops the install as it shuts down, or as it fails to
- * start.
+ * in the background, as `bayma install-toolbelt` run by this same command
+ * installs it, in the environment the server started with: a server answers
+ * its clients at once, however long the copy takes, and stops the install as
+ * it shuts down, or as it fails to start.
  */
 async function serveInstallingToolbelt(
   serve: (toolbelt: ToolbeltInstall) => Promise<never>,
 ): Promise<never> {
   const payload = requirePayloadDir();
-  const toolbelt = startToolbeltInstall(payload, process.env, reportInstall);
+  const toolbelt = startToolbeltInstall(
+    {
+      file: process.execPath,
+      args: [...process.execArgv, process.argv[1]!, "install-toolbelt"],
+    },
+    { ...process.env },
+    reportInstall,
+  );
   applyPayloadEnvironment(payload);
   try {
     return await serve(toolbelt);
@@ -396,10 +404,23 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
       parseCliOptions(args, []);
       await startCommandTelemetry();
       const payload = requirePayloadDir();
+      // Stopped, as a server stops the install it runs, it removes what it
+      // assembled, then ends of the signal.
+      const stopping = new AbortController();
+      process.once("SIGTERM", () => stopping.abort());
       let installed: boolean;
       try {
-        installed = await installToolbelt(payload, process.env, reportInstall);
+        installed = await installToolbelt(
+          payload,
+          process.env,
+          reportInstall,
+          stopping.signal,
+        );
       } catch (error) {
+        if (stopping.signal.aborted) {
+          process.kill(process.pid, "SIGTERM");
+          return;
+        }
         throw new Error(
           `installing the toolbelt at ${toolbeltPath()} failed: ${failureMessage(error)}`,
           { cause: error },

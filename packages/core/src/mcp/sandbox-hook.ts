@@ -11,7 +11,6 @@ import {
   resumesWithin,
   runningTimeout,
 } from "../sandbox.ts";
-import type { ToolbeltInstall } from "../runtime/toolbelt.ts";
 import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
@@ -51,34 +50,19 @@ export interface SandboxHookHandlers {
 }
 
 /**
- * What restoreSandboxServer is given of the server it restores: its sessions,
- * and its toolbelt's install.
- */
-export interface RestoredServer {
-  manager: Pick<SessionManager, "assertSandboxRestorable" | "sandboxRestored">;
-  toolbelt?: Pick<ToolbeltInstall, "restored">;
-}
-
-/**
  * What a server does as its sandbox is restored from a save of `savedAtMs`:
  * it refuses the restore, by throwing, where the state directory has moved on
  * since the save, and then does nothing else of it, as the restore fails.
  * Otherwise it tells each live session's next exec how it came back, and why
- * the sandbox stopped where its host said (`stopReason`), and
- * installs the toolbelt again where the save caught it installing, even when
- * telling the sessions fails.
+ * the sandbox stopped where its host said (`stopReason`).
  */
 export function restoreSandboxServer(
-  { manager, toolbelt }: RestoredServer,
+  manager: Pick<SessionManager, "assertSandboxRestorable" | "sandboxRestored">,
   savedAtMs: number,
   stopReason?: string,
 ): void {
   manager.assertSandboxRestorable();
-  try {
-    manager.sandboxRestored(savedAtMs, stopReason);
-  } finally {
-    toolbelt?.restored();
-  }
+  manager.sandboxRestored(savedAtMs, stopReason);
 }
 
 // A Unix socket's path is at most this many bytes long.

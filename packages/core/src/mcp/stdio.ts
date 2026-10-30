@@ -80,11 +80,7 @@ export async function serveMcpStdio(
         return manager.sandboxSaving();
       },
       restore: async (savedAtMs, stopReason) =>
-        restoreSandboxServer(
-          { manager, toolbelt: config.toolbelt },
-          savedAtMs,
-          stopReason,
-        ),
+        restoreSandboxServer(manager, savedAtMs, stopReason),
     });
   } catch (error) {
     try {

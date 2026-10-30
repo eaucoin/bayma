@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -25,8 +26,18 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { failureMessage } from "../errors.ts";
 import { dataRoot, type PathEnvironment } from "../paths.ts";
 import { removeTreeAsync } from "../remove-tree.ts";
-import { holdingFiles } from "../sandbox.ts";
+import {
+  holdingFiles,
+  runningTimeout,
+  type RunningTimeout,
+} from "../sandbox.ts";
 import { inSpan } from "../telemetry/record.ts";
+import {
+  killedFirstForMemory,
+  ranOutOf,
+  watchMemoryKills,
+  type MemoryKill,
+} from "./memory-kills.ts";
 import { PAYLOAD_MANIFEST } from "./payload-environment.ts";
 import {
   lockSqliteExclusively,
@@ -40,8 +51,8 @@ import {
  * to one stable path under the user's data root, once per version, where the
  * skills name it and an agent can read it with its own tools: the payload
  * lives in bayma's image, which only bayma's own processes can see. A server
- * copies it in the background as it serves; `bayma install-toolbelt` and
- * `bayma doctor` copy it before they finish.
+ * has `bayma install-toolbelt` copy it in the background as it serves;
+ * `bayma install-toolbelt` and `bayma doctor` copy it before they finish.
  */
 
 export const TOOLBELT_DIR = "toolbelt";
@@ -213,7 +224,7 @@ export async function installToolbelt(
       // Only a bayma holding the lock installs, so what is left beside the
       // path was left by one that died installing.
       for (const left of leftovers(target)) {
-        const failure = await holdingFiles(() => removeTreeAsync(left));
+        const failure = await removeTreeAsync(left);
         report(
           failure
             ? `bayma: could not remove ${left}, which an interrupted install left: ${failureMessage(failure)}`
@@ -231,9 +242,8 @@ export async function installToolbelt(
 }
 
 /**
- * Runs the work it is given, at most `limit` at once, none while the server
- * is saved (holdingFiles), and none that has yet to start once `signal`
- * aborts.
+ * Runs the work it is given, at most `limit` at once, and none that has yet
+ * to start once `signal` aborts.
  */
 function limiter(
   limit: number,
@@ -246,10 +256,8 @@ function limiter(
     if (running < limit) running += 1;
     else await new Promise<void>((resolve) => waiting.push(resolve));
     try {
-      return await holdingFiles(() => {
-        signal?.throwIfAborted();
-        return work();
-      });
+      signal?.throwIfAborted();
+      return await work();
     } finally {
       const next = waiting.shift();
       if (next) next();
@@ -342,16 +350,23 @@ async function stageToolbelt(
     if (existsSync(target) || isLink(target)) renameSync(target, replaced);
     renameSync(staging, target);
   } finally {
-    await holdingFiles(async () => {
-      for (const path of [staging, replaced]) {
-        const failure = await removeTreeAsync(path);
-        if (failure)
-          report(
-            `bayma: could not remove ${path}, which the toolbelt's install staged: ${failureMessage(failure)}`,
-          );
-      }
-    });
+    for (const path of [staging, replaced]) {
+      const failure = await removeTreeAsync(path);
+      if (failure)
+        report(
+          `bayma: could not remove ${path}, which the toolbelt's install staged: ${failureMessage(failure)}`,
+        );
+    }
   }
+}
+
+/**
+ * The command that installs the toolbelt in a process of its own, as
+ * `bayma install-toolbelt` does.
+ */
+export interface ToolbeltInstaller {
+  file: string;
+  args: string[];
 }
 
 /** A toolbelt install running while bayma does other work. */
@@ -361,57 +376,139 @@ export interface ToolbeltInstall {
    * assembled is left.
    */
   stop(): Promise<void>;
-  /**
-   * The sandbox was restored from a save: an install the save caught
-   * running stops, as what it assembled may have moved on since, and the
-   * toolbelt is installed again from the start, unless it is current.
-   */
-  restored(): void;
 }
 
-/** Why an install stopped as the sandbox was restored. */
-const RESTORED = new Error("the sandbox was restored");
+/** How long after its install was killed the toolbelt is installed again. */
+export const TOOLBELT_INSTALL_RETRY_MS = 60_000;
+
+/** How an install's process ended, if it started. */
+type InstallEnd =
+  | { failure: Error }
+  | {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      kill: MemoryKill | null;
+      saved: boolean;
+    };
 
 /**
- * Install the toolbelt as `installToolbelt` does, while the caller goes on,
- * as a server serves its clients meanwhile: sessions run from the payload,
- * and only what the runtime skills load from the toolbelt path waits for it.
- * A failure is reported rather than thrown.
+ * Install the toolbelt as `installer` does, `bayma install-toolbelt`, in a
+ * process of its own, while the caller goes on, as a server serves its
+ * clients meanwhile: sessions run from the payload, and only what the runtime
+ * skills load from the toolbelt path waits for it. The process, not the
+ * server, holds what the copy reads and writes, and the kernel kills it
+ * before the server as their cgroup runs out of memory (./memory-kills.ts):
+ * an install killed so, or otherwise, is said, and runs again after
+ * `retryMs`, TOOLBELT_INSTALL_RETRY_MS unless given. A save of the sandbox
+ * stops it, as it would go on copying with files open, and it runs again
+ * once the server runs on, restored or resumed; what it assembled beside the
+ * toolbelt path, which no reader takes for the toolbelt, the next install
+ * removes. A failure is reported rather than thrown.
  */
 export function startToolbeltInstall(
-  payloadRoot: string,
-  env: PathEnvironment,
+  installer: ToolbeltInstaller,
+  env: NodeJS.ProcessEnv,
   report: (message: string) => void,
+  {
+    retryMs = TOOLBELT_INSTALL_RETRY_MS,
+    cgroupDir,
+  }: {
+    retryMs?: number;
+    /** Where the server's cgroup is (./memory-kills.ts): CGROUP_DIR unless given. */
+    cgroupDir?: string;
+  } = {},
 ): ToolbeltInstall {
-  const install = (signal: AbortSignal): Promise<void> =>
-    installToolbelt(payloadRoot, env, report, signal).then(
-      () => undefined,
-      (error: unknown) =>
-        report(
-          !signal.aborted
-            ? `bayma: installing the toolbelt failed: ${failureMessage(error)}`
-            : signal.reason === RESTORED
-              ? "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed"
-              : "bayma: stopped installing the toolbelt, which the next start installs",
-        ),
-    );
-  let stopping = new AbortController();
-  let settled = install(stopping.signal);
   let stopped = false;
+  let running: ChildProcess | undefined;
+  let retrying: { timeout: RunningTimeout; resolve: () => void } | undefined;
+  // Runs the install's process to its end, once the server is not saved,
+  // saying first why it runs again, where it does; undefined where it was
+  // stopped before it started.
+  const run = (again: string | undefined): Promise<InstallEnd | undefined> => {
+    let saved = false;
+    return holdingFiles(
+      () =>
+        inSpan("bayma.toolbelt.install", {}, async () => {
+          if (stopped) return undefined;
+          if (again !== undefined) report(again);
+          const killedForMemory = watchMemoryKills(cgroupDir);
+          const killedFirst = killedFirstForMemory(
+            installer.file,
+            installer.args,
+          );
+          const child = spawn(killedFirst.file, killedFirst.args, {
+            // Its telemetry is the server's: this span.
+            env: { ...env, OTEL_SDK_DISABLED: "true" },
+            // It reports on the server's stderr, and writes nothing on its
+            // stdout, which a server over stdio answers its client on.
+            stdio: ["ignore", 2, 2],
+          });
+          running = child;
+          return new Promise<InstallEnd>((resolve) => {
+            child.once("error", (failure) => resolve({ failure }));
+            child.once("exit", (code, signal) =>
+              resolve({ code, signal, kill: killedForMemory(), saved }),
+            );
+          }).finally(() => (running = undefined));
+        }),
+      () => {
+        saved = true;
+        running?.kill("SIGKILL");
+      },
+    );
+  };
+  const install = async (): Promise<void> => {
+    let again: string | undefined;
+    for (;;) {
+      const end = await run(again);
+      if (end === undefined) return;
+      if ("failure" in end) {
+        report(
+          `bayma: installing the toolbelt failed: ${failureMessage(end.failure)}`,
+        );
+        return;
+      }
+      if (end.code === 0) return;
+      if (end.saved) {
+        again =
+          "bayma: installing the toolbelt again, as the sandbox was saved while it installed";
+        continue;
+      }
+      if (stopped) {
+        report(
+          "bayma: stopped installing the toolbelt, which the next start installs",
+        );
+        return;
+      }
+      if (end.signal === null) {
+        report(
+          `bayma: installing the toolbelt failed: its process exited with code ${end.code}`,
+        );
+        return;
+      }
+      const how =
+        end.signal === "SIGKILL" && end.kill !== null
+          ? `${ranOutOf(end.kill)} and was killed by the kernel`
+          : `was killed (${end.signal})`;
+      report(
+        `bayma: the toolbelt's install ${how}: it is installed again in ${retryMs / 1000} s`,
+      );
+      await new Promise<void>((resolve) => {
+        retrying = { timeout: runningTimeout(resolve, retryMs), resolve };
+      });
+      retrying = undefined;
+      again = "bayma: installing the toolbelt again";
+    }
+  };
+  const settled = install();
   return {
     stop() {
       stopped = true;
-      stopping.abort();
+      // It removes what it assembled before it ends.
+      running?.kill("SIGTERM");
+      retrying?.timeout.clear();
+      retrying?.resolve();
       return settled;
-    },
-    restored() {
-      if (stopped) return;
-      stopping.abort(RESTORED);
-      const next = new AbortController();
-      stopping = next;
-      settled = settled.then(() =>
-        next.signal.aborted ? undefined : install(next.signal),
-      );
     },
   };
 }

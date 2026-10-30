@@ -142,6 +142,47 @@ test("a save waits for the work that holds files open to end, and its files to c
   });
 });
 
+test("a save first stops the work that holds files open and stops rather than pausing, as a process does, then waits for it to end", async () => {
+  await withHookDir(async (dir) => {
+    const { calls, handlers } = recording();
+    const stop = await serveSandboxHook(dir, handlers);
+    let finish = () => {};
+    const installing = holdingFiles(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            calls.push("ended");
+            resolve();
+          };
+        }),
+      () => {
+        calls.push("stopped");
+        setTimeout(finish, 50);
+      },
+    );
+    try {
+      await runSandboxHook(dir, "save");
+      await installing;
+      expect(calls).toEqual(["stopped", "ended", "save, saved"]);
+      // Saved, no work starts, nor is stopped, until the server runs on.
+      let started = false;
+      const next = holdingFiles(
+        async () => void (started = true),
+        () => calls.push("stopped again"),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(started).toBe(false);
+      await runSandboxHook(dir, "resume");
+      await next;
+      expect(started).toBe(true);
+      expect(calls).toEqual(["stopped", "ended", "save, saved"]);
+    } finally {
+      finish();
+      await stop();
+    }
+  });
+});
+
 test("a restore of a server not saved, or saved and resumed since, is refused", async () => {
   await withHookDir(async (dir) => {
     const stop = await serveSandboxHook(dir, recording().handlers);
@@ -404,43 +445,29 @@ test("the hook's mode is one gVisor names", () => {
     );
 });
 
-test("a restored server tells its sessions, then installs the toolbelt again, even where telling them fails, and does neither where the fence refuses", () => {
+test("a restored server tells its sessions, and does not where the fence refuses", () => {
   const calls: string[] = [];
-  const server = (refuses: boolean, fails: boolean) => ({
-    manager: {
-      assertSandboxRestorable: () => {
-        calls.push("fence");
-        if (refuses) throw new Error("the state directory has moved on");
-      },
-      sandboxRestored: (savedAtMs: number, stopReason?: string) => {
-        calls.push(
-          `sessions told of ${savedAtMs}${stopReason === undefined ? "" : `, stopped as ${stopReason}`}`,
-        );
-        if (fails) throw new Error("the notices were not persisted");
-      },
+  const manager = (refuses: boolean) => ({
+    assertSandboxRestorable: () => {
+      calls.push("fence");
+      if (refuses) throw new Error("the state directory has moved on");
     },
-    toolbelt: { restored: () => void calls.push("toolbelt") },
+    sandboxRestored: (savedAtMs: number, stopReason?: string) =>
+      void calls.push(
+        `sessions told of ${savedAtMs}${stopReason === undefined ? "" : `, stopped as ${stopReason}`}`,
+      ),
   });
 
-  restoreSandboxServer(server(false, false), 7);
-  expect(calls.splice(0)).toEqual(["fence", "sessions told of 7", "toolbelt"]);
-  restoreSandboxServer(
-    server(false, false),
-    7,
-    "it ran out of its memory (4Gi)",
-  );
+  restoreSandboxServer(manager(false), 7);
+  expect(calls.splice(0)).toEqual(["fence", "sessions told of 7"]);
+  restoreSandboxServer(manager(false), 7, "it ran out of its memory (4Gi)");
   expect(calls.splice(0)).toEqual([
     "fence",
     "sessions told of 7, stopped as it ran out of its memory (4Gi)",
-    "toolbelt",
   ]);
-  expect(() => restoreSandboxServer(server(false, true), 7)).toThrow(
-    "the notices were not persisted",
-  );
-  expect(calls.splice(0)).toEqual(["fence", "sessions told of 7", "toolbelt"]);
   // Refused, the restore fails, and the server it would have restored does
   // nothing.
-  expect(() => restoreSandboxServer(server(true, false), 7)).toThrow(
+  expect(() => restoreSandboxServer(manager(true), 7)).toThrow(
     "the state directory has moved on",
   );
   expect(calls.splice(0)).toEqual(["fence"]);

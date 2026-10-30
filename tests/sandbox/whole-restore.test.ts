@@ -721,7 +721,7 @@ async function savedLiveThenKilled({
     if (whileInstalling) {
       await logged(
         restored,
-        "bayma: installing the toolbelt again, as the sandbox was restored from a save taken while it installed",
+        "bayma: installing the toolbelt again, as the sandbox was saved while it installed",
       );
       await logged(restored, "bayma: installed the ");
     }

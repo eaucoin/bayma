@@ -25,6 +25,7 @@ export function markSandboxSaved(): void {
     resume = resolve;
   });
   saved = { resumed, resume };
+  for (const stop of stopping) stop();
 }
 
 /** The server runs on: restored, or never saved after all. */
@@ -34,25 +35,33 @@ export function markSandboxResumed(): void {
   resuming?.resume();
 }
 
-// How many pieces of work that hold files open run now (holdingFiles), and
-// who waits for none to (filesClosed).
+// How many pieces of work that hold files open run now (holdingFiles), what
+// stops those of them that a save stops, and who waits for none to run
+// (filesClosed).
 let holding = 0;
+const stopping = new Set<() => void>();
 const closing: (() => void)[] = [];
 
 /**
  * Runs `work`, which holds files open while it runs, once the server is not
- * saved. A save waits for any that runs to end (filesClosed), and none starts
- * while the server is saved: a host restores a sandbox only where each file it
- * held open is as it was, and one saved live runs on, its files with it, so
- * a save that caught a file open could not be restored once that file moved
- * on.
+ * saved. A save waits for any that runs to end (filesClosed), first calling
+ * `stop`, where given, for work that would run on long, as a process does,
+ * and none starts while the server is saved: a host restores a sandbox only
+ * where each file it held open is as it was, and one saved live runs on, its
+ * files with it, so a save that caught a file open could not be restored once
+ * that file moved on.
  */
-export async function holdingFiles<T>(work: () => Promise<T>): Promise<T> {
+export async function holdingFiles<T>(
+  work: () => Promise<T>,
+  stop?: () => void,
+): Promise<T> {
   while (saved) await saved.resumed;
   holding += 1;
+  if (stop) stopping.add(stop);
   try {
     return await work();
   } finally {
+    if (stop) stopping.delete(stop);
     holding -= 1;
     if (holding === 0) for (const closed of closing.splice(0)) closed();
   }
