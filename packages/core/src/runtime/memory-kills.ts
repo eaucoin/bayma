@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // Whether the kernel killed a runtime for its memory, as the cgroup the
 // server runs in (v2) counts its kills (memory.events, oom_kill), and the
@@ -117,6 +118,50 @@ export function watchMemoryKills(dir: string = CGROUP_DIR): MemoryKills {
     const now = killsIn(dir);
     return now !== null && now > before ? { limit: limitIn(dir) } : null;
   };
+}
+
+// How often what the cgroup holds is read as the kernel frees what a process
+// it killed held, for how long it must not fall to be freed, and for how long
+// at most it is read.
+const FREEING_POLL_MS = 20;
+const FREED_AFTER_MS = 100;
+const FREEING_TIMEOUT_MS = 2_000;
+
+/** The anonymous memory the cgroup at `dir` holds, in bytes: null if unreadable. */
+function anonymousIn(dir: string): number | null {
+  try {
+    const line = readFileSync(join(dir, "memory.stat"), "utf8")
+      .split("\n")
+      .find((each) => each.startsWith("anon "));
+    const bytes = Number(line?.slice("anon ".length));
+    return line === undefined || !Number.isSafeInteger(bytes) ? null : bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Settles once the kernel has freed what a process of the cgroup at `dir` it
+ * killed for memory held, as the anonymous memory the cgroup holds has not
+ * fallen for FREED_AFTER_MS, or after FREEING_TIMEOUT_MS, or at once where it
+ * cannot be read. The process may end before its memory is freed, as where
+ * the kernel's reclaim held it as the process died, and the kernel answers
+ * whatever asks the cgroup for memory meanwhile with another kill, of the
+ * next process it sees: a runtime started again at once would be that one.
+ */
+export async function memoryFreed(dir: string = CGROUP_DIR): Promise<void> {
+  const deadline = performance.now() + FREEING_TIMEOUT_MS;
+  let lowest = anonymousIn(dir);
+  let fellAt = performance.now();
+  while (lowest !== null && performance.now() < deadline) {
+    await sleep(FREEING_POLL_MS);
+    const now = anonymousIn(dir);
+    if (now === null) return;
+    if (now < lowest) {
+      lowest = now;
+      fellAt = performance.now();
+    } else if (performance.now() - fellAt >= FREED_AFTER_MS) return;
+  }
 }
 
 /** What a runtime killed for its memory did, as a sentence's end. */

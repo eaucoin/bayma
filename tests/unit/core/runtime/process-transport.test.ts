@@ -1200,6 +1200,63 @@ test("a runtime the kernel kills for its memory, as the server's cgroup counts a
   });
 });
 
+test("a runtime the kernel kills for its memory is said to have ended once the kernel has freed what it held, which may outlast it", async () => {
+  await withTempDir(async (dir) => {
+    const events = join(dir, "memory.events");
+    writeFileSync(events, "oom 0\noom_kill 2\n");
+    writeFileSync(join(dir, "memory.max"), `${1536 * 2 ** 20}\n`);
+    const stat = join(dir, "memory.stat");
+    let anon = 1024 * 2 ** 20;
+    writeFileSync(stat, `anon ${anon}\n`);
+    const transport = new ProcessTransport({
+      platformId: "test",
+      promptRe: /(?:^|[\r\n])READY> /g,
+      command: () => ({
+        file: "/bin/sh",
+        args: [
+          "-c",
+          `printf 'READY> '; read line; printf 'oom 1\\noom_kill 3\\n' > '${events}'; kill -9 $$`,
+        ],
+      }),
+      snapshots: false,
+      cgroupDir: dir,
+    });
+    try {
+      const handle = await transport.startSession({
+        sessionId: "sess_freeing",
+        title: "freeing",
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+        scratchDir: tmpdir(),
+      });
+      await transport.waitForInitialPrompt(handle);
+      const ended = new Promise<{ name: string; atMs: number }>((resolve) => {
+        void transport.subscribe(
+          handle,
+          () => undefined,
+          (error) => resolve({ name: error.name, atMs: performance.now() }),
+        );
+      });
+      // The kernel frees what it held for 300 ms after it ends.
+      await transport.write(handle, "\n");
+      await waitForProcessExit(handle.pid);
+      const freeing = setInterval(() => {
+        anon -= 64 * 2 ** 20;
+        writeFileSync(stat, `anon ${anon}\n`);
+      }, 30);
+      const freedAtMs = performance.now() + 300;
+      await sleep(300);
+      clearInterval(freeing);
+      const { name, atMs } = await ended;
+      expect(name).toBe("RuntimeMemoryKilled");
+      expect(atMs).toBeGreaterThanOrEqual(freedAtMs);
+    } finally {
+      await transport.shutdown();
+    }
+  });
+});
+
 test("a runtime the server kills itself, as its termination kills one that holds out against SIGTERM, is never taken for one killed for its memory, however the cgroup counted", async () => {
   await withTempDir(async (dir) => {
     const events = join(dir, "memory.events");

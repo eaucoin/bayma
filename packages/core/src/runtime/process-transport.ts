@@ -8,6 +8,7 @@ import { aggregateFailure, failureMessage } from "../errors.ts";
 import {
   KILL_FIRST_FOR_MEMORY,
   killedFirstForMemory,
+  memoryFreed,
   ranOutOf,
   RuntimeMemoryKilled,
   watchMemoryKills,
@@ -597,8 +598,11 @@ export class ProcessTransport implements RuntimeTransport {
         ? `${ranOutOf(kill)} and was killed by the kernel`
         : "exited unexpectedly";
       const message = `transport session ${input.sessionId} ${how} (code=${code ?? "null"}, signal=${signal ?? "none"})`;
-      notifyExit(
-        kill ? new RuntimeMemoryKilled(message, kill) : new Error(message),
+      if (!kill) return notifyExit(new Error(message));
+      // Said once the kernel has freed what it held, so that its session's
+      // runtime started again is not what the kernel kills meanwhile.
+      void memoryFreed(this.config.cgroupDir).then(() =>
+        notifyExit(new RuntimeMemoryKilled(message, kill)),
       );
     };
     // `close` follows process exit and the closing of all stdio streams. Exit
