@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
-import { realpathSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import net from "node:net";
-import { join, resolve } from "node:path";
 import { failureMessage } from "../errors.ts";
 import { removeTree } from "../remove-tree.ts";
 import {
@@ -17,39 +16,14 @@ import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
 import { inSpan, report } from "../telemetry/record.ts";
+import {
+  MAX_STOP_REASON_BYTES,
+  parseSandboxHookRequest,
+  sandboxHookSocket,
+  type SandboxHookMode,
+} from "./sandbox-hook-client.ts";
 
-// How a host that saves the whole sandbox bayma runs in, and restores it,
-// perhaps elsewhere and much later, as gVisor's runsc does, tells the server
-// so: it runs `bayma sandbox-hook` in the sandbox before the save and after
-// the restore (`runsc checkpoint --save-restore-exec-argv`, whose mode the
-// command reads from GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE), which passes the
-// mode on to the server over a Unix socket in the server's state directory.
-// It needs no network, which the restored sandbox may not have yet, and no
-// token, which the restore may be about to replace; the state directory's
-// mode keeps it to the server's own user. A host that knows why it stopped
-// the sandbox it restores, as one stopped as it ran out of its memory, says
-// so in BAYMA_SANDBOX_STOP_REASON, which the restore passes on with its mode,
-// for each live session's next exec to be told.
-
-export const SANDBOX_HOOK_MODES = [
-  "save",
-  "restore",
-  "resume",
-  "stop",
-] as const;
-export type SandboxHookMode = (typeof SANDBOX_HOOK_MODES)[number];
-
-/** Where gVisor names the mode of the command it runs. */
-export const SANDBOX_HOOK_MODE_VARIABLE = "GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE";
-
-/**
- * Where a host names why it stopped the sandbox it restores, as the end of
- * a sentence: "it ran out of its memory (4Gi)".
- */
-export const SANDBOX_STOP_REASON_VARIABLE = "BAYMA_SANDBOX_STOP_REASON";
-
-/** The longest reason a restore passes on, in bytes. */
-const MAX_STOP_REASON_BYTES = 256;
+// The server's side of the sandbox hook (./sandbox-hook-client.ts).
 
 /**
  * What the server does at a save and at a restore, while it is saved (see
@@ -119,57 +93,6 @@ const REQUEST_TIMEOUT_MS = 5_000;
 // server runs, as when its host's checkpoint failed and it ran no resume, is
 // given up on: no save takes this long.
 const SAVE_EXPIRY_MS = 10 * 60_000;
-
-/** The socket the server of `stateDir` hears the hook on. */
-export function sandboxHookSocket(stateDir: string): string {
-  return join(stateDir, "sandbox-hook.sock");
-}
-
-export function parseSandboxHookMode(
-  value: string | undefined,
-): SandboxHookMode {
-  if (!(SANDBOX_HOOK_MODES as readonly (string | undefined)[]).includes(value))
-    throw new Error(
-      `the sandbox hook's mode must be ${SANDBOX_HOOK_MODES.join(", ")}, not ${value ?? "none"}`,
-    );
-  return value as SandboxHookMode;
-}
-
-/**
- * The mode a request to the server names, and the reason the sandbox stopped
- * it names after a space, where it names one (parseSandboxStopReason).
- */
-export function parseSandboxHookRequest(
-  request: string,
-): [SandboxHookMode, string | undefined] {
-  const space = request.indexOf(" ");
-  if (space === -1) return [parseSandboxHookMode(request), undefined];
-  return [
-    parseSandboxHookMode(request.slice(0, space)),
-    parseSandboxStopReason(request.slice(space + 1)),
-  ];
-}
-
-/**
- * The reason a host gave why it stopped the sandbox, as the hook sends it
- * and the server takes it: none where it gave none, or an empty one, and
- * refused where it is not one line of at most MAX_STOP_REASON_BYTES, the
- * refusal naming where it was given, `from`, where it says.
- */
-export function parseSandboxStopReason(
-  value: string | undefined,
-  from?: string,
-): string | undefined {
-  if (value === undefined || value === "") return undefined;
-  const of = from === undefined ? "" : ` (${from})`;
-  if (/[\r\n]/u.test(value))
-    throw new Error(`the reason the sandbox stopped must be one line${of}`);
-  if (Buffer.byteLength(value) > MAX_STOP_REASON_BYTES)
-    throw new Error(
-      `the reason the sandbox stopped must be at most ${MAX_STOP_REASON_BYTES} bytes${of}`,
-    );
-  return value;
-}
 
 /**
  * Hears the hook for the server whose state directory, which it holds the
@@ -360,48 +283,4 @@ export async function serveSandboxHook(
         resolveClose();
       });
     });
-}
-
-/**
- * Tells the server of `stateDir` that its sandbox is at `mode`, a restore
- * with why its host stopped the sandbox where it says (`stopReason`), and
- * waits for it to have done what that takes: what it answers, a save what it
- * caught, as JSON (SandboxSave), the others nothing. Throws what it could
- * not do.
- */
-export async function runSandboxHook(
-  stateDir: string,
-  mode: SandboxHookMode,
-  stopReason?: string,
-): Promise<string | undefined> {
-  const reason = parseSandboxStopReason(
-    stopReason,
-    SANDBOX_STOP_REASON_VARIABLE,
-  );
-  const request = reason === undefined ? `${mode}\n` : `${mode} ${reason}\n`;
-  // The server's state directory is where its lease resolved it to.
-  const path = sandboxHookSocket(realpathSync(resolve(stateDir)));
-  const answer = await new Promise<string>((resolveAnswer, rejectAnswer) => {
-    let received = "";
-    const socket = net.connect(path, () => socket.write(request));
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk) => {
-      received += chunk;
-    });
-    socket.on("end", () => resolveAnswer(received));
-    socket.on("error", (error) =>
-      rejectAnswer(
-        new Error(
-          `no bayma server answers on ${path}: ${failureMessage(error)}`,
-          { cause: error },
-        ),
-      ),
-    );
-  });
-  if (answer === "ok\n") return undefined;
-  if (answer.startsWith("ok ") && answer.endsWith("\n"))
-    return answer.slice("ok ".length, -1);
-  throw new Error(
-    `the bayma server of ${stateDir} could not ${mode}: ${answer.trimEnd() || "it closed the connection"}`,
-  );
 }

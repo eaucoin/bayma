@@ -6,7 +6,8 @@
 
 // Engine: one adapter, one state directory, one session manager.
 export { createEngine, type Engine, type EngineConfig } from "./engine.ts";
-export { runCli, parseCliOptions, parseRuntimeMemoryBudget } from "./cli.ts";
+export { runCli, parseRuntimeMemoryBudget } from "./cli.ts";
+export { parseCliOptions } from "./cli-options.ts";
 export {
   runDoctor,
   doctorSuccessOutput,
@@ -83,6 +84,7 @@ export * from "./sandbox.ts";
 export { serveMcpStdio, type McpStdioConfig } from "./mcp/stdio.ts";
 export { serveMcpHttp, type McpHttpConfig } from "./mcp/http.ts";
 export * from "./mcp/sandbox-hook.ts";
+export * from "./mcp/sandbox-hook-client.ts";
 export * from "./mcp/held-stop.ts";
 export {
   createMcpApplication,

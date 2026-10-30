@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseCliOptions } from "./cli-options.ts";
 import type { RuntimeAdapter } from "./runtime/adapter.ts";
 import { parseRuntimeId, RUNTIME_IDS, type RuntimeId } from "./runtime/id.ts";
 import { applyPayloadEnvironment } from "./runtime/payload-environment.ts";
@@ -11,12 +12,7 @@ import {
 } from "./runtime/toolbelt.ts";
 import { runDoctor } from "./doctor.ts";
 import { serveMcpHttp } from "./mcp/http.ts";
-import {
-  parseSandboxHookMode,
-  runSandboxHook,
-  SANDBOX_HOOK_MODE_VARIABLE,
-  SANDBOX_STOP_REASON_VARIABLE,
-} from "./mcp/sandbox-hook.ts";
+import { runSandboxHookCommand } from "./mcp/sandbox-hook-client.ts";
 import { serveMcpStdio } from "./mcp/stdio.ts";
 import { defaultStateDir } from "./paths.ts";
 import { readTokenFile } from "./token-file.ts";
@@ -34,26 +30,6 @@ import {
 // The command surface of the `bayma` binary.
 
 const BINARY = "bayma";
-
-export function parseCliOptions(
-  args: string[],
-  allowedNames: readonly string[],
-): ReadonlyMap<string, string> {
-  const allowed = new Set(allowedNames);
-  const parsed = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 2) {
-    const name = args[index]!;
-    const value = args[index + 1];
-    if (!allowed.has(name)) throw new Error(`unknown option ${name}`);
-    if (parsed.has(name))
-      throw new Error(`option ${name} may be provided only once`);
-    if (value === undefined || value.startsWith("--")) {
-      throw new Error(`option ${name} requires one value`);
-    }
-    parsed.set(name, value);
-  }
-  return parsed;
-}
 
 function option(
   options: ReadonlyMap<string, string>,
@@ -381,34 +357,8 @@ async function runCommand(adapters: readonly RuntimeAdapter[]): Promise<void> {
       );
       return;
     }
-    case "sandbox-hook": {
-      // gVisor runs the command with its mode in the environment, unless
-      // the command names one first.
-      const named = args.length % 2 === 1 ? args[0] : undefined;
-      const parsed = parseCliOptions(
-        named === undefined ? args : args.slice(1),
-        ["--state-dir"],
-      );
-      // A host runs the hook from a directory of its own, such as the
-      // sandbox's root, not the server's: the state directory is named.
-      const stateDir = parsed.get("--state-dir");
-      if (stateDir === undefined)
-        throw new Error("sandbox-hook needs --state-dir, its server's");
-      // The server records what the hook sets off; this process only asks
-      // it to, so it exports no telemetry of its own.
-      const mode = parseSandboxHookMode(
-        named ?? process.env[SANDBOX_HOOK_MODE_VARIABLE],
-      );
-      const caught = await runSandboxHook(
-        stateDir,
-        mode,
-        mode === "restore"
-          ? process.env[SANDBOX_STOP_REASON_VARIABLE]
-          : undefined,
-      );
-      if (caught !== undefined) console.log(caught);
-      return;
-    }
+    case "sandbox-hook":
+      return runSandboxHookCommand(args);
     case "doctor": {
       const parsed = parseCliOptions(args, [
         "--runtime",
