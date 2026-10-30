@@ -1,5 +1,11 @@
 import { expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdirSync, readlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -7,6 +13,7 @@ import {
   aggregateFailure,
   CriuSnapshotter,
   describeFailure,
+  KILLED_FIRST_FOR_MEMORY,
   ProcessTransport,
   SESSION_PID_FLOOR,
   type ProcessSnapshotter,
@@ -583,6 +590,15 @@ test("a restore that fails says how CRIU ended, what it printed, and its log's e
     await expect(restore(notExecutable)).rejects.toThrow(
       /^restoring session sess_unrestored failed:\nCRIU could not start: .*EACCES/,
     );
+    // The kernel refuses to execute CRIU for a process whose bounding set
+    // lacks its capabilities, which the shell it runs in says as it exits.
+    const uncapable = script(
+      "uncapable",
+      'echo "sh: 1: exec: $0: Operation not permitted" >&2; exit 126',
+    );
+    await expect(restore(uncapable)).rejects.toThrow(
+      `restoring session sess_unrestored failed:\nCRIU could not start (spawn ${uncapable} EPERM): the capabilities it runs with are not all in this process's bounding set; run bayma's container with --cap-add CHECKPOINT_RESTORE --cap-add SYS_PTRACE --security-opt seccomp=unconfined`,
+    );
     await expect(restore(script("killed", "kill -KILL $$"))).rejects.toThrow(
       "restoring session sess_unrestored failed:\nCRIU was killed by SIGKILL",
     );
@@ -1081,6 +1097,36 @@ test("terminating a session whose runtime has exited ends what it started that l
   } finally {
     if (holderPid && processExists(holderPid))
       process.kill(holderPid, "SIGKILL");
+    await transport.shutdown();
+  }
+});
+
+test("the kernel kills a runtime before the server as their cgroup runs out of memory, the server's own adjustment left as it was", async () => {
+  const adjustment = (pid: number) =>
+    readFileSync(`/proc/${pid}/oom_score_adj`, "utf8").trim();
+  const server = adjustment(process.pid);
+  const transport = new ProcessTransport({
+    platformId: "test",
+    promptRe: /(?:^|[\r\n])READY> /g,
+    command: () => ({
+      file: "/bin/sh",
+      args: ["-c", "printf 'READY> '; while :; do sleep 1; done"],
+    }),
+    snapshots: false,
+  });
+  try {
+    const handle = await transport.startSession({
+      sessionId: "sess_first",
+      title: "first",
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      scratchDir: tmpdir(),
+    });
+    await transport.waitForInitialPrompt(handle);
+    expect(adjustment(handle.pid)).toBe(String(KILLED_FIRST_FOR_MEMORY));
+    expect(adjustment(process.pid)).toBe(server);
+  } finally {
     await transport.shutdown();
   }
 });

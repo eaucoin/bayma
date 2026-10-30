@@ -278,7 +278,7 @@ async function missingRuntimeFails(
 
 // Whether a transport has a snapshotter is the machine's, unless it is given
 // one or none: each test gives its own, so that it holds wherever it runs.
-test("process transport reports spawn errors instead of crashing", async () => {
+test("process transport reports a runtime it cannot run instead of crashing", async () => {
   await missingRuntimeFails(
     new ProcessTransport({
       platformId: "test",
@@ -287,7 +287,9 @@ test("process transport reports spawn errors instead of crashing", async () => {
       command: () => ({ file: MISSING_COMMAND, args: [] }),
       snapshots: false,
     }),
-    ["failed to start", MISSING_COMMAND],
+    // The shell that has the kernel kill it first cannot run it, and says so
+    // as it exits.
+    ["exited unexpectedly (code=127", `${MISSING_COMMAND}: not found`],
   );
 });
 

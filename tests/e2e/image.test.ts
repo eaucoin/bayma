@@ -663,11 +663,15 @@ test.serial(
       "held = bytearray(1024 << 20)\nfor at in range(0, len(held), 4096): held[at] = 1";
     // The exec ends in error saying why, and how what ran it ended: the
     // runtime, of the kernel's SIGKILL; CRIU, which ran a restored one, of
-    // itself, as its tree did.
-    const killed = (snapshot: ExecSnapshot, ended: string) => ({
+    // itself, as its tree did, or of the kernel's SIGKILL too: the kernel
+    // kills it, not the server, where the server asks for memory while the
+    // tree's is still being freed (packages/core/src/runtime/memory-kills.ts).
+    const killed = (snapshot: ExecSnapshot, ...endings: string[]) => ({
       status: snapshot.status,
-      killed: snapshot.error_text?.includes(
-        `ran out of its memory (768Mi) and was killed by the kernel ${ended}`,
+      killed: endings.some((ended) =>
+        snapshot.error_text?.includes(
+          `ran out of its memory (768Mi) and was killed by the kernel ${ended}`,
+        ),
       ),
       snapshot,
     });
@@ -736,6 +740,7 @@ test.serial(
           killed(
             await execSettled(second.client, restored, hog),
             "(code=0, signal=none)",
+            "(code=null, signal=SIGKILL)",
           ),
         ).toMatchObject({ status: "error", killed: true });
         await cameBack(

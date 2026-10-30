@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readlinkSync } from "node:fs";
+import { accessSync, constants, readlinkSync } from "node:fs";
 import type { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { aggregateFailure, failureMessage } from "../errors.ts";
 import {
+  KILL_FIRST_FOR_MEMORY,
+  killedFirstForMemory,
   ranOutOf,
   RuntimeMemoryKilled,
   watchMemoryKills,
@@ -150,13 +152,39 @@ const RESTORE_TIMEOUT_MS = 60_000;
 const RESTORE_POLL_MS = 20;
 
 /**
- * Runs a runtime, given as its arguments, once it has written its stdio, as
- * the kernel names them, to descriptor 3, and closed that: the runtime, the
- * same process, may move them as it starts, as the Go host does, and what a
- * snapshot hands new stdio in place of is what they were. The names are read
- * before `>&3` applies, which the shell does in its own descriptors.
+ * Runs a runtime, given as its arguments, killed first for memory, once it
+ * has written its stdio, as the kernel names them, to descriptor 3, and
+ * closed that: the runtime, the same process, may move them as it starts, as
+ * the Go host does, and what a snapshot hands new stdio in place of is what
+ * they were. The names are read before `>&3` applies, which the shell does in
+ * its own descriptors.
  */
-const RECORD_STDIO = `printf '%s\\n' "$(readlink /proc/$$/fd/0)" "$(readlink /proc/$$/fd/1)" "$(readlink /proc/$$/fd/2)" >&3; exec 3>&-; exec "$0" "$@"`;
+const RECORD_STDIO = `${KILL_FIRST_FOR_MEMORY}; printf '%s\\n' "$(readlink /proc/$$/fd/0)" "$(readlink /proc/$$/fd/1)" "$(readlink /proc/$$/fd/2)" >&3; exec 3>&-; exec "$0" "$@"`;
+
+// The status a POSIX shell exits with where it cannot execute a command.
+const NOT_EXECUTABLE = 126;
+
+/**
+ * CRIU, at `file`, ending as the shell that has the kernel kill it first
+ * (./memory-kills.ts) says it ended, `output`: where the kernel refused to
+ * execute it, as it does for a process whose bounding set lacks any of the
+ * capabilities CRIU's binary holds, as Node's spawn of it says that, EPERM;
+ * undefined where it ended otherwise.
+ */
+function criuRefused(
+  file: string,
+  ended: CriuExit,
+  output: string,
+): CriuExit | undefined {
+  if (
+    ended.status !== NOT_EXECUTABLE ||
+    !output.includes(`${file}: Operation not permitted`)
+  )
+    return undefined;
+  const error: NodeJS.ErrnoException = new Error(`spawn ${file} EPERM`);
+  error.code = "EPERM";
+  return { error, status: null, signal: null };
+}
 
 /** What `pid` holds at each of `fds`, as the kernel names it, if it can be read. */
 function heldStdio(
@@ -391,14 +419,18 @@ export class ProcessTransport implements RuntimeTransport {
     // Counted as it starts, so no kill before it started is taken for its own
     // (./memory-kills.ts says what the count cannot tell apart).
     const killedForMemory = watchMemoryKills(this.config.cgroupDir);
-    const child = (
-      recordStdio
-        ? spawn("/bin/sh", ["-c", RECORD_STDIO, file, ...args], {
-            ...options,
-            stdio: ["pipe", "pipe", "pipe", "pipe"],
-          })
-        : spawn(file, args, { ...options, stdio: ["pipe", "pipe", "pipe"] })
-    ) as ChildProcessWithoutNullStreams;
+    // The kernel kills the session's processes before the server: this one,
+    // what it starts, and what CRIU restores, which keeps the adjustment its
+    // snapshot caught (./memory-kills.ts).
+    const run = recordStdio
+      ? { file: "/bin/sh", args: ["-c", RECORD_STDIO, file, ...args] }
+      : killedFirstForMemory(file, args);
+    const child = spawn(run.file, run.args, {
+      ...options,
+      stdio: recordStdio
+        ? ["pipe", "pipe", "pipe", "pipe"]
+        : ["pipe", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams;
 
     const handle: TransportSessionHandle = {
       sessionId: input.sessionId,
@@ -659,6 +691,9 @@ export class ProcessTransport implements RuntimeTransport {
       );
     let state: BrokerState;
     try {
+      // The shell that runs CRIU would say only that it exited, of a CRIU
+      // missing or not executable.
+      accessSync(command.file, constants.X_OK);
       state = this.launch(
         input,
         command.file,
@@ -668,8 +703,6 @@ export class ProcessTransport implements RuntimeTransport {
         true,
       );
     } catch (error) {
-      // Node throws the spawn errors it does not expect, EPERM among them,
-      // rather than emitting them.
       throw failed(
         criuEnding({ error: error as Error, status: null, signal: null }),
       );
@@ -686,13 +719,17 @@ export class ProcessTransport implements RuntimeTransport {
     let restored = snapshotter.restoredPid(directory);
     while (restored === undefined) {
       if (state.terminalError || Date.now() > deadline) {
-        const failure = failed(
-          ended
-            ? criuEnding(ended)
-            : (state.terminalError?.message ??
-                `CRIU did not finish restoring within ${RESTORE_TIMEOUT_MS} ms`),
-          recentOutput(state),
-        );
+        const output = recentOutput(state);
+        const refused = ended && criuRefused(command.file, ended, output);
+        const failure = refused
+          ? failed(criuEnding(refused))
+          : failed(
+              ended
+                ? criuEnding(ended)
+                : (state.terminalError?.message ??
+                    `CRIU did not finish restoring within ${RESTORE_TIMEOUT_MS} ms`),
+              output,
+            );
         await this.terminate(state.handle);
         throw failure;
       }
