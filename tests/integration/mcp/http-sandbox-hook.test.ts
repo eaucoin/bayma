@@ -263,7 +263,7 @@ test(
 
       const told = (snapshot: { notice?: string }) =>
         snapshot.notice?.match(
-          /^bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at (\S+), after the sandbox was stopped as it ran out of its memory \(4Gi\); its live state is as it was then, so what ran in it since is gone, but its network connections were closed\.$/,
+          /^bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at (\S+), after the sandbox was stopped as it ran out of its memory \(4Gi\); its live state is as it was then, so what ran in it since is gone\. Its connections over loopback, within the sandbox, are as they were too, but those beyond it were closed, unless the sandbox came back at the same address and its host kept them\.$/,
         )?.[1];
       const finished = await client.callTool<{
         done: boolean;

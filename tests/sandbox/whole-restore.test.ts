@@ -9,6 +9,11 @@ import {
 } from "@modelcontextprotocol/client";
 import { CallToolResultSchema } from "@modelcontextprotocol/core";
 import { RUNTIME_IDS, type ExecActivity, type RuntimeId } from "@bayma/core";
+import {
+  holdConnections,
+  PROBE_CONNECTIONS,
+  startEchoServer,
+} from "../support/held-connections.ts";
 
 // bayma as a host that saves whole sandboxes runs it: the image `bun run
 // image` builds, in a gVisor sandbox under Docker, saved by runsc beside
@@ -16,12 +21,14 @@ import { RUNTIME_IDS, type ExecActivity, type RuntimeId } from "@bayma/core";
 // container, on another address, after its clients' idle timeout has
 // passed. Its sessions in every runtime come back with their live state,
 // the exec it was running goes on, an MCP SDK client that held its MCP
-// session carries on in it at the new address, and the server answers the
-// token its new container gave it alone. Saved live, left running and then
-// killed, it comes back from that save too, and, saved as it installed its
-// toolbelt, installs it again; told a client of a change after the save, it
-// refuses to be restored from it. Its runtime memory budget holds a Go host
-// in the sandbox, whose /proc says its memory in smaps alone.
+// session carries on in it at the new address, a session's connection over
+// loopback still answers while its connection beyond the sandbox was closed,
+// as its notice says, and the server answers the token its new container
+// gave it alone. Saved live, left running and then killed, it comes back
+// from that save too, and, saved as it installed its toolbelt, installs it
+// again; told a client of a change after the save, it refuses to be
+// restored from it. Its runtime memory budget holds a Go host in the
+// sandbox, whose /proc says its memory in smaps alone.
 //
 // It needs root through sudo, Docker with gVisor's runsc registered as the
 // runtime `runsc`, and Docker's experimental features, which restore a
@@ -344,6 +351,7 @@ test(
       `bayma-saved-${suffix}`,
       `bayma-restored-${suffix}`,
     ];
+    const peer = await startEchoServer();
     try {
       await run(container("run", saved, home, stateDir, tokenFile));
       const savedUrl = await serving(saved);
@@ -366,6 +374,20 @@ test(
           status: "ok",
         });
       }
+      const connected = await call<{ session: { session_id: string } }>(
+        first.client,
+        "session.create",
+        { runtime: "python", title: "sandbox-connections", cwd: home },
+      );
+      const holding = await exec(
+        first.client,
+        connected.session.session_id,
+        holdConnections(peer),
+      );
+      expect({
+        status: holding.status,
+        result: holding.result_text.trim(),
+      }).toEqual({ status: "ok", result: "('open', 'open')" });
       const busy = await call<{ session: { session_id: string } }>(
         first.client,
         "session.create",
@@ -402,6 +424,15 @@ test(
       // Saved beside Docker's shim, running bayma's hook first, as a node
       // agent saves a pod's sandbox.
       const id = await run(["docker", "inspect", "--format", "{{.Id}}", saved]);
+      const address = (name: string) =>
+        run([
+          "docker",
+          "inspect",
+          "--format",
+          "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+          name,
+        ]);
+      const savedAddress = await address(saved);
       const image = join(images, "checkpoint");
       const savingAtMs = Date.now();
       await run([
@@ -431,6 +462,11 @@ test(
       const restoredId = await run(
         container("create", restored, home, stateDir, tokenFile),
       );
+      // On a network of its own, as a pod restored elsewhere is: Docker would
+      // give it the saved container's address again on the same one.
+      await run(["docker", "network", "create", restored]);
+      await run(["docker", "network", "disconnect", "bridge", restored]);
+      await run(["docker", "network", "connect", restored, restored]);
       // Docker restores a container from a checkpoint among its own.
       const checkpoints = `/var/lib/docker/containers/${restoredId}/checkpoints`;
       await run(["sudo", "mkdir", "-p", checkpoints]);
@@ -440,6 +476,7 @@ test(
       const restoredUrl = await serving(restored);
       console.log(`restored in ${Date.now() - restoringAtMs} ms`);
       expect(restoredId).not.toBe(id);
+      expect(await address(restored)).not.toBe(savedAddress);
 
       expect((await activity(restoredUrl, "first-token")).status).toBe(401);
       // The idle MCP session outlived its idle timeout while saved.
@@ -510,6 +547,24 @@ test(
       expect(Number(monotonic.result_text)).toBeGreaterThanOrEqual(
         SAVED_FOR_MS,
       );
+      // Its connection over loopback came back with the sandbox; gVisor
+      // closed the one beyond it, whose address the sandbox no longer has.
+      const probed = await exec(
+        second.client,
+        connected.session.session_id,
+        PROBE_CONNECTIONS,
+      );
+      expect({
+        status: probed.status,
+        result: probed.result_text.trim(),
+        notice: probed.notice,
+      }).toEqual({
+        status: "ok",
+        result: "('open', 'closed')",
+        notice: expect.stringMatching(
+          /^bayma: this session came back whole with bayma's sandbox, .* Its connections over loopback, within the sandbox, are as they were too, but those beyond it were closed, unless the sandbox came back at the same address and its host kept them\.$/,
+        ),
+      });
       expect(
         (await (
           await activity(restoredUrl, "second-token")
@@ -523,11 +578,13 @@ test(
       });
       await second.client.close();
     } finally {
+      peer.stop();
       // What is left goes, without hiding why the test failed, if it did.
       for (const name of [saved, restored]) {
         console.log(await logs(name));
         await run(["docker", "rm", "--force", name]).catch(() => undefined);
       }
+      await run(["docker", "network", "rm", restored]).catch(() => undefined);
       await run(["sudo", "rm", "-rf", images, home]).catch((error) =>
         console.error(error),
       );

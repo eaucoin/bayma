@@ -65,10 +65,16 @@ test("a notice opens a snapshot's text, which is the notice alone without output
   );
 });
 
-test("a sandbox's restore is told with when its snapshot was taken, and why its host stopped the sandbox where it said", () => {
+test("a session restored from its process snapshot is told its connections were closed, over loopback too", () => {
+  expect(describeExecNotice({ returnedFrom: "process_snapshot" })).toBe(
+    "bayma: this session came back whole after the server it ran in stopped; its live state survived, but its network connections were closed, those over loopback too.",
+  );
+});
+
+test("a sandbox's restore is told with when its snapshot was taken, why its host stopped the sandbox where it said, and that its connections over loopback are as they were", () => {
   const notice = { returnedFrom: "sandbox_snapshot", snapshotAtMs: 0 } as const;
   expect(describeExecNotice(notice)).toBe(
-    "bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at 1970-01-01T00:00:00.000Z; its live state is as it was then, but its network connections were closed.",
+    "bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at 1970-01-01T00:00:00.000Z; its live state is as it was then. Its connections over loopback, within the sandbox, are as they were too, but those beyond it were closed, unless the sandbox came back at the same address and its host kept them.",
   );
   expect(
     describeExecNotice({
@@ -76,7 +82,7 @@ test("a sandbox's restore is told with when its snapshot was taken, and why its 
       stopReason: "it ran out of its memory (4Gi)",
     }),
   ).toBe(
-    "bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at 1970-01-01T00:00:00.000Z, after the sandbox was stopped as it ran out of its memory (4Gi); its live state is as it was then, so what ran in it since is gone, but its network connections were closed.",
+    "bayma: this session came back whole with bayma's sandbox, restored from a snapshot taken at 1970-01-01T00:00:00.000Z, after the sandbox was stopped as it ran out of its memory (4Gi); its live state is as it was then, so what ran in it since is gone. Its connections over loopback, within the sandbox, are as they were too, but those beyond it were closed, unless the sandbox came back at the same address and its host kept them.",
   );
 });
 

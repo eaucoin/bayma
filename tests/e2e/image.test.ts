@@ -10,11 +10,17 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  describeExecNotice,
   DOCTOR_RESULT_SCHEMA_VERSION,
   doctorSuccessOutput,
   RUNTIME_IDS,
   type RuntimeId,
 } from "@bayma/core";
+import {
+  holdConnections,
+  PROBE_CONNECTIONS,
+  startEchoServer,
+} from "../support/held-connections.ts";
 import {
   McpStdioClient,
   waitForSettledExec,
@@ -406,6 +412,69 @@ test.serial(
       // Restored snapshots are deleted, and closed sessions leave nothing.
       expect(readdirSync(join(stateDir, "snapshots"))).toEqual([]);
     } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+test.serial(
+  "a REPL session restored from its process snapshot finds its connections closed, over loopback too, as it is told",
+  async () => {
+    const { home, stateDir } = makeHome();
+    const peer = await startEchoServer();
+    try {
+      let sessionId: string;
+      const first = await serve(home, stateDir);
+      try {
+        const created = await first.client.callTool<{
+          session: { session_id: string };
+        }>("session.create", {
+          runtime: "python",
+          title: "connections",
+          cwd: home,
+        });
+        sessionId = created.session.session_id;
+        const held = await execSettled(
+          first.client,
+          sessionId,
+          holdConnections(peer),
+        );
+        expect({
+          status: held.status,
+          result: held.result_text?.trim(),
+        }).toEqual({ status: "ok", result: "('open', 'open')" });
+      } finally {
+        await first.stop();
+      }
+
+      const second = await serve(home, stateDir);
+      try {
+        await second.client.callTool("session.acquire_controller", {
+          session_id: sessionId,
+        });
+        const probed = await execSettled(
+          second.client,
+          sessionId,
+          PROBE_CONNECTIONS,
+        );
+        expect({
+          status: probed.status,
+          result: probed.result_text?.trim(),
+          notice: probed.notice,
+        }).toEqual({
+          status: "ok",
+          result: "('closed', 'closed')",
+          notice: describeExecNotice({ returnedFrom: "process_snapshot" }),
+        });
+        await second.client.callTool("session.close", {
+          session_id: sessionId,
+        });
+      } finally {
+        await second.stop();
+      }
+    } finally {
+      peer.stop();
       rmSync(home, { recursive: true, force: true });
     }
   },

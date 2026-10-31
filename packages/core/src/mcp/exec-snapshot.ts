@@ -176,8 +176,16 @@ export function describeExecNotice(notice: ExecNotice): string {
   switch (notice.returnedFrom) {
     case "checkpoint":
       return "bayma: this session came back from its checkpoint after the server it ran in stopped; only its checkpointed state survived, and the rest of its live state is gone.";
+    // CRIU restores every TCP connection closed, as bayma runs it with
+    // --tcp-close, those whose both ends it restored, over loopback, too.
     case "process_snapshot":
-      return "bayma: this session came back whole after the server it ran in stopped; its live state survived, but its network connections were closed.";
+      return "bayma: this session came back whole after the server it ran in stopped; its live state survived, but its network connections were closed, those over loopback too.";
+    // gVisor's netstack saves and restores a TCP connection over a link it
+    // can save, as its loopback is, with the rest of the sandbox. One over
+    // the sandbox's own network it ends where its host keeps it from
+    // migrating connections (allow-live-tcp-migration), and otherwise brings
+    // back only where the restored sandbox still has the connection's
+    // address.
     case "sandbox_snapshot":
       return `bayma: this session came back whole with bayma's sandbox, restored from a snapshot${
         notice.snapshotAtMs === undefined
@@ -187,7 +195,7 @@ export function describeExecNotice(notice: ExecNotice): string {
         notice.stopReason === undefined
           ? "; its live state is as it was then"
           : `, after the sandbox was stopped as ${notice.stopReason}; its live state is as it was then, so what ran in it since is gone`
-      }, but its network connections were closed.`;
+      }. Its connections over loopback, within the sandbox, are as they were too, but those beyond it were closed, unless the sandbox came back at the same address and its host kept them.`;
     case "memory_budget": {
       const memory = notice.memory;
       const mib = (bytes: number) => `${Math.round(bytes / 1024 ** 2)} MiB`;
