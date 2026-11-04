@@ -339,7 +339,7 @@ test.serial(
 );
 
 test.serial(
-  "the image's server runs without V8's memory reducer, and collects its garbage as a save ends its sandbox, never as one leaves it running",
+  "the image's server runs without V8's memory reducer, and collects its garbage and its Bun sessions' as a save ends its sandbox, never as one leaves it running",
   async () => {
     const { home, stateDir } = makeHome();
     const sink = new OtlpSink();
@@ -362,6 +362,10 @@ test.serial(
           session: { session_id: string };
         }>("session.create", { runtime: "python", title: "flags", cwd: home });
         const sessionId = created.session.session_id;
+        // A Bun session waiting at its prompt, which collects with the server.
+        const bun = await server.client.callTool<{
+          session: { session_id: string };
+        }>("session.create", { runtime: "bun", title: "collect", cwd: home });
         const servers = await execSettled(
           server.client,
           sessionId,
@@ -428,14 +432,16 @@ test.serial(
         const [collected, ...again] = named("bayma.sandbox.collect");
         expect(again).toEqual([]);
         expect(collected!.parentSpanId).toBe(saves[1]!.spanId);
+        expect(collected!.attributes["bayma.sandbox.collect.runtimes"]).toBe(1);
         const before = collected!.attributes["bayma.server.heap.before"];
         expect(before).toBeNumber();
         expect(
           collected!.attributes["bayma.server.heap.after"],
         ).toBeLessThanOrEqual(before as number);
-        await server.client.callTool("session.close", {
-          session_id: sessionId,
-        });
+        for (const closing of [sessionId, bun.session.session_id])
+          await server.client.callTool("session.close", {
+            session_id: closing,
+          });
       } finally {
         await server.stop();
       }

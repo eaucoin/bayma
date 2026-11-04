@@ -164,8 +164,9 @@ Commands:
       JSON, what the save caught: the state generation and the execs
       running (generation, running: sessionId, execId), which the state
       directory's last-save.json says too. A save that ends the sandbox
-      collects the server's garbage last, so that the save holds less of
-      its memory; one that leaves it running, as its host says with
+      then has each Bun session waiting at its prompt collect its garbage,
+      and collects the server's, so that the save holds less of their
+      memory; one that leaves it running, as its host says with
       --leave-running, as it says to runsc checkpoint, collects none, which
       would rewrite pages the next such save writes again. runsc runs the
       hook with a save's arguments at the restore or resume after it too,

@@ -38,6 +38,12 @@ export interface SandboxHookHandlers {
    */
   save: () => Promise<SandboxSave>;
   /**
+   * Once a save that ends the sandbox has what it catches, before the server
+   * collects its own garbage: have the sessions' runtimes collect theirs,
+   * and say how many did.
+   */
+  collect: () => Promise<number>;
+  /**
    * After the sandbox was restored from what it saved at `savedAtMs`: its
    * connections to the outside are gone, and it may serve another host.
    */
@@ -131,18 +137,24 @@ export async function serveSandboxHook(
   // Whether the server has said that it collects none of its garbage, as it
   // says once.
   let collectsNoneSaid = false;
-  // Collects the server's garbage whole, as V8 does before it would run out
-  // of memory, in the span bayma.sandbox.collect, which says what the heap
-  // committed before and after: as a save that ends the sandbox is about to
-  // take the server's memory, which then holds none of the pages the
-  // collection empties, ~15 MiB of a small session's image. Never as a save
-  // leaves the sandbox running: the collection rewrites the pages it moves,
-  // which the next such save writes again, three or four times what it
-  // would. Node exposes the collection to a server it runs with --expose-gc,
-  // as the image's entrypoint does; without it, nothing is collected, said
-  // once.
+  // Has the sessions' runtimes collect their garbage, then collects the
+  // server's whole, as V8 does before it would run out of memory, in the
+  // span bayma.sandbox.collect, which says how many runtimes did, and what
+  // the server's heap committed before and after: as a save that ends the
+  // sandbox is about to take their memory, which then holds none of the
+  // pages the collections empty, ~15 MiB of a small session's image for the
+  // server's, a quarter of a Bun session's. Never as a save leaves the
+  // sandbox running: a collection rewrites the pages it moves, which the
+  // next such save writes again, three or four times what it would. Node
+  // exposes the collection to a server it runs with --expose-gc, as the
+  // image's entrypoint does; without it, the server collects nothing of its
+  // own, said once.
   const collectGarbage = () =>
     inSpan("bayma.sandbox.collect", {}, async (span) => {
+      span.setAttribute(
+        "bayma.sandbox.collect.runtimes",
+        await handlers.collect(),
+      );
       if (globalThis.gc === undefined) {
         if (!collectsNoneSaid)
           report(

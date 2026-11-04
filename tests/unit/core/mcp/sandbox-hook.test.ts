@@ -55,7 +55,10 @@ const CAUGHT = {
   running: [{ sessionId: "sess_a", execId: "exec_b" }],
 };
 
-/** Handlers that record what they were asked, in order, and whether the server was saved then. */
+/**
+ * Handlers that record what they were asked, in order, and whether the server
+ * was saved then, but for collections, which no runtime makes.
+ */
 function recording(): { calls: string[]; handlers: SandboxHookHandlers } {
   const calls: string[] = [];
   const saved = () => (sandboxSaved() ? "saved" : "running");
@@ -66,6 +69,7 @@ function recording(): { calls: string[]; handlers: SandboxHookHandlers } {
         calls.push(`save, ${saved()}`);
         return CAUGHT;
       },
+      collect: async () => 0,
       restore: async (savedAtMs, stopReason) => {
         calls.push(
           `restore from ${typeof savedAtMs}${stopReason === undefined ? "" : `, stopped as ${stopReason}`}, ${saved()}`,
@@ -206,9 +210,13 @@ test("a restore of a server not saved, or saved and resumed since, is refused", 
   });
 });
 
-test("a save that ends the sandbox collects the server's garbage whole once it has what it caught, and a save that leaves the sandbox running collects none", async () => {
+test("a save that ends the sandbox has the runtimes collect their garbage once it has what it caught, then collects the server's whole, and a save that leaves the sandbox running collects none", async () => {
   await withHookDir(async (dir) => {
     const { calls, handlers } = recording();
+    handlers.collect = async () => {
+      calls.push(`runtimes collected, ${sandboxSaved() ? "saved" : "running"}`);
+      return 2;
+    };
     globalThis.gc = ((options: NodeJS.GCOptions) =>
       void calls.push(
         `collected ${JSON.stringify(options)}`,
@@ -223,6 +231,7 @@ test("a save that ends the sandbox collects the server's garbage whole once it h
       expect(calls).toEqual([
         "save, saved",
         "save, saved",
+        "runtimes collected, saved",
         'collected {"type":"major","execution":"sync","flavor":"last-resort"}',
       ]);
       expect(await ask(dir, "save at once\n")).toBe(
@@ -484,7 +493,7 @@ test("the hook's server answers a request that came while it did not run, as a r
         "--input-type=module",
         "-e",
         `const { serveSandboxHook } = await import(${JSON.stringify(SANDBOX_HOOK_MODULE)});
-        await serveSandboxHook(${JSON.stringify(dir)}, { save: async () => ({ generation: 0, running: [] }), restore: async () => {} });
+        await serveSandboxHook(${JSON.stringify(dir)}, { save: async () => ({ generation: 0, running: [] }), collect: async () => 0, restore: async () => {} });
         console.log("serving");
         process.stdin.on("data", () =>
           setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 6_500)),

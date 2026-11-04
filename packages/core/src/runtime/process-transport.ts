@@ -91,6 +91,16 @@ interface BrokerState {
   terminalError?: Error;
 }
 
+/**
+ * A line written to a runtime at its prompt, made of a fresh nonce, and what
+ * the runtime prints once it has run it, which the line itself does not hold,
+ * so that an echo of the line is not taken for it.
+ */
+export interface PromptProbe {
+  input: string;
+  expectedOutput: string;
+}
+
 export interface ProcessTransportConfig {
   platformId: string;
   promptRe: RegExp;
@@ -102,10 +112,13 @@ export interface ProcessTransportConfig {
     env?: NodeJS.ProcessEnv;
   };
   interruptStrategy?: "write_ctrl_c" | "sigint" | "recycle";
-  interruptProbe?(nonce: string): {
-    input: string;
-    expectedOutput: string;
-  };
+  interruptProbe?(nonce: string): PromptProbe;
+  /**
+   * The line that has the runtime collect its garbage whole, where a
+   * collection takes much off what a save of the sandbox holds of it
+   * (RuntimeTransport.collectGarbage).
+   */
+  garbageCollectionProbe?(nonce: string): PromptProbe;
   /**
    * How long the runtime may take from its start to its first prompt:
    * DEFAULT_STARTUP_TIMEOUT_MS unless given, for a runtime that builds or
@@ -324,6 +337,11 @@ export class ProcessTransport implements RuntimeTransport {
 
   readonly snapshots?: TransportSnapshots;
 
+  readonly collectGarbage?: (
+    handle: TransportSessionHandle,
+    timeoutMs: number,
+  ) => Promise<void>;
+
   private readonly snapshotter: ProcessSnapshotter | null;
 
   constructor(config: ProcessTransportConfig) {
@@ -352,6 +370,21 @@ export class ProcessTransport implements RuntimeTransport {
           snapshotter.unrestorableReason(snapshot),
         unavailableReason: () => snapshotsUnavailableHere(snapshotter),
       };
+    }
+    const collection = config.garbageCollectionProbe;
+    if (collection) {
+      // Asked for as the server is saved, which a runningTimeout would wait
+      // out, it is bounded by the clock's own timeout.
+      this.collectGarbage = (handle, timeoutMs) =>
+        this.probe(
+          this.requireState(handle),
+          collection,
+          timeoutMs,
+          (end, ms) => {
+            const timer = setTimeout(end, ms);
+            return { clear: () => clearTimeout(timer) };
+          },
+        );
     }
   }
 
@@ -888,25 +921,8 @@ export class ProcessTransport implements RuntimeTransport {
           await this.write(handle, "\u0003");
         }
         await this.waitForPrompt(handle, seenPromptCount, timeoutMs);
-        if (this.config.interruptProbe) {
-          const probe = this.config.interruptProbe(randomUUID());
-          if (!probe.input || !probe.expectedOutput) {
-            throw new Error(
-              "interrupt probe input and expected output are required",
-            );
-          }
-          const readiness = this.waitForProbeReadiness(
-            state,
-            probe.expectedOutput,
-            timeoutMs,
-          );
-          try {
-            await this.write(handle, probe.input);
-            await readiness.promise;
-          } finally {
-            readiness.cancel();
-          }
-        }
+        if (this.config.interruptProbe)
+          await this.probe(state, this.config.interruptProbe, timeoutMs);
         if (state.terminalError) return "recycle";
         return "soft";
       } catch {
@@ -991,18 +1007,49 @@ export class ProcessTransport implements RuntimeTransport {
     }
   }
 
+  /**
+   * Writes the line `make` makes of a fresh nonce to the runtime at its
+   * prompt, and waits for it to print what the probe expects and prompt
+   * again, failing once `arm` ends `timeoutMs`: as runningTimeout does
+   * unless given.
+   */
+  private async probe(
+    state: BrokerState,
+    make: (nonce: string) => PromptProbe,
+    timeoutMs: number,
+    arm: (end: () => void, ms: number) => RunningTimeout = runningTimeout,
+  ): Promise<void> {
+    const probe = make(randomUUID());
+    if (!probe.input || !probe.expectedOutput) {
+      throw new Error("probe input and expected output are required");
+    }
+    const readiness = this.waitForProbeReadiness(
+      state,
+      probe.expectedOutput,
+      timeoutMs,
+      arm,
+    );
+    try {
+      await this.write(state.handle, probe.input);
+      await readiness.promise;
+    } finally {
+      readiness.cancel();
+    }
+  }
+
   private waitForProbeReadiness(
     state: BrokerState,
     expectedText: string,
     timeoutMs: number,
+    arm: (end: () => void, ms: number) => RunningTimeout,
   ): { promise: Promise<void>; cancel: () => void } {
     let waiter: ReadinessWaiter;
     const promise = new Promise<void>((resolve, reject) => {
-      const timeout = runningTimeout(() => {
+      const timeout = arm(() => {
         state.readinessWaiters.delete(waiter);
         reject(
           new Error(
-            `timed out waiting for interrupt readiness probe for ${state.handle.sessionId}`,
+            `timed out waiting for the runtime of ${state.handle.sessionId} to answer its probe`,
           ),
         );
       }, timeoutMs);

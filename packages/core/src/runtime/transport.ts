@@ -78,6 +78,16 @@ export interface RuntimeTransport {
   /** Absent where this transport's runtime processes cannot be snapshotted. */
   readonly snapshots?: TransportSnapshots;
   /**
+   * Has the runtime of `handle`, idle at its prompt, collect its garbage
+   * whole, failing where it has not within `timeoutMs`, which runs on while
+   * the server is saved: absent where a collection takes too little off what
+   * a save of the sandbox holds of the runtime to be worth its time.
+   */
+  readonly collectGarbage?: (
+    handle: TransportSessionHandle,
+    timeoutMs: number,
+  ) => Promise<void>;
+  /**
    * What the host of `handle`, which ran in the scratch directory
    * `scratchDir` and has ended, left there that a save of the sandbox may map,
    * as a Go host's plugins: the server removes it once the state generation

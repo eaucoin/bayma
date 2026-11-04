@@ -359,6 +359,10 @@ const ENDED_HOSTS_WAIT_MS = 10_000;
 const ENDED_HOSTS_POLL_MS = 50;
 // How long a runtime restored from a process snapshot has to answer a probe.
 const PROBE_TIMEOUT_MS = 30_000;
+// How long a runtime has to collect its garbage as a save that ends the
+// sandbox is taken, which its host bounds: Bun collects a session that worked
+// on 200 MiB in some 75 ms.
+const GARBAGE_COLLECTION_TIMEOUT_MS = 5_000;
 
 /**
  * What an exec is told of how its session came back, told `earlier` and now
@@ -1387,6 +1391,45 @@ export class SessionManager {
       ),
     ].filter((directory) => existsSync(directory));
     await execFile("sync", ["--file-system", ...directories]);
+  }
+
+  /**
+   * Has the runtime of each live session that waits at its prompt collect
+   * its garbage, where its transport can (RuntimeTransport.collectGarbage),
+   * as a save that ends the sandbox is about to take what it holds: how many
+   * did. One that runs an exec is left as it is, as no exec starts while the
+   * server is saved, and one that fails to, or does not within
+   * GARBAGE_COLLECTION_TIMEOUT_MS, is said and left: the save goes on.
+   */
+  async collectGarbage(): Promise<number> {
+    const collected = await Promise.all(
+      [...this.sessions.values()].map(async (session) => {
+        const runtime = session.runtime;
+        if (
+          !runtime ||
+          session.record.status !== "live_idle" ||
+          runtime.activeExec ||
+          runtime.memoryKilled
+        )
+          return false;
+        const transport = this.transport(session);
+        if (!transport.collectGarbage) return false;
+        try {
+          await transport.collectGarbage(
+            runtime.handle,
+            GARBAGE_COLLECTION_TIMEOUT_MS,
+          );
+          return true;
+        } catch (error) {
+          report(
+            `session ${session.record.sessionId}'s ${this.adapter(session).runtimeId} runtime did not collect its garbage before the save: ${failureMessage(error)}`,
+            session.record,
+          );
+          return false;
+        }
+      }),
+    );
+    return collected.filter(Boolean).length;
   }
 
   /**

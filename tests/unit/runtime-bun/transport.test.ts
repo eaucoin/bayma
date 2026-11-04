@@ -65,3 +65,46 @@ test.serial("transport shutdown terminates child REPLs", async () => {
     await waitForProcessExit(second.pid);
   });
 });
+
+test.serial(
+  "a Bun runtime collects its garbage whole as asked, at its prompt",
+  async () => {
+    await withTempDir(async (dir) => {
+      const transport = createBunTransport();
+      const handle = await transport.startSession({
+        sessionId: "sess_collect",
+        title: "collect",
+        cwd: dir,
+        cols: 120,
+        rows: 40,
+        scratchDir: dir,
+      });
+      let output = "";
+      await transport.subscribe(handle, (chunk) => {
+        output += Buffer.from(chunk).toString();
+      });
+      try {
+        await transport.waitForInitialPrompt(handle);
+        // Small objects only weak references hold, which no collection an
+        // allocation sets off takes before a full one does.
+        await transport.write(
+          handle,
+          "globalThis.held = Array.from({ length: 20 }, (_, at) => new WeakRef({ at })); void 0\n",
+        );
+        await transport.collectGarbage!(handle, 5_000);
+        await transport.write(
+          handle,
+          'process.stdout.write("held " + held.filter((ref) => ref.deref() !== undefined).length + "\\n"); void 0\n',
+        );
+        let held: RegExpExecArray | null = null;
+        for (let wait = 0; wait < 200 && !held; wait += 1) {
+          await sleep(25);
+          held = /held (\d+)\n/.exec(output);
+        }
+        expect(Number(held?.[1])).toBeLessThan(10);
+      } finally {
+        await transport.shutdown();
+      }
+    });
+  },
+);

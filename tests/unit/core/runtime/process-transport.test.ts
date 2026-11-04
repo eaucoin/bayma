@@ -14,6 +14,8 @@ import {
   CriuSnapshotter,
   describeFailure,
   KILLED_FIRST_FOR_MEMORY,
+  markSandboxResumed,
+  markSandboxSaved,
   ProcessTransport,
   SESSION_PID_FLOOR,
   type ProcessSnapshotter,
@@ -874,6 +876,60 @@ test("interrupt recovery requires a post-probe runtime prompt", async () => {
   } finally {
     await transport.terminate(handle);
   }
+});
+
+test("a runtime collects its garbage as its probe has it, and one that does not answer fails within a timeout that ends however long the server is saved", async () => {
+  // A runtime that answers its probe, and prompts again, unless it is the
+  // silent one.
+  const transport = new ProcessTransport({
+    platformId: "test",
+    promptRe: /(?:^|[\r\n])READY> /g,
+    garbageCollectionProbe: (nonce) => ({
+      input: `COLLECT ${nonce}\n`,
+      expectedOutput: `COLLECTED ${nonce}`,
+    }),
+    command: ({ sessionId }) => ({
+      file: process.execPath,
+      args: [
+        "-e",
+        sessionId === "sess_silent"
+          ? 'process.stdout.write("READY> "); process.stdin.on("data", () => undefined);'
+          : 'process.stdout.write("READY> "); process.stdin.on("data", (chunk) => { process.stdout.write("COLLECTED " + chunk.toString().trim().slice(8) + "\\nREADY> "); });',
+      ],
+    }),
+  });
+  const start = (sessionId: string) =>
+    transport.startSession({
+      sessionId,
+      title: sessionId,
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+      scratchDir: tmpdir(),
+    });
+  const answering = await start("sess_answering");
+  const silent = await start("sess_silent");
+  markSandboxSaved();
+  try {
+    await transport.waitForInitialPrompt(answering);
+    await transport.waitForInitialPrompt(silent);
+    await transport.collectGarbage!(answering, 1_000);
+    await expect(transport.collectGarbage!(silent, 200)).rejects.toThrow(
+      "timed out waiting for the runtime of sess_silent to answer its probe",
+    );
+  } finally {
+    markSandboxResumed();
+    await transport.terminate(answering);
+    await transport.terminate(silent);
+  }
+  // A runtime given no probe for it collects nothing.
+  expect(
+    new ProcessTransport({
+      platformId: "test",
+      promptRe: /READY> /g,
+      command: () => ({ file: process.execPath, args: [] }),
+    }).collectGarbage,
+  ).toBeUndefined();
 });
 
 test("interrupt exit rejects internal backpressure without notifying observers", async () => {

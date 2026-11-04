@@ -668,6 +668,7 @@ export async function serveMcpHttp(
         await manager.syncToStorage();
         return manager.sandboxSaving();
       },
+      collect: () => manager.collectGarbage(),
       restore: async (savedAtMs, stopReason) => {
         restoreSandboxServer(manager, savedAtMs, stopReason);
         try {
