@@ -29,7 +29,8 @@ export function nodeExecutable(): string {
 
 /**
  * `BAYMA_BUNDLE` names a built dist/bayma/bayma.js; otherwise Node runs the source
- * entrypoint, stripping types itself.
+ * entrypoint, stripping types itself. Node runs it with the V8 flags the
+ * image's entrypoint gives it.
  */
 export function launchSpec(): LaunchSpec {
   const bundle = process.env.BAYMA_BUNDLE;
@@ -37,6 +38,7 @@ export function launchSpec(): LaunchSpec {
   return {
     command: nodeExecutable(),
     args: [
+      "--no-memory-reducer",
       "--disable-warning=ExperimentalWarning",
       ...(bundle ? [] : ["--experimental-strip-types"]),
       script,

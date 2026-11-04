@@ -58,6 +58,19 @@ test("the image carries each of the payload's directories as a layer", () => {
   ).toThrow("copies bun to python");
 });
 
+test("the image runs the server without V8's memory reducer", () => {
+  const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
+  const entrypoint = JSON.parse(
+    /^ENTRYPOINT (.+)$/m.exec(dockerfile)![1]!,
+  ) as string[];
+  expect(entrypoint.slice(entrypoint.lastIndexOf("--") + 1)).toEqual([
+    "node",
+    "--no-memory-reducer",
+    "--disable-warning=ExperimentalWarning",
+    "/opt/bayma/bayma.js",
+  ]);
+});
+
 test("an image is not built from a payload the Dockerfile does not copy whole", async () => {
   const { version } = packageManifest(repoRoot);
   await withTempDir(async (dist) => {

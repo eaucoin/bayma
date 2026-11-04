@@ -75,5 +75,11 @@ ENV BAYMA_PAYLOAD_DIR=/opt/bayma/payload
 # process's directory, one of the user's own mounted from their machine: a
 # runtime's whole memory, of GBs, at each crash. prlimit execs tini, which
 # stays the container's first process.
-ENTRYPOINT ["prlimit", "--core=0:", "--", "tini", "--", "node", "--disable-warning=ExperimentalWarning", "/opt/bayma/bayma.js"]
+#
+# The server runs with V8's memory reducer off. A host that saves the sandbox
+# the server runs in whole, and saves it again as it runs on, writes again
+# each page the server changed since: the reducer, which waits to collect at
+# nearly every save, compacts the heap a couple of minutes into an idle
+# server, and as a restored one resumes, rewriting tens of MiB of it.
+ENTRYPOINT ["prlimit", "--core=0:", "--", "tini", "--", "node", "--no-memory-reducer", "--disable-warning=ExperimentalWarning", "/opt/bayma/bayma.js"]
 CMD ["mcp-stdio"]

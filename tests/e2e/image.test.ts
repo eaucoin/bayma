@@ -333,6 +333,54 @@ test.serial(
 );
 
 test.serial(
+  "the image's server runs without V8's memory reducer",
+  async () => {
+    const { home, stateDir } = makeHome();
+    try {
+      const server = await serve(home, stateDir);
+      try {
+        const created = await server.client.callTool<{
+          session: { session_id: string };
+        }>("session.create", { runtime: "python", title: "flags", cwd: home });
+        const sessionId = created.session.session_id;
+        const servers = await execSettled(
+          server.client,
+          sessionId,
+          [
+            "import json, os",
+            "def argv(pid):",
+            "    try:",
+            '        return open(f"/proc/{pid}/cmdline").read().split("\\0")[:-1]',
+            "    except OSError:",
+            "        return []",
+            'running = map(argv, filter(str.isdigit, os.listdir("/proc")))',
+            'print(json.dumps([found for found in running if found[:1] == ["node"] and "mcp-stdio" in found]))',
+          ].join("\n"),
+        );
+        expect(servers.status).toBe("ok");
+        const [argv, ...others] = JSON.parse(
+          servers.stdout_text!,
+        ) as string[][];
+        expect(others).toEqual([]);
+        expect(argv!.slice(0, argv!.indexOf("/opt/bayma/bayma.js"))).toEqual([
+          "node",
+          "--no-memory-reducer",
+          "--disable-warning=ExperimentalWarning",
+        ]);
+        await server.client.callTool("session.close", {
+          session_id: sessionId,
+        });
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  IMAGE_TIMEOUT_MS,
+);
+
+test.serial(
   "REPL sessions in every runtime keep their live state across servers in fresh containers, again and again",
   async () => {
     const { home, stateDir } = makeHome();
