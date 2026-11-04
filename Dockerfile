@@ -80,6 +80,8 @@ ENV BAYMA_PAYLOAD_DIR=/opt/bayma/payload
 # the server runs in whole, and saves it again as it runs on, writes again
 # each page the server changed since: the reducer, which waits to collect at
 # nearly every save, compacts the heap a couple of minutes into an idle
-# server, and as a restored one resumes, rewriting tens of MiB of it.
-ENTRYPOINT ["prlimit", "--core=0:", "--", "tini", "--", "node", "--no-memory-reducer", "--disable-warning=ExperimentalWarning", "/opt/bayma/bayma.js"]
+# server, and as a restored one resumes, rewriting tens of MiB of it. It
+# collects its garbage itself, through the gc Node exposes to it, only as a
+# save ends the sandbox (`bayma help`, sandbox-hook).
+ENTRYPOINT ["prlimit", "--core=0:", "--", "tini", "--", "node", "--no-memory-reducer", "--expose-gc", "--disable-warning=ExperimentalWarning", "/opt/bayma/bayma.js"]
 CMD ["mcp-stdio"]

@@ -27,6 +27,7 @@ import {
   type ExecSnapshot,
 } from "../support/mcp-stdio-client.ts";
 import { expectExactMcpSurface } from "../support/mcp-surface.ts";
+import { OtlpSink } from "../support/otlp-sink.ts";
 
 // bayma as its users run it: the image `bun run image` builds, started with
 // `docker run` as the bayma command starts it, as the invoking user with a
@@ -137,8 +138,8 @@ const COUNTER_SETTING_FLAGS = [
 ];
 
 /**
- * Serve MCP from a fresh container, its server's first process at
- * `firstPid` if given, `docker run` given `docker` besides. Closing the
+ * Serve MCP from a fresh container, named `name`, its server's first process
+ * at `firstPid` if given, `docker run` given `docker` besides. Closing the
  * client ends the server, which snapshots its idle REPL sessions on the way
  * out; `stop` waits for the container to be gone, as the next server would
  * have to.
@@ -151,7 +152,11 @@ async function serve(
     settingCounter = false,
     docker = [],
   }: { firstPid?: number; settingCounter?: boolean; docker?: string[] } = {},
-): Promise<{ client: McpStdioClient; stop: () => Promise<void> }> {
+): Promise<{
+  client: McpStdioClient;
+  name: string;
+  stop: () => Promise<void>;
+}> {
   const name = `bayma-e2e-${process.pid}-${Date.now()}`;
   const client = await McpStdioClient.launch(
     {
@@ -176,6 +181,7 @@ async function serve(
   );
   return {
     client,
+    name,
     async stop() {
       await client.close();
       // Gone already, or gone once it has finished shutting down.
@@ -333,11 +339,24 @@ test.serial(
 );
 
 test.serial(
-  "the image's server runs without V8's memory reducer",
+  "the image's server runs without V8's memory reducer, and collects its garbage as a save ends its sandbox, never as one leaves it running",
   async () => {
     const { home, stateDir } = makeHome();
+    const sink = new OtlpSink();
     try {
-      const server = await serve(home, stateDir);
+      // Exporting its telemetry to the sink, on the host's network.
+      const server = await serve(home, stateDir, {
+        docker: [
+          "--network",
+          "host",
+          "-e",
+          `OTEL_EXPORTER_OTLP_ENDPOINT=${sink.url}`,
+          "-e",
+          "OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
+          "-e",
+          "OTEL_BSP_SCHEDULE_DELAY=100",
+        ],
+      });
       try {
         const created = await server.client.callTool<{
           session: { session_id: string };
@@ -362,11 +381,58 @@ test.serial(
           servers.stdout_text!,
         ) as string[][];
         expect(others).toEqual([]);
-        expect(argv!.slice(0, argv!.indexOf("/opt/bayma/bayma.js"))).toEqual([
+        const program = argv!.slice(
+          0,
+          argv!.indexOf("/opt/bayma/bayma.js") + 1,
+        );
+        expect(program).toEqual([
           "node",
           "--no-memory-reducer",
+          "--expose-gc",
           "--disable-warning=ExperimentalWarning",
+          "/opt/bayma/bayma.js",
         ]);
+
+        // The hook as a host runs it in the server's container: the server's
+        // program, told the state directory, and of a save that leaves the
+        // sandbox running.
+        for (const args of [
+          ["save", "--leave-running"],
+          ["resume"],
+          ["save"],
+          ["resume"],
+        ]) {
+          const hook = await run([
+            "docker",
+            "exec",
+            server.name,
+            ...program,
+            "sandbox-hook",
+            ...args,
+            "--state-dir",
+            stateDir,
+          ]);
+          expect({ args, ...hook }).toMatchObject({ args, exitCode: 0 });
+        }
+        const deadline = Date.now() + 10_000;
+        const named = (name: string) =>
+          sink.spans.filter((span) => span.name === name);
+        while (named("bayma.sandbox.save").length < 2 && Date.now() < deadline)
+          await Bun.sleep(50);
+        const saves = named("bayma.sandbox.save");
+        expect(
+          saves.map(
+            (save) => save.attributes["bayma.sandbox.save.leaves_running"],
+          ),
+        ).toEqual([true, false]);
+        const [collected, ...again] = named("bayma.sandbox.collect");
+        expect(again).toEqual([]);
+        expect(collected!.parentSpanId).toBe(saves[1]!.spanId);
+        const before = collected!.attributes["bayma.server.heap.before"];
+        expect(before).toBeNumber();
+        expect(
+          collected!.attributes["bayma.server.heap.after"],
+        ).toBeLessThanOrEqual(before as number);
         await server.client.callTool("session.close", {
           session_id: sessionId,
         });
@@ -374,6 +440,7 @@ test.serial(
         await server.stop();
       }
     } finally {
+      sink.stop();
       rmSync(home, { recursive: true, force: true });
     }
   },

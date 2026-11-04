@@ -13,7 +13,11 @@ import { failureMessage } from "../errors.ts";
 // mode on to the server over a Unix socket in the server's state directory.
 // It needs no network, which the restored sandbox may not have yet, and no
 // token, which the restore may be about to replace; the state directory's
-// mode keeps it to the server's own user. A host that knows why it stopped
+// mode keeps it to the server's own user. A host whose save leaves the
+// sandbox running gives the hook --leave-running, as it gives runsc, which
+// runs the hook with the save's arguments at the restore or resume that
+// follows it too: a save that ends the sandbox first collects the server's
+// garbage, which one left running must not. A host that knows why it stopped
 // the sandbox it restores, as one stopped as it ran out of its memory, says
 // so in BAYMA_SANDBOX_STOP_REASON, which the restore passes on with its mode,
 // for each live session's next exec to be told.
@@ -43,6 +47,22 @@ export const SANDBOX_STOP_REASON_VARIABLE = "BAYMA_SANDBOX_STOP_REASON";
 /** The longest reason a restore passes on, in bytes. */
 export const MAX_STOP_REASON_BYTES = 256;
 
+/** What a host gives the hook of a save that leaves the sandbox running. */
+export const LEAVE_RUNNING_OPTION = "--leave-running";
+
+// What a save that leaves the sandbox running tells the server past its mode.
+const LEAVES_RUNNING = "leave-running";
+
+/**
+ * What the hook asks the server: its mode, with a save's whether the sandbox
+ * runs on after it, and a restore's why its host stopped the sandbox, where
+ * it says.
+ */
+export type SandboxHookRequest =
+  | { mode: "save"; leavesRunning: boolean }
+  | { mode: "restore"; stopReason?: string }
+  | { mode: "resume" | "stop" };
+
 /** The socket the server of `stateDir` hears the hook on. */
 export function sandboxHookSocket(stateDir: string): string {
   return join(stateDir, "sandbox-hook.sock");
@@ -59,18 +79,44 @@ export function parseSandboxHookMode(
 }
 
 /**
- * The mode a request to the server names, and the reason the sandbox stopped
- * it names after a space, where it names one (parseSandboxStopReason).
+ * A request to the server, as the hook sends it, but for its newline: the
+ * mode, and after a space, what the mode is told, where it is told anything.
  */
-export function parseSandboxHookRequest(
-  request: string,
-): [SandboxHookMode, string | undefined] {
-  const space = request.indexOf(" ");
-  if (space === -1) return [parseSandboxHookMode(request), undefined];
-  return [
-    parseSandboxHookMode(request.slice(0, space)),
-    parseSandboxStopReason(request.slice(space + 1)),
-  ];
+export function formatSandboxHookRequest(request: SandboxHookRequest): string {
+  switch (request.mode) {
+    case "save":
+      return request.leavesRunning ? `save ${LEAVES_RUNNING}` : "save";
+    case "restore":
+      return request.stopReason === undefined
+        ? "restore"
+        : `restore ${request.stopReason}`;
+    default:
+      return request.mode;
+  }
+}
+
+/**
+ * The request a line to the server names (formatSandboxHookRequest), a
+ * restore's reason the sandbox stopped as parseSandboxStopReason takes it.
+ */
+export function parseSandboxHookRequest(line: string): SandboxHookRequest {
+  const space = line.indexOf(" ");
+  const mode = parseSandboxHookMode(space === -1 ? line : line.slice(0, space));
+  const told = space === -1 ? undefined : line.slice(space + 1);
+  switch (mode) {
+    case "save":
+      if (told !== undefined && told !== LEAVES_RUNNING)
+        throw new Error(
+          `a save is told nothing past its mode but ${LEAVES_RUNNING}`,
+        );
+      return { mode, leavesRunning: told !== undefined };
+    case "restore":
+      return { mode, stopReason: parseSandboxStopReason(told) };
+    default:
+      if (told !== undefined)
+        throw new Error(`a ${mode} is told nothing past its mode`);
+      return { mode };
+  }
 }
 
 /**
@@ -95,22 +141,34 @@ export function parseSandboxStopReason(
 }
 
 /**
- * Tells the server of `stateDir` that its sandbox is at `mode`, a restore
- * with why its host stopped the sandbox where it says (`stopReason`), and
- * waits for it to have done what that takes: what it answers, a save what it
- * caught, as JSON (SandboxSave), the others nothing. Throws what it could
- * not do.
+ * Tells the server of `stateDir` that its sandbox is at `mode`, a save with
+ * whether it leaves the sandbox running (`leavesRunning`), a restore with why
+ * its host stopped the sandbox where it says (`stopReason`), which no other
+ * mode is told, and waits for it to have done what that takes: what it
+ * answers, a save what it caught, as JSON (SandboxSave), the others nothing.
+ * Throws what it could not do.
  */
 export async function runSandboxHook(
   stateDir: string,
   mode: SandboxHookMode,
-  stopReason?: string,
-): Promise<string | undefined> {
-  const reason = parseSandboxStopReason(
+  {
+    leavesRunning = false,
     stopReason,
-    SANDBOX_STOP_REASON_VARIABLE,
-  );
-  const request = reason === undefined ? `${mode}\n` : `${mode} ${reason}\n`;
+  }: { leavesRunning?: boolean; stopReason?: string } = {},
+): Promise<string | undefined> {
+  const request = `${formatSandboxHookRequest(
+    mode === "save"
+      ? { mode, leavesRunning }
+      : mode === "restore"
+        ? {
+            mode,
+            stopReason: parseSandboxStopReason(
+              stopReason,
+              SANDBOX_STOP_REASON_VARIABLE,
+            ),
+          }
+        : { mode },
+  )}\n`;
   // The server's state directory is where its lease resolved it to.
   const path = sandboxHookSocket(realpathSync(resolve(stateDir)));
   const answer = await new Promise<string>((resolveAnswer, rejectAnswer) => {
@@ -139,16 +197,22 @@ export async function runSandboxHook(
 }
 
 /**
- * `bayma sandbox-hook [MODE] --state-dir PATH`, given its arguments after the
- * command's name: tells the server of the state directory that its sandbox is
- * at the mode, which gVisor names in the environment unless the command names
- * one first, and prints what the server answers, if anything.
+ * `bayma sandbox-hook [MODE] --state-dir PATH [--leave-running]`, given its
+ * arguments after the command's name: tells the server of the state
+ * directory that its sandbox is at the mode, which gVisor names in the
+ * environment unless the command names one first, a save that it leaves the
+ * sandbox running where told so, and prints what the server answers, if
+ * anything.
  */
 export async function runSandboxHookCommand(args: string[]): Promise<void> {
-  const named = args.length % 2 === 1 ? args[0] : undefined;
-  const parsed = parseCliOptions(named === undefined ? args : args.slice(1), [
-    "--state-dir",
-  ]);
+  const options = args.filter((arg) => arg !== LEAVE_RUNNING_OPTION);
+  if (args.length - options.length > 1)
+    throw new Error(`option ${LEAVE_RUNNING_OPTION} may be provided only once`);
+  const named = options.length % 2 === 1 ? options[0] : undefined;
+  const parsed = parseCliOptions(
+    named === undefined ? options : options.slice(1),
+    ["--state-dir"],
+  );
   // A host runs the hook from a directory of its own, such as the sandbox's
   // root, not the server's: the state directory is named.
   const stateDir = parsed.get("--state-dir");
@@ -159,10 +223,9 @@ export async function runSandboxHookCommand(args: string[]): Promise<void> {
   const mode = parseSandboxHookMode(
     named ?? process.env[SANDBOX_HOOK_MODE_VARIABLE],
   );
-  const caught = await runSandboxHook(
-    stateDir,
-    mode,
-    mode === "restore" ? process.env[SANDBOX_STOP_REASON_VARIABLE] : undefined,
-  );
+  const caught = await runSandboxHook(stateDir, mode, {
+    leavesRunning: options.length < args.length,
+    stopReason: process.env[SANDBOX_STOP_REASON_VARIABLE],
+  });
   if (caught !== undefined) console.log(caught);
 }

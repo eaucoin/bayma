@@ -39,6 +39,7 @@ export function launchSpec(): LaunchSpec {
     command: nodeExecutable(),
     args: [
       "--no-memory-reducer",
+      "--expose-gc",
       "--disable-warning=ExperimentalWarning",
       ...(bundle ? [] : ["--experimental-strip-types"]),
       script,

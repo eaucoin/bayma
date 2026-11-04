@@ -150,7 +150,7 @@ Commands:
       it ends the pod itself, has the SIGTERM that follows within the wait
       stop the server at once. Without it, or with 0, SIGTERM stops the
       server at once
-  sandbox-hook [save|restore|resume|stop] --state-dir PATH
+  sandbox-hook [save|restore|resume|stop] --state-dir PATH [--leave-running]
       tell the server of the state directory that the sandbox it runs in
       is about to be saved whole, was restored, or runs on after a save, as
       a host that saves sandboxes runs it in the sandbox, or, with stop,
@@ -163,7 +163,13 @@ Commands:
       runs again from the start once the server runs on; it prints, as
       JSON, what the save caught: the state generation and the execs
       running (generation, running: sessionId, execId), which the state
-      directory's last-save.json says too. A restore reads the token file
+      directory's last-save.json says too. A save that ends the sandbox
+      collects the server's garbage last, so that the save holds less of
+      its memory; one that leaves it running, as its host says with
+      --leave-running, as it says to runsc checkpoint, collects none, which
+      would rewrite pages the next such save writes again. runsc runs the
+      hook with a save's arguments at the restore or resume after it too,
+      which take nothing of them. A restore reads the token file
       again, starts clients' reconnect grace and idle timeouts again, tells
       each live session's next exec how it came back, and why the sandbox
       was stopped where BAYMA_SANDBOX_STOP_REASON says, as the end of a

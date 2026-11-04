@@ -1,4 +1,4 @@
-import { afterEach, expect, jest, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import {
   markSandboxResumed,
   parseSandboxHookMode,
   runSandboxHook,
+  runSandboxHookCommand,
   sandboxHookSocket,
   sandboxSaved,
   serveSandboxHook,
@@ -31,9 +32,16 @@ const SANDBOX_HOOK_MODULE = join(
   "sandbox-hook.ts",
 );
 
+// The server runs under Node with its garbage collection exposed, as the
+// image's entrypoint runs it, unless a test says otherwise.
+beforeEach(() => {
+  globalThis.gc = (() => undefined) as NodeJS.GCFunction;
+});
+
 afterEach(() => {
   markSandboxResumed();
   jest.useRealTimers();
+  globalThis.gc = undefined;
 });
 
 /** A temporary state directory short enough for the hook's socket, wherever TMPDIR is. */
@@ -198,6 +206,109 @@ test("a restore of a server not saved, or saved and resumed since, is refused", 
   });
 });
 
+test("a save that ends the sandbox collects the server's garbage whole once it has what it caught, and a save that leaves the sandbox running collects none", async () => {
+  await withHookDir(async (dir) => {
+    const { calls, handlers } = recording();
+    globalThis.gc = ((options: NodeJS.GCOptions) =>
+      void calls.push(
+        `collected ${JSON.stringify(options)}`,
+      )) as NodeJS.GCFunction;
+    const stop = await serveSandboxHook(dir, handlers);
+    try {
+      await runSandboxHook(dir, "save", { leavesRunning: true });
+      await runSandboxHook(dir, "resume");
+      expect(calls).toEqual(["save, saved"]);
+      await runSandboxHook(dir, "save");
+      await runSandboxHook(dir, "resume");
+      expect(calls).toEqual([
+        "save, saved",
+        "save, saved",
+        'collected {"type":"major","execution":"sync","flavor":"last-resort"}',
+      ]);
+      expect(await ask(dir, "save at once\n")).toBe(
+        "a save is told nothing past its mode but leave-running\n",
+      );
+    } finally {
+      await stop();
+    }
+  });
+});
+
+test("a save that ends the sandbox of a server Node runs without its garbage collection exposed collects none, said once", async () => {
+  await withHookDir(async (dir) => {
+    globalThis.gc = undefined;
+    const reports: string[] = [];
+    const stderr = spyOn(process.stderr, "write").mockImplementation(
+      (chunk) => {
+        reports.push(String(chunk));
+        return true;
+      },
+    );
+    const stop = await serveSandboxHook(dir, recording().handlers);
+    try {
+      for (const _ of [1, 2]) {
+        expect(JSON.parse((await runSandboxHook(dir, "save"))!)).toEqual(
+          CAUGHT,
+        );
+        await runSandboxHook(dir, "resume");
+      }
+    } finally {
+      stderr.mockRestore();
+      await stop();
+    }
+    expect(reports).toEqual([
+      "bayma: a save that ends the sandbox collects none of the server's garbage: Node runs the server without --expose-gc\n",
+    ]);
+  });
+});
+
+test("the hook's command tells a save it leaves the sandbox running where given --leave-running, which a restore or resume run with the save's arguments takes nothing of", async () => {
+  await withHookDir(async (dir) => {
+    const { calls, handlers } = recording();
+    globalThis.gc = (() => void calls.push("collected")) as NodeJS.GCFunction;
+    const stop = await serveSandboxHook(dir, handlers);
+    const printed = spyOn(console, "log").mockImplementation(() => undefined);
+    const mode = process.env.GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE;
+    try {
+      for (const named of ["save", "resume", "save", "restore"]) {
+        process.env.GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE = named;
+        await runSandboxHookCommand(["--state-dir", dir, "--leave-running"]);
+      }
+      await runSandboxHookCommand([
+        "save",
+        "--leave-running",
+        "--state-dir",
+        dir,
+      ]);
+      await runSandboxHookCommand(["resume", "--state-dir", dir]);
+      expect(calls).toEqual([
+        "save, saved",
+        "save, saved",
+        "restore from number, saved",
+        "save, saved",
+      ]);
+      expect(printed.mock.calls).toEqual(
+        [1, 2, 3].map(() => [JSON.stringify(CAUGHT)]),
+      );
+      await expect(
+        runSandboxHookCommand([
+          "save",
+          "--leave-running",
+          "--state-dir",
+          dir,
+          "--leave-running",
+        ]),
+      ).rejects.toThrow("option --leave-running may be provided only once");
+    } finally {
+      if (mode === undefined)
+        delete process.env.GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE;
+      else process.env.GVISOR_SAVE_RESTORE_AUTO_EXEC_MODE = mode;
+      printed.mockRestore();
+      await stop();
+    }
+  });
+});
+
 test("a save that fails leaves the server running, and the hook fails with why", async () => {
   await withHookDir(async (dir) => {
     const { calls, handlers } = recording();
@@ -301,12 +412,14 @@ test("a restore passes on why its host stopped the sandbox, which no other mode 
     try {
       await runSandboxHook(dir, "save");
       expect(
-        await runSandboxHook(dir, "restore", "it ran out of its memory (4Gi)"),
+        await runSandboxHook(dir, "restore", {
+          stopReason: "it ran out of its memory (4Gi)",
+        }),
       ).toBeUndefined();
       // None, as a host that says nothing gives an empty variable, and as a
       // request with nothing after its space says.
       await runSandboxHook(dir, "save");
-      await runSandboxHook(dir, "restore", "");
+      await runSandboxHook(dir, "restore", { stopReason: "" });
       await runSandboxHook(dir, "save");
       expect(await ask(dir, "restore \n")).toBe("ok\n");
       expect(calls).toEqual([
@@ -318,15 +431,17 @@ test("a restore passes on why its host stopped the sandbox, which no other mode 
         "restore from number, saved",
       ]);
       expect(await ask(dir, "resume as it was stopped\n")).toBe(
-        "a resume is told no reason the sandbox stopped\n",
+        "a resume is told nothing past its mode\n",
       );
       await expect(
-        runSandboxHook(dir, "restore", "it ran out\nof its memory"),
+        runSandboxHook(dir, "restore", {
+          stopReason: "it ran out\nof its memory",
+        }),
       ).rejects.toThrow(
         "the reason the sandbox stopped must be one line (BAYMA_SANDBOX_STOP_REASON)",
       );
       await expect(
-        runSandboxHook(dir, "restore", "é".repeat(129)),
+        runSandboxHook(dir, "restore", { stopReason: "é".repeat(129) }),
       ).rejects.toThrow(
         "the reason the sandbox stopped must be at most 256 bytes (BAYMA_SANDBOX_STOP_REASON)",
       );

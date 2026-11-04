@@ -58,7 +58,7 @@ test("the image carries each of the payload's directories as a layer", () => {
   ).toThrow("copies bun to python");
 });
 
-test("the image runs the server without V8's memory reducer", () => {
+test("the image runs the server without V8's memory reducer, its garbage collection exposed to it", () => {
   const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
   const entrypoint = JSON.parse(
     /^ENTRYPOINT (.+)$/m.exec(dockerfile)![1]!,
@@ -66,6 +66,7 @@ test("the image runs the server without V8's memory reducer", () => {
   expect(entrypoint.slice(entrypoint.lastIndexOf("--") + 1)).toEqual([
     "node",
     "--no-memory-reducer",
+    "--expose-gc",
     "--disable-warning=ExperimentalWarning",
     "/opt/bayma/bayma.js",
   ]);

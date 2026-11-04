@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { rmSync } from "node:fs";
 import net from "node:net";
+import { getHeapStatistics } from "node:v8";
 import { failureMessage } from "../errors.ts";
 import { removeTree } from "../remove-tree.ts";
 import {
@@ -19,7 +20,7 @@ import {
   MAX_STOP_REASON_BYTES,
   parseSandboxHookRequest,
   sandboxHookSocket,
-  type SandboxHookMode,
+  type SandboxHookRequest,
 } from "./sandbox-hook-client.ts";
 
 // The server's side of the sandbox hook (./sandbox-hook-client.ts).
@@ -127,23 +128,60 @@ export async function serveSandboxHook(
       );
     }
   };
+  // Whether the server has said that it collects none of its garbage, as it
+  // says once.
+  let collectsNoneSaid = false;
+  // Collects the server's garbage whole, as V8 does before it would run out
+  // of memory, in the span bayma.sandbox.collect, which says what the heap
+  // committed before and after: as a save that ends the sandbox is about to
+  // take the server's memory, which then holds none of the pages the
+  // collection empties, ~15 MiB of a small session's image. Never as a save
+  // leaves the sandbox running: the collection rewrites the pages it moves,
+  // which the next such save writes again, three or four times what it
+  // would. Node exposes the collection to a server it runs with --expose-gc,
+  // as the image's entrypoint does; without it, nothing is collected, said
+  // once.
+  const collectGarbage = () =>
+    inSpan("bayma.sandbox.collect", {}, async (span) => {
+      if (globalThis.gc === undefined) {
+        if (!collectsNoneSaid)
+          report(
+            "bayma: a save that ends the sandbox collects none of the server's garbage: Node runs the server without --expose-gc",
+          );
+        collectsNoneSaid = true;
+        return;
+      }
+      const before = getHeapStatistics().total_heap_size;
+      globalThis.gc({
+        type: "major",
+        execution: "sync",
+        flavor: "last-resort",
+      });
+      span.setAttributes({
+        "bayma.server.heap.before": before,
+        "bayma.server.heap.after": getHeapStatistics().total_heap_size,
+      });
+    });
   // What each mode answers, past its "ok": a save, what it caught.
   const handle = async (
-    mode: SandboxHookMode,
-    stopReason: string | undefined,
+    request: SandboxHookRequest,
   ): Promise<string | undefined> => {
-    if (stopReason !== undefined && mode !== "restore")
-      throw new Error(`a ${mode} is told no reason the sandbox stopped`);
-    switch (mode) {
+    switch (request.mode) {
       case "save": {
         markSandboxSaved();
         let caught: SandboxSave;
         try {
-          caught = await inSpan("bayma.sandbox.save", {}, async () => {
-            // No file is held open by work that would move on with it.
-            await filesClosed();
-            return handlers.save();
-          });
+          caught = await inSpan(
+            "bayma.sandbox.save",
+            { "bayma.sandbox.save.leaves_running": request.leavesRunning },
+            async () => {
+              // No file is held open by work that would move on with it.
+              await filesClosed();
+              const saving = await handlers.save();
+              if (!request.leavesRunning) await collectGarbage();
+              return saving;
+            },
+          );
         } catch (error) {
           runOn();
           throw error;
@@ -175,7 +213,7 @@ export async function serveSandboxHook(
               "bayma.sandbox.saved.duration":
                 (Date.now() - restoredFrom) / 1000,
             },
-            () => handlers.restore(restoredFrom, stopReason),
+            () => handlers.restore(restoredFrom, request.stopReason),
           );
         } catch (error) {
           // Restored from a save its state directory has moved on from, the
@@ -236,7 +274,7 @@ export async function serveSandboxHook(
       // What the mode takes may take longer than a request may.
       sendsNothing.clear();
       queue(() =>
-        handle(...parseSandboxHookRequest(request.subarray(0, end).toString())),
+        handle(parseSandboxHookRequest(request.subarray(0, end).toString())),
       ).then(
         (answer) =>
           socket.end(answer === undefined ? "ok\n" : `ok ${answer}\n`),
