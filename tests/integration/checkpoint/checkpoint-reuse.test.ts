@@ -83,7 +83,8 @@ function committedPython(stateDir: string, sessionId: string): string {
 
 /**
  * Runs `execs` in a new session of `runtime` under --checkpoint-reuse `reuse`,
- * the server started again before the last, and returns each exec's result
+ * the server started again before the last unless `restartBeforeLast` is
+ * false, waiting `pauseAfterMs` after each, and returns each exec's result
  * and, after each, the committed checkpoint's revision.
  */
 async function script(
@@ -91,6 +92,8 @@ async function script(
   reuse: "on" | "off",
   execs: readonly string[],
   readCommitted = false,
+  restartBeforeLast = true,
+  pauseAfterMs = 0,
 ): Promise<{
   results: string[];
   revisions: (string | undefined)[];
@@ -105,7 +108,7 @@ async function script(
     const results: string[] = [];
     const revisions: (string | undefined)[] = [];
     for (const [index, code] of execs.entries()) {
-      if (index === execs.length - 1) {
+      if (restartBeforeLast && index === execs.length - 1) {
         await client.close();
         client = await serve(stateDir, reuse);
         await client.callTool("session.acquire_controller", {
@@ -113,6 +116,7 @@ async function script(
         });
       }
       results.push(await run(client, sessionId, code));
+      await Bun.sleep(pauseAfterMs);
       revisions.push(manifest(stateDir, sessionId)?.revision);
     }
     return {
@@ -280,6 +284,133 @@ test(
       index === 0 ? true : revision !== revisions[index - 1],
     );
     expect(moved).toEqual([true, false, false, true, false, false]);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a Python session's checkpoint read between execs, from a thread of its own, is what it is with --checkpoint-reuse off",
+  async () => {
+    const later = "threading.Thread(target=later).start()";
+    const seen = "seen[-1]";
+    const execs = [
+      [
+        "import threading, time",
+        "seen = []",
+        "def later():",
+        "    time.sleep(0.3)",
+        "    seen.append(repr(bayma_read_checkpoint()))",
+        'bayma_write_checkpoint({"n": 1})',
+        '"seeded"',
+      ].join("\n"),
+      // Read after an exec that neither read nor wrote it,
+      `${later}\n"untouched"`,
+      seen,
+      // after one that read it and left it as committed,
+      `bayma_read_checkpoint()\n${later}\n"read"`,
+      seen,
+      // and after one that wrote it anew.
+      `bayma_write_checkpoint({"n": 2})\n${later}\n"wrote"`,
+      seen,
+    ];
+    // Each thread reads once the exec that started it has ended.
+    const off = await script("python", "off", execs, false, false, 1_000);
+    const on = await script("python", "on", execs, false, false, 1_000);
+    expect(on.results).toEqual(off.results);
+    expect([off.results[2], off.results[4], off.results[6]]).toEqual([
+      `"{'n': 1}"`,
+      `"{'n': 1}"`,
+      `"{'n': 2}"`,
+    ]);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a Python session with --checkpoint-reuse on whose checkpoint can no longer be unpickled runs the execs that do not read it, and fails the code that does",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "bayma-checkpoint-reuse-"));
+    const stateDir = join(root, "state");
+    let client: McpStdioClient | undefined;
+    try {
+      client = await serve(stateDir, "on");
+      const sessionId = await createSession(client, "python", root);
+      await run(
+        client,
+        sessionId,
+        [
+          `open("counted.py", "w").write("${COUNTED_MODULE}\\n")`,
+          "from counted import Counted",
+          "bayma_write_checkpoint(Counted(41))",
+          '"seeded"',
+        ].join("\n"),
+      );
+      // Its class gone, as a module the session wrote and removed.
+      await run(
+        client,
+        sessionId,
+        [
+          "import os, shutil, sys",
+          'os.remove("counted.py")',
+          'shutil.rmtree("__pycache__", ignore_errors=True)',
+          'del sys.modules["counted"], Counted',
+          '"gone"',
+        ].join("\n"),
+      );
+      const committed = manifest(stateDir, sessionId)!.revision;
+      expect(await run(client, sessionId, "1 + 1")).toBe("2");
+      const read = await waitForSettledExec(
+        client,
+        sessionId,
+        await client.callTool<ExecSnapshot>("exec", {
+          session_id: sessionId,
+          code: "bayma_read_checkpoint().value",
+          yield_time_ms: 1000,
+        }),
+        { timeoutMs: EXEC_SETTLE_TIMEOUT_MS },
+      );
+      expect(read.status).toBe("error");
+      expect(read.error_text).toContain("in bayma_read_checkpoint");
+      expect(read.error_text).toContain(
+        "ModuleNotFoundError: No module named 'counted'",
+      );
+      // What is committed stays as it was.
+      expect(manifest(stateDir, sessionId)!.revision).toBe(committed);
+    } finally {
+      await client?.close().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a module reloaded before an exec reads its checkpoint gives the read objects its new classes with --checkpoint-reuse on, its old ones off",
+  async () => {
+    // Tags of other lengths, so that the reload does not take the module's
+    // cached bytecode for the source written within the same second.
+    const tagged = (tag: string) =>
+      `open("tagged.py", "w").write("class Tagged:\\n    def tag(self):\\n        return '${tag}'\\n")`;
+    const execs = [
+      [
+        tagged("first"),
+        "import tagged",
+        "bayma_write_checkpoint(tagged.Tagged())",
+        '"seeded"',
+      ].join("\n"),
+      [
+        tagged("second"),
+        "import importlib",
+        "importlib.reload(tagged)",
+        "tag = bayma_read_checkpoint().tag()",
+        // Its old objects no longer pickle once their class is reloaded.
+        "bayma_write_checkpoint(tagged.Tagged())",
+        "tag",
+      ].join("\n"),
+    ];
+    const off = await script("python", "off", execs, false, false);
+    const on = await script("python", "on", execs, false, false);
+    expect([off.results[1], on.results[1]]).toEqual(["'first'", "'second'"]);
   },
   TEST_TIMEOUT_MS,
 );

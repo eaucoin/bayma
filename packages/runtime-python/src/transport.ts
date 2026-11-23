@@ -64,9 +64,9 @@ SESSION_GLOBALS = {
     "_error": None,
 }
 CHECKPOINT = None
-# With checkpoint reuse, the committed payload CHECKPOINT is read from when
-# the exec running first reads it, if it has not read or written it yet; None
-# once it has, or where none waits to be read.
+# With checkpoint reuse, the committed payload CHECKPOINT is read from at its
+# next read, in an exec or between execs, where nothing has read or written it
+# since it was committed; None once something has, or where none waits.
 CHECKPOINT_UNREAD = None
 # The running exec's event prefix and directory, while one runs.
 RUNNING_EXEC = None
@@ -318,9 +318,13 @@ def run_submission(spec_path: str) -> None:
                         written = HashingWriter(payload)
                         pickle.dump(value, written, protocol=5)
                     if made_alike and written.hash.hexdigest() == committed.get("sha256"):
-                        # Left as committed: nothing to commit.
+                        # Left as committed: nothing to commit, and what it holds
+                        # is read again from the committed payload, at its next
+                        # read, between execs or in the next.
                         os.remove(checkpoint_output_path)
                         event = {"kind": "checkpoint-unchanged"}
+                        CHECKPOINT = None
+                        CHECKPOINT_UNREAD = committed["payload_path"]
                     else:
                         event = {
                             "kind": "checkpoint",
@@ -336,10 +340,6 @@ def run_submission(spec_path: str) -> None:
                 write_protocol_line(prefix + json.dumps(event, ensure_ascii=False))
             except Exception as error:
                 emit(prefix, "error", "".join(traceback.format_exception(error)).rstrip())
-            if reuse:
-                # Held no longer than the exec: the next reads it again, if it does.
-                CHECKPOINT = None
-                CHECKPOINT_UNREAD = None
         RUNNING_EXEC = None
         emit(prefix, "done")
 
