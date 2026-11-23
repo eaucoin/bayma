@@ -72,6 +72,16 @@ test("the image runs the server without V8's memory reducer, its garbage collect
   ]);
 });
 
+test("the image builds the sandbox hook without Node, from the source its context admits", () => {
+  const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
+  expect(dockerfile).toContain(
+    "gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/bayma-sandbox-hook /tmp/native/sandbox-hook.c",
+  );
+  expect(
+    readFileSync(join(repoRoot, ".dockerignore"), "utf8").split("\n"),
+  ).toContain("!packages/core/native/sandbox-hook.c");
+});
+
 test("an image is not built from a payload the Dockerfile does not copy whole", async () => {
   const { version } = packageManifest(repoRoot);
   await withTempDir(async (dist) => {

@@ -49,9 +49,13 @@ RUN apt-get update \
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
-COPY packages/core/native/advance-pids.c /tmp/advance-pids.c
-RUN gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/bayma-advance-pids /tmp/advance-pids.c \
- && rm /tmp/advance-pids.c
+# bayma's helpers: the PID counter's, and the sandbox hook without Node, for
+# a host that saves the sandbox whole to run on the path of every save and
+# restore in place of `bayma sandbox-hook` (`bayma help`).
+COPY packages/core/native /tmp/native
+RUN gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/bayma-advance-pids /tmp/native/advance-pids.c \
+ && gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/bayma-sandbox-hook /tmp/native/sandbox-hook.c \
+ && rm -r /tmp/native
 
 # The payload, a layer to each of its directories, so that they are pushed
 # and pulled side by side. `bun run image` refuses a payload with more or
