@@ -274,6 +274,12 @@ export interface SessionManagerOptions extends RetentionPolicy {
    * says unless given; undefined where it cannot be told.
    */
   hostMemoryBytes?: (pid: number) => number | undefined;
+  /**
+   * Whether a runtime that can reads the session's committed checkpoint only
+   * as an exec reads it, and commits none where an exec left it as committed
+   * (PrepareExecInput.checkpointReuse).
+   */
+  checkpointReuse?: boolean;
 }
 
 /**
@@ -2911,6 +2917,7 @@ export class SessionManager {
       code: record.code,
       durabilityMode: session.record.durabilityMode,
       checkpoint: options.checkpoint,
+      checkpointReuse: this.options.checkpointReuse ?? false,
     });
     const active: ActiveExec = {
       record,
@@ -3365,6 +3372,18 @@ export class SessionManager {
         : this.failCheckpointCommit(
             session,
             `runtime ${runtimeId} preserved a checkpoint after a successful exec`,
+            active.record.execId,
+          );
+    }
+    // The exec left the committed checkpoint as it was, which stays, as the
+    // runtime said, having been told it was committed.
+    if (capture.checkpointOutcome === "unchanged") {
+      return this.options.checkpointReuse &&
+        this.checkpointStore.inspect(session.record.sessionId).checkpoint
+        ? undefined
+        : this.failCheckpointCommit(
+            session,
+            `runtime ${runtimeId} said an exec left the session's checkpoint unchanged, where it was told of none to keep`,
             active.record.execId,
           );
     }

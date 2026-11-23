@@ -16,6 +16,7 @@ import {
   IncompatibleCheckpointTransport,
   ValidCheckpointTransport,
   PreservedCheckpointTransport,
+  UnchangedCheckpointTransport,
 } from "../../../../support/session-fixture.ts";
 import { withTempDir } from "../../../../support/temp.ts";
 
@@ -394,5 +395,74 @@ test("recovery history survives a catalog-write crash without timestamp drift", 
     await retried.loadCatalog();
     expect(retried.execs(sessionId)).toEqual(afterCrash);
     expect(historyStore.read(sessionId)).toEqual(afterCrash);
+  });
+});
+
+test("an exec its runtime says left the checkpoint as committed commits none with checkpoint reuse on, and fails closed without it or a checkpoint", async () => {
+  await withTempDir(async (dir) => {
+    for (const [checkpointReuse, initialCheckpoint, failure] of [
+      [true, { answer: 41 }, undefined],
+      [
+        false,
+        { answer: 41 },
+        "said an exec left the session's checkpoint unchanged, where it was told of none to keep",
+      ],
+      [
+        true,
+        undefined,
+        "said an exec left the session's checkpoint unchanged, where it was told of none to keep",
+      ],
+    ] as const) {
+      const checkpointStore = new CheckpointStore(dir);
+      const transport = new UnchangedCheckpointTransport();
+      const manager = new SessionManager(
+        new RuntimeRegistry([{ adapter: bunAdapter, transport: transport }]),
+        new SessionCatalogStore(dir),
+        new ExecHistoryStore(dir),
+        checkpointStore,
+        {
+          maxSessions: 8,
+          warnUsagePercent: 75,
+          defaultCols: 80,
+          defaultRows: 24,
+          checkpointReuse,
+        },
+        () => undefined,
+      );
+      const created = await manager.createWithPolicy(
+        "actor_1",
+        "checkpoint left unchanged",
+        dir,
+        {
+          durabilityMode: "checkpointed",
+          ...(initialCheckpoint === undefined ? {} : { initialCheckpoint }),
+        },
+        "controller",
+      );
+      const before = checkpointStore.inspect(created.sessionId).checkpoint;
+      const submitted = await manager.submitExec(
+        created.sessionId,
+        "actor_1",
+        "1 + 1",
+      );
+      transport.completeUnchanged(created.sessionId);
+      await Bun.sleep(0);
+
+      expect(checkpointStore.inspect(created.sessionId).checkpoint).toEqual(
+        before,
+      );
+      expect(manager.exec(created.sessionId, submitted.execId).status).toBe(
+        failure === undefined ? "ok" : "error",
+      );
+      expect(manager.detail(created.sessionId)).toEqual(
+        failure === undefined
+          ? expect.objectContaining({ status: "live_idle" })
+          : expect.objectContaining({
+              status: "quarantined",
+              quarantineReason: expect.stringContaining(failure),
+            }),
+      );
+      await manager.shutdown();
+    }
   });
 });

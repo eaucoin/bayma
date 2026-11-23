@@ -75,6 +75,15 @@ export function parseRuntimeMemoryBudget(spec: string): RuntimeMemoryBudget {
   return Object.keys(runtimes).length > 0 ? { ...budget, runtimes } : budget;
 }
 
+/** Whether --checkpoint-reuse, off unless given, is on. */
+function checkpointReuse(options: ReadonlyMap<string, string>): boolean {
+  const value = option(options, "--checkpoint-reuse", "off");
+  if (value !== "on" && value !== "off") {
+    throw new Error("--checkpoint-reuse must be on or off");
+  }
+  return value === "on";
+}
+
 const SERVER_OPTIONS = [
   "--state-dir",
   "--max-sessions",
@@ -84,6 +93,7 @@ const SERVER_OPTIONS = [
   "--rows",
   "--default-durability",
   "--runtime-memory-budget-mb",
+  "--checkpoint-reuse",
 ] as const;
 
 function serverConfig(parsed: ReadonlyMap<string, string>) {
@@ -104,6 +114,7 @@ function serverConfig(parsed: ReadonlyMap<string, string>) {
         String(DEFAULT_RUNTIME_MEMORY_BUDGET_BYTES / 1024 ** 2),
       ),
     ),
+    checkpointReuse: checkpointReuse(parsed),
     resolveCreatePolicy: () => ({ durabilityMode }),
   };
 }
@@ -117,13 +128,13 @@ Commands:
   mcp-stdio [--state-dir PATH] [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
-      [--runtime-memory-budget-mb N]
+      [--runtime-memory-budget-mb N] [--checkpoint-reuse on|off]
       serve MCP over stdio
   mcp-http [--host HOST] [--port N] [--path PATH] [--state-dir PATH]
       [--max-sessions N] [--warn-usage-percent N]
       [--snapshot-token-limit N] [--cols N] [--rows N]
       [--default-durability checkpointed|ephemeral]
-      [--runtime-memory-budget-mb N]
+      [--runtime-memory-budget-mb N] [--checkpoint-reuse on|off]
       [--client-idle-timeout-ms N] [--client-ping-ms N]
       [--token-file PATH] [--telemetry-token-file PATH] [--stop-wait-ms N]
       serve MCP over Streamable HTTP; a client session with no request or
@@ -233,6 +244,11 @@ Commands:
 Sessions are checkpointed by default: they outlive the server, whole where
 the server can snapshot their processes, and otherwise from their
 checkpoints. --default-durability ephemeral ends them with the server.
+With --checkpoint-reuse on, a Python session reads its committed checkpoint
+only as an exec first reads it, rather than at the start of every exec, and
+a Bun or Python session whose exec left its checkpoint as committed, by a
+runtime of the same version, commits none: what each exec reads, and what
+is committed, are as they are without it.
 
 The runtime memory budget, --runtime-memory-budget-mb, bounds what a
 session's host comes to hold of its own, anonymous memory and swap across

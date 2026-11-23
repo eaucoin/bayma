@@ -19,8 +19,12 @@ interface PythonExecSpec {
     payload_kind: string;
     inline_json?: unknown;
     payload_path?: string;
+    sha256: string;
+    codec_version: number;
+    compatibility: Record<string, string | undefined>;
   } | null;
   checkpoint_output_path: string;
+  checkpoint_reuse: boolean;
 }
 
 function writePythonExecFile(input: PrepareExecInput): PreparedExec {
@@ -46,9 +50,13 @@ function writePythonExecFile(input: PrepareExecInput): PreparedExec {
             payload_kind: input.checkpoint.manifest.payloadKind,
             inline_json: input.checkpoint.manifest.inlineJson,
             payload_path: input.checkpoint.payloadAbsolutePath,
+            sha256: input.checkpoint.manifest.sha256,
+            codec_version: input.checkpoint.manifest.codecVersion,
+            compatibility: { ...input.checkpoint.manifest.compatibility },
           }
         : null,
       checkpoint_output_path: checkpointOutputPath,
+      checkpoint_reuse: input.checkpointReuse ?? false,
     };
     writeFileSync(specPath, JSON.stringify(spec), "utf8");
     return {

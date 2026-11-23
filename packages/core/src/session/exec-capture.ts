@@ -24,7 +24,8 @@ export type ExecCompletionStatus = Extract<
   ExecStatus,
   "ok" | "error" | "interrupted"
 >;
-export type CheckpointOutcome = "none" | "commit" | "preserved" | "invalid";
+export type CheckpointOutcome =
+  "none" | "commit" | "preserved" | "unchanged" | "invalid";
 
 /** Keeps the bytes of the image a message shows. */
 export type ExecImageSink = (messageId: string, bytes: Uint8Array) => void;
@@ -167,7 +168,8 @@ export class ExecOutputCapture {
     for (const envelope of envelopes) {
       if (
         envelope.kind === "checkpoint" ||
-        envelope.kind === "checkpoint-preserved"
+        envelope.kind === "checkpoint-preserved" ||
+        envelope.kind === "checkpoint-unchanged"
       ) {
         this.consumeCheckpointOutcome(envelope);
         continue;
@@ -202,6 +204,8 @@ export class ExecOutputCapture {
     }
     if (envelope.kind === "checkpoint-preserved") {
       this.checkpointOutcome = "preserved";
+    } else if (envelope.kind === "checkpoint-unchanged") {
+      this.checkpointOutcome = "unchanged";
     } else if (envelope.checkpoint) {
       this.checkpointOutcome = "commit";
       this.checkpointCommit = envelope.checkpoint;
