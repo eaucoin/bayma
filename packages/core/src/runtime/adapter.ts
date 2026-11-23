@@ -18,7 +18,8 @@ export type RuntimeExecEnvelopeKind =
   | "image"
   | "done"
   | "checkpoint"
-  | "checkpoint-preserved";
+  | "checkpoint-preserved"
+  | "checkpoint-unchanged";
 
 export interface RuntimeExecEnvelope {
   kind: RuntimeExecEnvelopeKind;
@@ -40,6 +41,7 @@ const RUNTIME_EXEC_ENVELOPE_KINDS = new Set<RuntimeExecEnvelopeKind>([
   "done",
   "checkpoint",
   "checkpoint-preserved",
+  "checkpoint-unchanged",
 ]);
 
 function isCheckpointCommit(value: unknown): value is RuntimeCheckpointCommit {
@@ -134,7 +136,9 @@ export function parseRuntimeExecEnvelope(
     (isMessage &&
       (typeof envelope.text !== "string" ||
         envelope.checkpoint !== undefined)) ||
-    (["image", "done", "checkpoint-preserved"].includes(kind) &&
+    (["image", "done", "checkpoint-preserved", "checkpoint-unchanged"].includes(
+      kind,
+    ) &&
       (envelope.text !== undefined || envelope.checkpoint !== undefined)) ||
     (kind === "checkpoint" &&
       (envelope.text === undefined) === (envelope.checkpoint === undefined))
@@ -170,6 +174,14 @@ export interface PrepareExecInput {
   code: string;
   durabilityMode: DurabilityMode;
   checkpoint?: RuntimeCheckpointSnapshot | null;
+  /**
+   * Whether the runtime, where it can, reads `checkpoint` only as the exec
+   * first reads it, and says the exec left it unchanged, as
+   * `checkpoint-unchanged`, writing none, where the exec neither read nor
+   * wrote it, or what it would write is the committed payload, and the
+   * committed one was made with its codec's version and its own versions.
+   */
+  checkpointReuse?: boolean;
 }
 
 export interface PreparedExec {

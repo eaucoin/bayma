@@ -28,6 +28,8 @@ export interface McpStdioConfig extends Pick<
   defaultRows: number;
   /** The runtime memory budget, as SessionManagerOptions.runtimeMemoryBudget says. */
   runtimeMemoryBudget?: RuntimeMemoryBudget;
+  /** As SessionManagerOptions.checkpointReuse says. */
+  checkpointReuse?: boolean;
   /** The toolbelt's install, which the server stops as it shuts down. */
   toolbelt?: ToolbeltInstall;
 }
@@ -51,6 +53,7 @@ export async function serveMcpStdio(
       defaultCols: config.defaultCols,
       defaultRows: config.defaultRows,
       runtimeMemoryBudget: config.runtimeMemoryBudget,
+      checkpointReuse: config.checkpointReuse,
       resolveCreatePolicy: config.resolveCreatePolicy,
     },
     (envelope) => {

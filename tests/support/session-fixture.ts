@@ -201,6 +201,23 @@ export class ValidCheckpointTransport extends FakeTransport {
   }
 }
 
+export class UnchangedCheckpointTransport extends FakeTransport {
+  constructor() {
+    super(false);
+  }
+
+  /** Ends the session's exec saying it left the checkpoint as committed. */
+  completeUnchanged(sessionId: string): void {
+    const marker = this.pendingEventPrefix(sessionId);
+    this.emit(
+      sessionId,
+      `${marker}${JSON.stringify({ kind: "checkpoint-unchanged" })}\n`,
+    );
+    this.requireSession(sessionId).writes.shift();
+    this.emit(sessionId, `${marker}${JSON.stringify({ kind: "done" })}\n> \n`);
+  }
+}
+
 export class PreservedCheckpointTransport extends FakeTransport {
   constructor() {
     super(false);

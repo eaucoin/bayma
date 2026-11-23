@@ -20,6 +20,7 @@ import asyncio
 import builtins
 import codecs
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -63,6 +64,10 @@ SESSION_GLOBALS = {
     "_error": None,
 }
 CHECKPOINT = None
+# With checkpoint reuse, the committed payload CHECKPOINT is read from when
+# the exec running first reads it, if it has not read or written it yet; None
+# once it has, or where none waits to be read.
+CHECKPOINT_UNREAD = None
 # The running exec's event prefix and directory, while one runs.
 RUNNING_EXEC = None
 
@@ -145,13 +150,40 @@ class ChannelWriter:
         return False
 
 
+class HashingWriter:
+    """A binary file that hashes what is written to it, as SHA-256."""
+
+    def __init__(self, file):
+        self.file = file
+        self.hash = hashlib.sha256()
+
+    def write(self, data) -> int:
+        self.hash.update(data)
+        return self.file.write(data)
+
+
+def checkpoint_compatibility():
+    """What a checkpoint this runtime makes says of it, as its manifest keeps it."""
+    return {
+        "runtimeVersion": sys.version.split()[0],
+        "languageVersion": sys.version.split()[0],
+        "platform": sys.platform,
+    }
+
+
 def bayma_read_checkpoint():
+    global CHECKPOINT, CHECKPOINT_UNREAD
+    if CHECKPOINT_UNREAD is not None:
+        with open(CHECKPOINT_UNREAD, "rb") as payload:
+            CHECKPOINT = pickle.load(payload)
+        CHECKPOINT_UNREAD = None
     return CHECKPOINT
 
 
 def bayma_write_checkpoint(value):
-    global CHECKPOINT
+    global CHECKPOINT, CHECKPOINT_UNREAD
     CHECKPOINT = value
+    CHECKPOINT_UNREAD = None
     return value
 
 
@@ -219,17 +251,27 @@ def format_result(value):
 
 
 def run_submission(spec_path: str) -> None:
-    global CHECKPOINT, RUNNING_EXEC
+    global CHECKPOINT, CHECKPOINT_UNREAD, RUNNING_EXEC
     with open(spec_path, "r", encoding="utf8") as handle:
         spec = json.load(handle)
     prefix = spec["event_prefix"]
+    # With checkpoint reuse, the committed checkpoint is read only as the exec
+    # reads it, as it would be at its start without: so what the exec reads,
+    # and what it commits, are what they would be, but that an exec that
+    # neither reads nor writes it reads nothing of it, and commits nothing.
+    reuse = spec.get("checkpoint_reuse") is True
+    checkpoint = spec.get("checkpoint")
+    CHECKPOINT_UNREAD = None
     if spec.get("durability_mode") == "checkpointed":
-        checkpoint = spec.get("checkpoint")
         if checkpoint is None:
             CHECKPOINT = None
         elif checkpoint.get("payload_kind") == "binary-sidecar":
-            with open(checkpoint["payload_path"], "rb") as payload:
-                CHECKPOINT = pickle.load(payload)
+            if reuse:
+                CHECKPOINT = None
+                CHECKPOINT_UNREAD = checkpoint["payload_path"]
+            else:
+                with open(checkpoint["payload_path"], "rb") as payload:
+                    CHECKPOINT = pickle.load(payload)
         elif checkpoint.get("payload_kind") == "json-inline":
             CHECKPOINT = checkpoint.get("inline_json")
         else:
@@ -258,26 +300,46 @@ def run_submission(spec_path: str) -> None:
         if spec.get("durability_mode") == "checkpointed":
             try:
                 checkpoint_output_path = spec["checkpoint_output_path"]
-                with open(checkpoint_output_path, "wb") as payload:
-                    pickle.dump(CHECKPOINT, payload, protocol=5)
-                event = {
-                    "kind": "checkpoint",
-                    "checkpoint": {
-                        "runtimeId": "python",
-                        "codecId": ${JSON.stringify(PYTHON_CHECKPOINT_CODEC.codecId)},
-                        "codecVersion": ${PYTHON_CHECKPOINT_CODEC.codecVersion},
-                        "payloadKind": ${JSON.stringify(PYTHON_CHECKPOINT_CODEC.payloadKind)},
-                        "payloadPath": checkpoint_output_path,
-                        "compatibility": {
-                            "runtimeVersion": sys.version.split()[0],
-                            "languageVersion": sys.version.split()[0],
-                            "platform": sys.platform,
-                        },
-                    },
-                }
+                # The committed checkpoint is the one this exec would commit only
+                # where it was made as this runtime makes one now.
+                committed = checkpoint if reuse and checkpoint is not None and checkpoint.get("payload_kind") == "binary-sidecar" else None
+                made_alike = (
+                    committed is not None
+                    and committed.get("codec_version") == ${PYTHON_CHECKPOINT_CODEC.codecVersion}
+                    and committed.get("compatibility") == checkpoint_compatibility()
+                )
+                if made_alike and CHECKPOINT_UNREAD is not None:
+                    # Neither read nor written: nothing to commit.
+                    event = {"kind": "checkpoint-unchanged"}
+                else:
+                    # Unread, it is read to be committed as this runtime makes one.
+                    value = bayma_read_checkpoint()
+                    with open(checkpoint_output_path, "wb") as payload:
+                        written = HashingWriter(payload)
+                        pickle.dump(value, written, protocol=5)
+                    if made_alike and written.hash.hexdigest() == committed.get("sha256"):
+                        # Left as committed: nothing to commit.
+                        os.remove(checkpoint_output_path)
+                        event = {"kind": "checkpoint-unchanged"}
+                    else:
+                        event = {
+                            "kind": "checkpoint",
+                            "checkpoint": {
+                                "runtimeId": "python",
+                                "codecId": ${JSON.stringify(PYTHON_CHECKPOINT_CODEC.codecId)},
+                                "codecVersion": ${PYTHON_CHECKPOINT_CODEC.codecVersion},
+                                "payloadKind": ${JSON.stringify(PYTHON_CHECKPOINT_CODEC.payloadKind)},
+                                "payloadPath": checkpoint_output_path,
+                                "compatibility": checkpoint_compatibility(),
+                            },
+                        }
                 write_protocol_line(prefix + json.dumps(event, ensure_ascii=False))
             except Exception as error:
                 emit(prefix, "error", "".join(traceback.format_exception(error)).rstrip())
+            if reuse:
+                # Held no longer than the exec: the next reads it again, if it does.
+                CHECKPOINT = None
+                CHECKPOINT_UNREAD = None
         RUNNING_EXEC = None
         emit(prefix, "done")
 

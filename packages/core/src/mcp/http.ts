@@ -50,6 +50,8 @@ export interface McpHttpConfig extends Pick<
   defaultRows: number;
   /** The runtime memory budget, as SessionManagerOptions.runtimeMemoryBudget says. */
   runtimeMemoryBudget?: RuntimeMemoryBudget;
+  /** As SessionManagerOptions.checkpointReuse says. */
+  checkpointReuse?: boolean;
   /** How long a client session with no request or stream open stays open. */
   clientIdleTimeoutMs: number;
   /**
@@ -287,6 +289,7 @@ export async function serveMcpHttp(
       defaultCols: config.defaultCols,
       defaultRows: config.defaultRows,
       runtimeMemoryBudget: config.runtimeMemoryBudget,
+      checkpointReuse: config.checkpointReuse,
       resolveCreatePolicy: config.resolveCreatePolicy,
       isActorLive: (actorId) => httpClientSession(actorId)?.live() ?? false,
       actorReconnectWindowMs: (actorId) =>
