@@ -244,11 +244,19 @@ Commands:
 Sessions are checkpointed by default: they outlive the server, whole where
 the server can snapshot their processes, and otherwise from their
 checkpoints. --default-durability ephemeral ends them with the server.
-With --checkpoint-reuse on, a Python session reads its committed checkpoint
-only as an exec first reads it, rather than at the start of every exec, and
-a Bun or Python session whose exec left its checkpoint as committed, by a
-runtime of the same version, commits none: what each exec reads, and what
-is committed, are as they are without it.
+With --checkpoint-reuse on, a Python session unpickles its committed
+checkpoint at the first bayma_read_checkpoint() after it was committed, in
+an exec or between execs, rather than before each exec's code runs; and a
+Bun or Python session whose exec left its checkpoint as committed, by a
+runtime of the same version, commits none. The payload is then unpickled
+with whatever the session did before that read: classes of a module the
+exec reloaded (importlib.reload) or redefined before reading it are the
+ones its objects are made of, where without the option they are the classes
+as they were before the exec ran; and a payload that cannot be unpickled,
+as one whose class is gone, fails only the code that reads it, raising from
+bayma_read_checkpoint(), where without the option it fails every exec
+before its code runs. An exec that does not read it runs, and leaves it
+committed as it is.
 
 The runtime memory budget, --runtime-memory-budget-mb, bounds what a
 session's host comes to hold of its own, anonymous memory and swap across
