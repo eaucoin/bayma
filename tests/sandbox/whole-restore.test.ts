@@ -116,14 +116,22 @@ async function logged(name: string, text: string): Promise<void> {
 }
 
 /**
- * The argv runsc runs bayma's hook with in the sandbox, from what the image
- * runs, told of a save that leaves the sandbox running where it does, as
- * runsc is: gVisor splits it at spaces and runs its first word as a path.
+ * The argv runsc runs bayma's hook with in the sandbox, told of a save that
+ * leaves the sandbox running where it does, as runsc is: gVisor splits it at
+ * spaces and runs its first word as a path. The image's hook without Node,
+ * unless `node`: `bayma sandbox-hook`, from what the image runs, as hosts
+ * outside the image run it, and snapshots taken with it hold it.
  */
 async function hookArgv(
   stateDir: string,
-  leavesRunning = false,
+  { leavesRunning = false, node = false } = {},
 ): Promise<string> {
+  const told = [
+    "--state-dir",
+    stateDir,
+    ...(leavesRunning ? ["--leave-running"] : []),
+  ];
+  if (!node) return ["/usr/local/bin/bayma-sandbox-hook", ...told].join(" ");
   const entrypoint = JSON.parse(
     await run([
       "docker",
@@ -146,14 +154,7 @@ async function hookArgv(
     "-c",
     `command -v ${command}`,
   ]);
-  return [
-    path,
-    ...args,
-    "sandbox-hook",
-    "--state-dir",
-    stateDir,
-    ...(leavesRunning ? ["--leave-running"] : []),
-  ].join(" ");
+  return [path, ...args, "sandbox-hook", ...told].join(" ");
 }
 
 /** A container serving mcp-http in a gVisor sandbox, created or run, with `serverArgs` besides. */
@@ -681,7 +682,7 @@ async function savedLiveThenKilled({
       "--image-path",
       image,
       "--leave-running",
-      `--save-restore-exec-argv=${await hookArgv(stateDir, true)}`,
+      `--save-restore-exec-argv=${await hookArgv(stateDir, { leavesRunning: true, node: true })}`,
       id,
     ]);
     console.log(`saved live in ${Date.now() - savingAtMs} ms`);

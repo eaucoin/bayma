@@ -177,7 +177,12 @@ Commands:
       sentence ("it ran out of its memory (4Gi)"). A host whose save fails
       runs resume, and a save neither follows within ten minutes is given
       up on. A gVisor sandbox's file locks hold within it alone, so such a
-      host runs one server per state directory.
+      host runs one server per state directory. bayma's image carries the
+      hook without Node as bayma-sandbox-hook, which takes the same
+      arguments and variables, says the same, and fails with the same
+      words, for such a host to run in its place: it starts in
+      milliseconds, where Node takes hundreds of them in a sandbox just
+      restored.
       The state generation, in the state directory's generation.json as
       { "schemaVersion": 1, "generation": N }, is moved on, on the disk,
       before the server persists any change or tells a client of one as

@@ -3,3 +3,4 @@
 !dist/bayma
 !dist/payload
 !packages/core/native/advance-pids.c
+!packages/core/native/sandbox-hook.c

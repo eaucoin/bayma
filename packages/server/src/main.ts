@@ -1,4 +1,4 @@
-import { failureDetail } from "@bayma/core/errors";
+import { failureDetail, failureMessage } from "@bayma/core/errors";
 import { runSandboxHookCommand } from "@bayma/core/sandbox-hook";
 
 // The bayma binary: one server hosting every runtime. The sandbox hook, which
@@ -8,7 +8,17 @@ import { runSandboxHookCommand } from "@bayma/core/sandbox-hook";
 // one's (tooling/src/build.ts).
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
-  if (command === "sandbox-hook") return runSandboxHookCommand(args);
+  if (command === "sandbox-hook") {
+    // What the hook could not do, said as its words alone, as bayma's image's
+    // hook without Node (packages/core/native/sandbox-hook.c) says it: a
+    // host shows it as the reason its save or restore failed.
+    try {
+      return await runSandboxHookCommand(args);
+    } catch (error) {
+      process.stderr.write(failureMessage(error) + "\n");
+      process.exit(1);
+    }
+  }
   const [
     { runCli },
     { bunAdapter },
