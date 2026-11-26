@@ -35,6 +35,8 @@ export interface Sdk {
    * tried again, as every export after it goes, over a connection made anew.
    */
   reconnect: () => void;
+  /** Exports what each signal holds now, rather than as it is next due. */
+  flush: () => Promise<void>;
 }
 
 interface Running {
@@ -110,6 +112,32 @@ export async function stopTelemetry(): Promise<void> {
       stopping.sdk.shutdown(),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    diag.warn(
+      `not everything was exported: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Exports what telemetry holds, waiting `timeoutMs` at most: as the sandbox
+ * is about to end, which would lose what it holds. A backend that cannot take it fails
+ * nothing: like the SDK's other troubles, it is told only to OTEL_LOG_LEVEL's
+ * diagnostics.
+ */
+export async function flushTelemetry(timeoutMs: number): Promise<void> {
+  const flushing = running;
+  if (!flushing) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      flushing.sdk.flush(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
       }),
     ]);
   } catch (error) {

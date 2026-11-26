@@ -15,7 +15,7 @@ import {
 import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
-import { reconnectTelemetry } from "../telemetry/index.ts";
+import { flushTelemetry, reconnectTelemetry } from "../telemetry/index.ts";
 import { inSpan, report } from "../telemetry/record.ts";
 import {
   MAX_STOP_REASON_BYTES,
@@ -85,6 +85,10 @@ const REQUEST_TIMEOUT_MS = 5_000;
 // server runs, as when its host's checkpoint failed and it ran no resume, is
 // given up on: no save takes this long.
 const SAVE_EXPIRY_MS = 10 * 60_000;
+// How long a save that ends the sandbox waits at the most for telemetry to
+// export what it holds, which the sandbox's end would lose: its own span
+// among it.
+const TELEMETRY_FLUSH_TIMEOUT_MS = 1_000;
 
 /**
  * Hears the hook for the server whose state directory, which it holds the
@@ -199,6 +203,8 @@ export async function serveSandboxHook(
           runOn();
           throw error;
         }
+        if (!request.leavesRunning)
+          await flushTelemetry(TELEMETRY_FLUSH_TIMEOUT_MS);
         savedAtMs = Date.now();
         const save = ++saves;
         void resumesWithin(SAVE_EXPIRY_MS).then((resumed) => {

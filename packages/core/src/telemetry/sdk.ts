@@ -183,6 +183,7 @@ export function startSdk(
     "http/json";
   const exported = new Set(exports.map(({ signal }) => signal));
   const stops: (() => Promise<void>)[] = [];
+  const flushes: (() => Promise<void>)[] = [];
 
   context.setGlobalContextManager(
     new AsyncLocalStorageContextManager().enable(),
@@ -208,6 +209,7 @@ export function startSdk(
     });
     trace.setGlobalTracerProvider(tracerProvider);
     stops.push(() => tracerProvider.shutdown());
+    flushes.push(() => tracerProvider.forceFlush());
   }
   if (exported.has("metrics")) {
     const exportIntervalMillis =
@@ -231,6 +233,7 @@ export function startSdk(
     });
     metrics.setGlobalMeterProvider(meterProvider);
     stops.push(() => meterProvider.shutdown());
+    flushes.push(() => meterProvider.forceFlush());
   }
   if (exported.has("logs")) {
     const loggerProvider = new LoggerProvider({
@@ -245,11 +248,15 @@ export function startSdk(
     });
     logs.setGlobalLoggerProvider(loggerProvider);
     stops.push(() => loggerProvider.shutdown());
+    flushes.push(() => loggerProvider.forceFlush());
   }
   return {
     shutdown: async () => {
       await Promise.all(stops.map((stop) => stop()));
     },
     reconnect: agents.end,
+    flush: async () => {
+      await Promise.all(flushes.map((flush) => flush()));
+    },
   };
 }
