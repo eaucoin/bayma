@@ -26,8 +26,19 @@ export {
 /** How long stopping may take to export what is left before giving up. */
 export const SHUTDOWN_TIMEOUT_MS = 30_000;
 
-interface Running {
+/** The SDK started (./sdk.ts): what flushes and stops it, and what ends its connections. */
+export interface Sdk {
   shutdown: () => Promise<void>;
+  /**
+   * Ends every connection the exporters keep open, which a restored sandbox's
+   * network no longer carries: an export sent over one fails at once, and is
+   * tried again, as every export after it goes, over a connection made anew.
+   */
+  reconnect: () => void;
+}
+
+interface Running {
+  sdk: Sdk;
   /** The trace this process continues, from the process that started it. */
   parent: Context;
 }
@@ -76,7 +87,7 @@ export async function startTelemetry(
   if (config.exports.length === 0) return;
   const { startSdk } = await import("./sdk.ts");
   running = {
-    shutdown: startSdk(config.exports, attributes, bearerTokenFile),
+    sdk: startSdk(config.exports, attributes, bearerTokenFile),
     parent: propagation.extract(ROOT_CONTEXT, {
       traceparent: process.env.TRACEPARENT,
       tracestate: process.env.TRACESTATE,
@@ -96,7 +107,7 @@ export async function stopTelemetry(): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      stopping.shutdown(),
+      stopping.sdk.shutdown(),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
       }),
@@ -108,6 +119,15 @@ export async function stopTelemetry(): Promise<void> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Ends the connections telemetry keeps open, as a sandbox restored no longer
+ * has them: what it was exporting over one, and everything it exports next,
+ * goes over a connection made anew.
+ */
+export function reconnectTelemetry(): void {
+  running?.sdk.reconnect();
 }
 
 /** Whether telemetry is exporting. */
