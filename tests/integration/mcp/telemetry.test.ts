@@ -362,6 +362,53 @@ test(
 );
 
 test(
+  "a server exports what it holds as a save ends its sandbox, not as its next export is due",
+  async () => {
+    const server = await launchMcpHttpServer({
+      env: exporting({
+        // Far past the spans being waited for.
+        OTEL_BSP_SCHEDULE_DELAY: "60000",
+      }),
+    });
+    try {
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      // The save's own span, ended before the save answers, exported by then.
+      expect(
+        sink.spans.some(
+          (candidate) =>
+            candidate.name === "bayma.sandbox.save" &&
+            candidate.resource["process.pid"] === server.child.pid,
+        ),
+      ).toBe(true);
+      // The restore's span, held until a save ends the sandbox again.
+      expect(await runSandboxHookCommand(server.stateDir, "restore")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(
+        sink.spans.filter(
+          (candidate) =>
+            candidate.resource["process.pid"] === server.child.pid &&
+            ["bayma.sandbox.save", "bayma.sandbox.restore"].includes(
+              candidate.name,
+            ),
+        ).length,
+      ).toBe(3);
+    } finally {
+      await server.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
   "a server exports over HTTPS trusting the certificate OTEL_EXPORTER_OTLP_CERTIFICATE names",
   async () => {
     const root = mkdtempSync(join(tmpdir(), "bayma-telemetry-tls-"));
