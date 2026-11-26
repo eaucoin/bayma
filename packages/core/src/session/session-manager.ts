@@ -21,6 +21,7 @@ import {
   type RunningTimeout,
 } from "../sandbox.ts";
 import type { RuntimeId } from "../runtime/id.ts";
+import { preparePayloadRuntime } from "../runtime/payload-environment.ts";
 import {
   PID_ADVANCE_BUDGET,
   pidReservation,
@@ -2110,6 +2111,9 @@ export class SessionManager {
     session: SessionEntry,
     reason: "create" | "recovery" | "recycle",
   ): Promise<void> {
+    // The payload's files of its runtime, looked at as the first of its
+    // sessions starts, the server's start having looked at none.
+    preparePayloadRuntime(this.adapter(session).runtimeId);
     // The host it starts writes in the session's scratch directory.
     this.generation.bump();
     const ended = session.runtime?.handle;
