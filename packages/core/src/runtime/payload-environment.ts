@@ -133,8 +133,11 @@ function escapesRoot(relation: string): boolean {
   );
 }
 
-/** Resolve a manifest path inside the payload, refusing anything that escapes. */
-function resolvePayloadPath(
+/**
+ * A manifest path inside the payload, as its text says it, refusing one that
+ * escapes it: what it names is not looked at.
+ */
+function lexicalPayloadPath(
   payloadRoot: string,
   runtimeRoot: string,
   relativePath: string,
@@ -154,6 +157,18 @@ function resolvePayloadPath(
   const lexicalPath = resolve(payloadRoot, runtimeRoot, relativePath);
   if (escapesRoot(relative(payloadRoot, lexicalPath)))
     fail(`${label} escapes the payload root`);
+  return lexicalPath;
+}
+
+/**
+ * The physical path of a manifest path, `lexicalPath`, refusing one that does
+ * not exist in the payload or resolves outside it.
+ */
+function physicalPayloadPath(
+  payloadRoot: string,
+  lexicalPath: string,
+  label: string,
+): string {
   if (!existsSync(lexicalPath)) fail(`${label} does not exist in the payload`);
   const physicalPath = realpathSync(lexicalPath);
   if (escapesRoot(relative(payloadRoot, physicalPath)))
@@ -291,13 +306,29 @@ function assertDisjointAuthorities(
   }
 }
 
-/** The environment every runtime in `payloadRoot` runs with. */
+/**
+ * The environment every runtime in `payloadRoot` runs with. A runtime's own
+ * paths (its envPaths) are given as the manifest says them, inside the payload,
+ * none of what they name looked at: each runtime's are checked, and given as
+ * they physically are, as it first runs (preparePayloadRuntime). A host that
+ * serves the payload's files lazily, as an image's snapshotter can, may copy
+ * each whole as it is first looked up, so a server that looked at every
+ * runtime's binaries as it starts would wait on all of them, in sessions of
+ * one. Its PATH directories are given as they physically are.
+ */
 export function resolvePayloadEnvironment(
   payloadRoot: string,
   base: Readonly<Record<string, string | undefined>> = process.env,
 ): Record<string, string> {
   const root = realpathSync(resolve(payloadRoot));
-  const manifest = readPayloadManifest(root);
+  return environmentOf(root, readPayloadManifest(root), base);
+}
+
+function environmentOf(
+  root: string,
+  manifest: PayloadManifest,
+  base: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
   assertDisjointAuthorities(manifest.runtimes);
   const env: Record<string, string> = Object.fromEntries(
     Object.entries(base).filter(
@@ -312,7 +343,7 @@ export function resolvePayloadEnvironment(
     const runtime = manifest.runtimes[runtimeId];
     Object.assign(env, runtime.env);
     for (const [name, relativePath] of Object.entries(runtime.envPaths)) {
-      env[name] = resolvePayloadPath(
+      env[name] = lexicalPayloadPath(
         root,
         runtime.root,
         relativePath,
@@ -320,14 +351,14 @@ export function resolvePayloadEnvironment(
       );
     }
     for (const [name, entries] of Object.entries(runtime.pathEnvPrepend)) {
-      const resolved = entries.map((entry, index) =>
-        resolvePayloadPath(
+      const resolved = entries.map((entry, index) => {
+        const label = `${runtimeId}.pathEnvPrepend.${name}[${index}]`;
+        return physicalPayloadPath(
           root,
-          runtime.root,
-          entry,
-          `${runtimeId}.pathEnvPrepend.${name}[${index}]`,
-        ),
-      );
+          lexicalPayloadPath(root, runtime.root, entry, label),
+          label,
+        );
+      });
       prepends.set(name, [...(prepends.get(name) ?? []), ...resolved]);
     }
   }
@@ -350,11 +381,50 @@ export function payloadValue(name: string): string {
   return value;
 }
 
+/**
+ * The payload this process put its environment from, and the runtimes whose
+ * own paths it has checked since.
+ */
+let applied:
+  | { root: string; manifest: PayloadManifest; prepared: Set<RuntimeId> }
+  | undefined;
+
 /** Put the payload's environment into this process, for the adapters to read. */
 export function applyPayloadEnvironment(payloadRoot: string): void {
-  const resolved = resolvePayloadEnvironment(payloadRoot);
+  const root = realpathSync(resolve(payloadRoot));
+  const manifest = readPayloadManifest(root);
+  const resolved = environmentOf(root, manifest, process.env);
   for (const name of Object.keys(process.env)) {
     if (!(name in resolved)) delete process.env[name];
   }
   Object.assign(process.env, resolved);
+  applied = { root, manifest, prepared: new Set() };
+}
+
+/**
+ * Readies runtime `runtimeId` to run from the payload this process put its
+ * environment from, once, as it first runs: each of its own paths (its
+ * envPaths) must exist in the payload and resolve inside it, failing as the
+ * payload is refused otherwise, and is put into this process's environment as
+ * it physically is. Nothing where no payload was applied.
+ */
+export function preparePayloadRuntime(runtimeId: RuntimeId): void {
+  if (!applied || applied.prepared.has(runtimeId)) return;
+  const { root, manifest, prepared } = applied;
+  const runtime = manifest.runtimes[runtimeId];
+  const physical = Object.fromEntries(
+    Object.entries(runtime.envPaths).map(([name, relativePath]) => {
+      const label = `${runtimeId}.envPaths.${name}`;
+      return [
+        name,
+        physicalPayloadPath(
+          root,
+          lexicalPayloadPath(root, runtime.root, relativePath, label),
+          label,
+        ),
+      ];
+    }),
+  );
+  Object.assign(process.env, physical);
+  prepared.add(runtimeId);
 }
