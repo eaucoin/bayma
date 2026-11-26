@@ -116,10 +116,14 @@ export class OtlpSink {
   /** Every request's Authorization header, or null for none, in order. */
   readonly authorizations: (string | null)[] = [];
   private readonly server: ReturnType<typeof Bun.serve>;
+  private readonly scheme: "http" | "https";
 
-  constructor() {
+  /** A sink over HTTP, or over HTTPS with `tls`'s certificate and key. */
+  constructor(tls?: { cert: string; key: string }) {
+    this.scheme = tls ? "https" : "http";
     this.server = Bun.serve({
       port: 0,
+      ...(tls ? { tls } : {}),
       fetch: async (request) => {
         const path = new URL(request.url).pathname;
         this.paths.push(path);
@@ -132,7 +136,7 @@ export class OtlpSink {
 
   /** The endpoint to give OTEL_EXPORTER_OTLP_ENDPOINT. */
   get url(): string {
-    return `http://127.0.0.1:${this.server.port}`;
+    return `${this.scheme}://127.0.0.1:${this.server.port}`;
   }
 
   stop(): void {

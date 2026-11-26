@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -249,6 +250,174 @@ test(
     expect(new Set(authorizations)).toEqual(
       new Set(["Bearer first-token", "Bearer second-token"]),
     );
+  },
+  TEST_TIMEOUT_MS,
+);
+
+/**
+ * A way to the sink over TCP that, once `cut`, carries nothing more over the
+ * connections it has, neither closing them nor answering on them, as a
+ * restored sandbox's network carries none of the connections it had, while
+ * it carries new ones as before.
+ */
+async function cuttableWayToSink(): Promise<{
+  url: string;
+  cut: () => void;
+  close: () => Promise<void>;
+}> {
+  const sinkPort = Number(new URL(sink.url).port);
+  const carried: { client: net.Socket; upstream: net.Socket }[] = [];
+  const cutOff: net.Socket[] = [];
+  const server = net.createServer((client) => {
+    const upstream = net.connect(sinkPort, "127.0.0.1");
+    client.pipe(upstream).pipe(client);
+    client.on("error", () => upstream.destroy());
+    upstream.on("error", () => client.destroy());
+    carried.push({ client, upstream });
+  });
+  await new Promise<void>((listening) =>
+    server.listen(0, "127.0.0.1", listening),
+  );
+  const { port } = server.address() as net.AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    cut: () => {
+      for (const { client, upstream } of carried.splice(0)) {
+        client.unpipe(upstream);
+        upstream.unpipe(client);
+        client.pause();
+        upstream.destroy();
+        cutOff.push(client);
+      }
+    },
+    close: async () => {
+      for (const socket of [
+        ...cutOff,
+        ...carried.flatMap(({ client, upstream }) => [client, upstream]),
+      ])
+        socket.destroy();
+      await new Promise((closed) => server.close(closed));
+    },
+  };
+}
+
+test(
+  "a server restored exports over connections of its own what it was exporting over its old ones, which carry nothing, and all it records next",
+  async () => {
+    const way = await cuttableWayToSink();
+    const server = await launchMcpHttpServer({
+      env: exporting({
+        OTEL_EXPORTER_OTLP_ENDPOINT: way.url,
+        OTEL_BSP_SCHEDULE_DELAY: "100",
+        // Longer than the span below is waited for: an export sent over a
+        // connection that carries nothing is not given up on meanwhile.
+        OTEL_EXPORTER_OTLP_TIMEOUT: "30000",
+      }),
+    });
+    /** The span named `name`, once the sink has it from this server. */
+    const span = async (name: string): Promise<ReceivedSpan> => {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const found = sink.spans.find(
+          (candidate) =>
+            candidate.name === name &&
+            candidate.resource["process.pid"] === server.child.pid,
+        );
+        if (found) return found;
+        await sleep(50);
+      }
+      throw new Error(`the sink received no ${name} from the server`);
+    };
+    try {
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      // Exported over a connection the server keeps for the next export,
+      // which then carries nothing: the resume's span is sent over it, and
+      // goes unanswered, as the server is saved again and restored.
+      await span("bayma.sandbox.save");
+      way.cut();
+      expect(await runSandboxHookCommand(server.stateDir, "resume")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      await sleep(500);
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(await runSandboxHookCommand(server.stateDir, "restore")).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      await span("bayma.sandbox.resume");
+      await span("bayma.sandbox.restore");
+    } finally {
+      await server.close();
+      await way.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  "a server exports over HTTPS trusting the certificate OTEL_EXPORTER_OTLP_CERTIFICATE names",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "bayma-telemetry-tls-"));
+    const cert = join(root, "cert.pem");
+    const key = join(root, "key.pem");
+    const made = Bun.spawnSync(
+      [
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=127.0.0.1",
+        "-addext",
+        "subjectAltName=IP:127.0.0.1",
+        "-keyout",
+        key,
+        "-out",
+        cert,
+      ],
+      { stdout: "ignore", stderr: "pipe" },
+    );
+    expect(made.stderr.toString()).not.toContain("error");
+    expect(made.exitCode).toBe(0);
+    // Self-signed, it is trusted only as the variable names it.
+    const tlsSink = new OtlpSink({
+      cert: await Bun.file(cert).text(),
+      key: await Bun.file(key).text(),
+    });
+    const client = await McpStdioClient.connect({
+      env: exporting({
+        OTEL_EXPORTER_OTLP_ENDPOINT: tlsSink.url,
+        OTEL_EXPORTER_OTLP_CERTIFICATE: cert,
+        OTEL_BSP_SCHEDULE_DELAY: "100",
+      }),
+    });
+    try {
+      await client.client.listTools();
+      const deadline = Date.now() + 10_000;
+      while (
+        !tlsSink.spans.some(({ name }) => name === "tools/list") &&
+        Date.now() < deadline
+      )
+        await sleep(50);
+      expect(tlsSink.spans.map(({ name }) => name)).toContain("tools/list");
+    } finally {
+      await client.close();
+      tlsSink.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
   },
   TEST_TIMEOUT_MS,
 );

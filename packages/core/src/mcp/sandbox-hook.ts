@@ -15,6 +15,7 @@ import {
 import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
+import { reconnectTelemetry } from "../telemetry/index.ts";
 import { inSpan, report } from "../telemetry/record.ts";
 import {
   MAX_STOP_REASON_BYTES,
@@ -215,6 +216,10 @@ export async function serveSandboxHook(
         return JSON.stringify(caught);
       }
       case "restore": {
+        // Whatever comes of the restore, the connections telemetry kept are
+        // gone with the sandbox's old network, which would hold what it
+        // exports next, this restore's span among it, until they timed out.
+        reconnectTelemetry();
         const restoredFrom = savedAtMs;
         if (restoredFrom === undefined)
           throw new Error("the server was not saved, to be restored");
