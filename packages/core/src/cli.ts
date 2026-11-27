@@ -193,7 +193,13 @@ Commands:
       arguments and variables, says the same, and fails with the same
       words, for such a host to run in its place: it starts in
       milliseconds, where Node takes hundreds of them in a sandbox just
-      restored.
+      restored. A host may instead ask the server with no process at all,
+      over the hook's socket, sandbox-hook.sock in the state directory
+      (runsc checkpoint --save-restore-exec-socket); one whose save syncs
+      the sandbox's filesystems itself once the server has answered it
+      (runsc checkpoint --save-restore-exec-sync) says so in the save's
+      request, and the server leaves its own sync of what sessions
+      committed, which would only repeat it.
       The state generation, in the state directory's generation.json as
       { "schemaVersion": 1, "generation": N }, is moved on, on the disk,
       before the server persists any change or tells a client of one as

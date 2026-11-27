@@ -20,7 +20,11 @@ import { failureMessage } from "../errors.ts";
 // garbage, which one left running must not. A host that knows why it stopped
 // the sandbox it restores, as one stopped as it ran out of its memory, says
 // so in BAYMA_SANDBOX_STOP_REASON, which the restore passes on with its mode,
-// for each live session's next exec to be told.
+// for each live session's next exec to be told. A host that syncs the
+// sandbox's filesystems itself once the server has answered a save, as
+// gVisor's runsc does with --save-restore-exec-sync, which asks the server
+// over the socket without the hook, says so in the save's request, and the
+// server leaves its own sync of what sessions committed to it.
 //
 // This module is the hook's side of it, and what the server shares of it: the
 // hook starts as a process of its own on the path of every save and restore,
@@ -52,14 +56,19 @@ export const LEAVE_RUNNING_OPTION = "--leave-running";
 
 // What a save that leaves the sandbox running tells the server past its mode.
 const LEAVES_RUNNING = "leave-running";
+// What a save whose host syncs the sandbox's filesystems once the server has
+// answered it tells the server past its mode, after LEAVES_RUNNING where it
+// tells both.
+const HOST_SYNCS = "syncs";
 
 /**
  * What the hook asks the server: its mode, with a save's whether the sandbox
- * runs on after it, and a restore's why its host stopped the sandbox, where
- * it says.
+ * runs on after it and whether its host syncs the sandbox's filesystems once
+ * the server has answered it, and a restore's why its host stopped the
+ * sandbox, where it says.
  */
 export type SandboxHookRequest =
-  | { mode: "save"; leavesRunning: boolean }
+  | { mode: "save"; leavesRunning: boolean; hostSyncs: boolean }
   | { mode: "restore"; stopReason?: string }
   | { mode: "resume" | "stop" };
 
@@ -85,7 +94,11 @@ export function parseSandboxHookMode(
 export function formatSandboxHookRequest(request: SandboxHookRequest): string {
   switch (request.mode) {
     case "save":
-      return request.leavesRunning ? `save ${LEAVES_RUNNING}` : "save";
+      return [
+        "save",
+        ...(request.leavesRunning ? [LEAVES_RUNNING] : []),
+        ...(request.hostSyncs ? [HOST_SYNCS] : []),
+      ].join(" ");
     case "restore":
       return request.stopReason === undefined
         ? "restore"
@@ -104,12 +117,16 @@ export function parseSandboxHookRequest(line: string): SandboxHookRequest {
   const mode = parseSandboxHookMode(space === -1 ? line : line.slice(0, space));
   const told = space === -1 ? undefined : line.slice(space + 1);
   switch (mode) {
-    case "save":
-      if (told !== undefined && told !== LEAVES_RUNNING)
+    case "save": {
+      const words = told === undefined ? [] : told.split(" ");
+      const leavesRunning = words[0] === LEAVES_RUNNING;
+      const hostSyncs = words[leavesRunning ? 1 : 0] === HOST_SYNCS;
+      if (words.length !== Number(leavesRunning) + Number(hostSyncs))
         throw new Error(
-          `a save is told nothing past its mode but ${LEAVES_RUNNING}`,
+          `a save is told nothing past its mode but ${LEAVES_RUNNING}, ${HOST_SYNCS}, or both, in that order`,
         );
-      return { mode, leavesRunning: told !== undefined };
+      return { mode, leavesRunning, hostSyncs };
+    }
     case "restore":
       return { mode, stopReason: parseSandboxStopReason(told) };
     default:
@@ -158,7 +175,7 @@ export async function runSandboxHook(
 ): Promise<string | undefined> {
   const request = `${formatSandboxHookRequest(
     mode === "save"
-      ? { mode, leavesRunning }
+      ? { mode, leavesRunning, hostSyncs: false }
       : mode === "restore"
         ? {
             mode,
