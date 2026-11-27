@@ -19,6 +19,7 @@ import {
   type ReceivedSpan,
 } from "../../support/otlp-sink.ts";
 import { launchSpec, runSandboxHookCommand } from "../../support/runtimes.ts";
+import { SOCKET_TEMP_ROOT } from "../../support/temp.ts";
 
 // A server configured to export telemetry records its requests and its
 // sessions' work, continuing the trace each client propagates, and tells no
@@ -470,10 +471,12 @@ test(
 );
 
 test(
-  "a server whose telemetry token is blank does not start, and one it cannot read again says so once",
+  "a server whose telemetry token is blank does not start; one reads it as it starts and again only as its sandbox is restored, and says once that it cannot read it then",
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "bayma-telemetry-token-"));
+    // A state directory whose hook's socket path a Unix socket's may be.
+    const root = mkdtempSync(join(SOCKET_TEMP_ROOT, "bayma-telemetry-token-"));
     const tokenFile = join(root, "token");
+    const stateDir = join(root, "state");
     const launch = launchSpec();
     const serve = (env: Record<string, string>) =>
       Bun.spawn(
@@ -484,12 +487,29 @@ test(
           "--port",
           "0",
           "--state-dir",
-          join(root, "state"),
+          stateDir,
           "--telemetry-token-file",
           tokenFile,
         ],
         { env: exporting(env), stdout: "ignore", stderr: "pipe" },
       );
+    /** The bearers of the exports `act` leads to, once one has come. */
+    const bearers = async (act: () => Promise<void>): Promise<string[]> => {
+      const from = sink.authorizations.length;
+      await act();
+      const deadline = Date.now() + 10_000;
+      while (sink.authorizations.length === from && Date.now() < deadline)
+        await sleep(50);
+      await sleep(500);
+      return sink.authorizations.slice(from).map(String);
+    };
+    const hook = async (...modes: string[]) => {
+      for (const mode of modes)
+        expect(await runSandboxHookCommand(stateDir, mode)).toEqual({
+          status: 0,
+          stderr: "",
+        });
+    };
     try {
       writeFileSync(tokenFile, " \n");
       const blank = serve({});
@@ -498,20 +518,33 @@ test(
         "telemetry bearer token must be non-empty, with no surrounding whitespace",
       );
 
-      writeFileSync(tokenFile, "telemetry-token\n");
-      const from = sink.authorizations.length;
+      writeFileSync(tokenFile, "first-token\n");
       const server = serve({ OTEL_BSP_SCHEDULE_DELAY: "100" });
-      const deadline = Date.now() + 10_000;
-      while (
-        !sink.authorizations.slice(from).includes("Bearer telemetry-token") &&
-        Date.now() < deadline
-      )
-        await sleep(50);
-      expect(sink.authorizations.slice(from)).toContain(
-        "Bearer telemetry-token",
+      expect(await bearers(async () => undefined)).toContain(
+        "Bearer first-token",
       );
+      // Gone, then another host's: the exports carry the token read as the
+      // server started, the file never read meanwhile.
       rmSync(tokenFile);
-      // Stopped as `docker stop` stops it, it exports what it holds.
+      expect(new Set(await bearers(() => hook("save", "resume")))).toEqual(
+        new Set(["Bearer first-token"]),
+      );
+      writeFileSync(tokenFile, "second-token\n");
+      expect(new Set(await bearers(() => hook("save", "resume")))).toEqual(
+        new Set(["Bearer first-token"]),
+      );
+      // Read again as the sandbox is restored, for its host.
+      expect(await bearers(() => hook("save", "restore"))).toContain(
+        "Bearer second-token",
+      );
+      // One it cannot read then: nothing is exported, which is said once.
+      rmSync(tokenFile);
+      await hook("save", "restore");
+      await hook("save", "restore");
+      const exportsAfter = sink.authorizations.length;
+      await hook("save", "resume");
+      await sleep(1_000);
+      expect(sink.authorizations.length).toBe(exportsAfter);
       server.kill("SIGTERM");
       await server.exited;
       const said = await new Response(server.stderr).text();

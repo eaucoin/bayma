@@ -32,7 +32,8 @@ export interface Sdk {
   /**
    * Ends every connection the exporters keep open, which a restored sandbox's
    * network no longer carries: an export sent over one fails at once, and is
-   * tried again, as every export after it goes, over a connection made anew.
+   * tried again, as every export after it goes, over a connection made anew;
+   * and reads the bearer token again, for the restored sandbox's host.
    */
   reconnect: () => void;
   /** Exports what each signal holds now, rather than as it is next due. */
@@ -73,7 +74,8 @@ function diagnosticsLevel(name: string | undefined): DiagLogLevel | undefined {
  * bayma cannot export is named on stderr. A process started by one being
  * traced continues its trace, from TRACEPARENT and TRACESTATE. Given
  * `bearerTokenFile`, every export carries the token it holds as
- * `Authorization: Bearer`, read anew for each export.
+ * `Authorization: Bearer`, read as telemetry starts and again only as its
+ * sandbox is restored (reconnectTelemetry).
  */
 export async function startTelemetry(
   attributes: Record<string, string>,
@@ -125,9 +127,9 @@ export async function stopTelemetry(): Promise<void> {
 
 /**
  * Exports what telemetry holds, waiting `timeoutMs` at most: as the sandbox
- * is about to end, which would lose what it holds. A backend that cannot take it fails
- * nothing: like the SDK's other troubles, it is told only to OTEL_LOG_LEVEL's
- * diagnostics.
+ * is about to end, which would lose what it holds. A backend that cannot take
+ * it fails nothing: like the SDK's other troubles, it is told only to
+ * OTEL_LOG_LEVEL's diagnostics.
  */
 export async function flushTelemetry(timeoutMs: number): Promise<void> {
   const flushing = running;
@@ -152,7 +154,7 @@ export async function flushTelemetry(timeoutMs: number): Promise<void> {
 /**
  * Ends the connections telemetry keeps open, as a sandbox restored no longer
  * has them: what it was exporting over one, and everything it exports next,
- * goes over a connection made anew.
+ * goes over a connection made anew, with the bearer token read again.
  */
 export function reconnectTelemetry(): void {
   running?.sdk.reconnect();
