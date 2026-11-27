@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   abandonSession,
   launchMcpHttpServer,
 } from "../../support/mcp-http-client.ts";
+import { runSandboxHook } from "@bayma/core";
 import { runSandboxHookCommand } from "../../support/runtimes.ts";
 
 // What a host that saves and restores the sandbox mcp-http runs in sees of
@@ -438,6 +440,64 @@ test(
       expect(await exitsWithin(resumed, 10_000)).toBe(true);
     } finally {
       await resumed.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+/**
+ * A client's connection to `url` kept alive, idle once the server has
+ * answered the request it made on it; and whether the server has ended it.
+ */
+async function idleConnection(
+  url: string,
+  token: string,
+): Promise<{
+  ended: Promise<void>;
+  isEnded: () => boolean;
+  destroy: () => void;
+}> {
+  const { hostname, port } = new URL(url);
+  const socket = net.connect(Number(port), hostname);
+  let isEnded = false;
+  const ended = new Promise<void>((resolve) =>
+    socket.once("close", () => {
+      isEnded = true;
+      resolve();
+    }),
+  );
+  let received = "";
+  await new Promise<void>((answered, failed) => {
+    socket.on("error", failed);
+    socket.on("data", (chunk) => {
+      received += chunk.toString();
+      if (/^HTTP\/1\.1 200 /u.test(received) && received.includes("\r\n\r\n"))
+        answered();
+    });
+    socket.write(
+      `GET /status HTTP/1.1\r\nhost: ${hostname}\r\nauthorization: Bearer ${token}\r\nconnection: keep-alive\r\n\r\n`,
+    );
+  });
+  return { ended, isEnded: () => isEnded, destroy: () => socket.destroy() };
+}
+
+test(
+  "a save that ends the sandbox ends the clients' idle keep-alive connections as it answers, which a restore could not use; one that leaves it running ends none",
+  async () => {
+    const server = await launchMcpHttpServer({ bearerToken: TOKEN });
+    const connection = await idleConnection(server.url, TOKEN);
+    try {
+      await runSandboxHook(server.stateDir, "save", { leavesRunning: true });
+      await hook(server.stateDir, "resume");
+      await sleep(500);
+      expect(connection.isEnded()).toBe(false);
+
+      await hook(server.stateDir, "save");
+      expect(await answeredWithin(connection.ended, 1_000)).toBe(true);
+      await hook(server.stateDir, "restore");
+    } finally {
+      connection.destroy();
+      await server.close();
     }
   },
   TEST_TIMEOUT_MS,

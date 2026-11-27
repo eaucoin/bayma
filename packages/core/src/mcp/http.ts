@@ -673,6 +673,9 @@ export async function serveMcpHttp(
       stop: heldStop,
       save: (options) => saveSandboxServer(manager, options),
       collect: () => manager.collectGarbage(),
+      // Its clients' idle keep-alive connections, which a request answered
+      // left open; those carrying one, as an event stream does, are left.
+      ending: () => server.closeIdleConnections(),
       restore: async (savedAtMs, stopReason) => {
         restoreSandboxServer(manager, savedAtMs, stopReason);
         try {

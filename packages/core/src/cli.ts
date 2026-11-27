@@ -178,9 +178,11 @@ Commands:
       directory's last-save.json says too. A save that ends the sandbox
       then has each Bun session waiting at its prompt collect its garbage,
       and collects the server's, so that the save holds less of their
-      memory; one that leaves it running, as its host says with
-      --leave-running, as it says to runsc checkpoint, collects none, which
-      would rewrite pages the next such save writes again. runsc runs the
+      memory, and ends the connections its clients and its telemetry keep
+      idle, which a restore could not use; one that leaves it running, as
+      its host says with --leave-running, as it says to runsc checkpoint,
+      does neither: a collection would rewrite pages the next such save
+      writes again, and its connections run on with it. runsc runs the
       hook with a save's arguments at the restore or resume after it too,
       which take nothing of them. A restore reads the token file
       again, starts clients' reconnect grace and idle timeouts again, tells

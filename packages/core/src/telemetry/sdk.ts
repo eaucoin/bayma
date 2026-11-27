@@ -274,6 +274,7 @@ export function startSdk(
       agents.end();
       bearer?.reread();
     },
+    disconnect: () => agents.end(),
     flush: async () => {
       await Promise.all(flushes.map((flush) => flush()));
     },

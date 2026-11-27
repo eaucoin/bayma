@@ -244,6 +244,35 @@ test("a save that ends the sandbox has the runtimes collect their garbage once i
   });
 });
 
+test("a save that ends the sandbox ends the connections the server keeps idle, once it has collected, before it answers; a save that leaves the sandbox running ends none", async () => {
+  await withHookDir(async (dir) => {
+    const { calls, handlers } = recording();
+    handlers.collect = async () => {
+      calls.push("collected");
+      return 0;
+    };
+    handlers.ending = () =>
+      void calls.push(`idle ended, ${sandboxSaved() ? "saved" : "running"}`);
+    const stop = await serveSandboxHook(dir, handlers);
+    try {
+      await runSandboxHook(dir, "save", { leavesRunning: true });
+      await runSandboxHook(dir, "resume");
+      expect(calls).toEqual(["save, saved"]);
+      await runSandboxHook(dir, "save");
+      expect(calls).toEqual([
+        "save, saved",
+        "save, saved",
+        "collected",
+        "idle ended, saved",
+      ]);
+      await runSandboxHook(dir, "restore");
+      expect(calls).toHaveLength(5);
+    } finally {
+      await stop();
+    }
+  });
+});
+
 test("a save whose host syncs the sandbox's filesystems once it is answered, as it says, leaves the server's own sync", async () => {
   await withHookDir(async (dir) => {
     const told: boolean[] = [];
