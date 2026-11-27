@@ -8,6 +8,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import { runSandboxHook } from "@bayma/core";
 import { launchMcpHttpServer } from "../../support/mcp-http-client.ts";
 import {
   McpStdioClient,
@@ -301,6 +302,83 @@ async function cuttableWayToSink(): Promise<{
     },
   };
 }
+
+/**
+ * A way to the sink over TCP that counts the connections its clients keep
+ * open to it.
+ */
+async function countedWayToSink(): Promise<{
+  url: string;
+  open: () => number;
+  close: () => Promise<void>;
+}> {
+  const sinkPort = Number(new URL(sink.url).port);
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((client) => {
+    const upstream = net.connect(sinkPort, "127.0.0.1");
+    client.pipe(upstream).pipe(client);
+    sockets.add(client);
+    client.on("close", () => {
+      sockets.delete(client);
+      upstream.destroy();
+    });
+    client.on("error", () => upstream.destroy());
+    upstream.on("error", () => client.destroy());
+  });
+  await new Promise<void>((listening) =>
+    server.listen(0, "127.0.0.1", listening),
+  );
+  const { port } = server.address() as net.AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    open: () => sockets.size,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((closed) => server.close(closed));
+    },
+  };
+}
+
+test(
+  "a save that ends the sandbox ends telemetry's connections once it has exported what it held, which a restore could not use; one that leaves it running ends none",
+  async () => {
+    const way = await countedWayToSink();
+    const server = await launchMcpHttpServer({
+      env: exporting({
+        OTEL_EXPORTER_OTLP_ENDPOINT: way.url,
+        OTEL_BSP_SCHEDULE_DELAY: "100",
+      }),
+    });
+    /** Whether `until` holds within 2 s. */
+    const within = async (until: () => boolean): Promise<boolean> => {
+      for (const deadline = Date.now() + 2_000; Date.now() < deadline;)
+        if (until()) return true;
+        else await sleep(20);
+      return until();
+    };
+    try {
+      const ok = { status: 0, stderr: "" };
+      await runSandboxHook(server.stateDir, "save", { leavesRunning: true });
+      expect(await runSandboxHookCommand(server.stateDir, "resume")).toEqual(
+        ok,
+      );
+      // Exported over connections the server keeps for its next exports.
+      expect(await within(() => way.open() > 0)).toBe(true);
+      await sleep(500);
+      expect(way.open()).toBeGreaterThan(0);
+
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual(ok);
+      expect(await within(() => way.open() === 0)).toBe(true);
+      expect(await runSandboxHookCommand(server.stateDir, "restore")).toEqual(
+        ok,
+      );
+    } finally {
+      await server.close();
+      await way.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test(
   "a server restored exports over connections of its own what it was exporting over its old ones, which carry nothing, and all it records next",

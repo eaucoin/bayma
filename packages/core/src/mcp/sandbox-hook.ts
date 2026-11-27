@@ -15,7 +15,11 @@ import {
 import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
-import { flushTelemetry, reconnectTelemetry } from "../telemetry/index.ts";
+import {
+  disconnectTelemetry,
+  flushTelemetry,
+  reconnectTelemetry,
+} from "../telemetry/index.ts";
 import { inSpan, report } from "../telemetry/record.ts";
 import {
   MAX_STOP_REASON_BYTES,
@@ -45,6 +49,14 @@ export interface SandboxHookHandlers {
    * and say how many did.
    */
   collect: () => Promise<number>;
+  /**
+   * Once a save that ends the sandbox has exported its telemetry, as the
+   * server is about to answer it: end the connections the server keeps open
+   * idle, which a sandbox restored from the save could not use, and whose
+   * ends its server would otherwise read first, before the restore it is
+   * asked. Connections in use, and the hook's, are left.
+   */
+  ending?: () => void;
   /**
    * After the sandbox was restored from what it saved at `savedAtMs`: its
    * connections to the outside are gone, and it may serve another host.
@@ -224,8 +236,13 @@ export async function serveSandboxHook(
           runOn();
           throw error;
         }
-        if (!request.leavesRunning)
+        if (!request.leavesRunning) {
           await flushTelemetry(TELEMETRY_FLUSH_TIMEOUT_MS);
+          // None of the connections kept idle outlives the sandbox's end: a
+          // server restored from the save would read their ends first.
+          disconnectTelemetry();
+          handlers.ending?.();
+        }
         savedAtMs = Date.now();
         const save = ++saves;
         void resumesWithin(SAVE_EXPIRY_MS).then((resumed) => {

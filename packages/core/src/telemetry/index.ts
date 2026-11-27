@@ -36,6 +36,12 @@ export interface Sdk {
    * and reads the bearer token again, for the restored sandbox's host.
    */
   reconnect: () => void;
+  /**
+   * Ends every connection the exporters keep open, as a save that ends the
+   * sandbox does once they have exported what they held: the next export
+   * goes over a connection made anew.
+   */
+  disconnect: () => void;
   /** Exports what each signal holds now, rather than as it is next due. */
   flush: () => Promise<void>;
 }
@@ -158,6 +164,16 @@ export async function flushTelemetry(timeoutMs: number): Promise<void> {
  */
 export function reconnectTelemetry(): void {
   running?.sdk.reconnect();
+}
+
+/**
+ * Ends the connections telemetry keeps open, as a save that ends the sandbox
+ * does once telemetry has exported what it held: a sandbox restored from the
+ * save could not use them, and would only find them dead, as the first thing
+ * its server does, before the restore it is asked.
+ */
+export function disconnectTelemetry(): void {
+  running?.sdk.disconnect();
 }
 
 /** Whether telemetry is exporting. */
