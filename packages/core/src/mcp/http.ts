@@ -24,7 +24,11 @@ import { createOpaqueId } from "../ids.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
 import { report, SeverityNumber } from "../telemetry/record.ts";
-import { restoreSandboxServer, serveSandboxHook } from "./sandbox-hook.ts";
+import {
+  restoreSandboxServer,
+  saveSandboxServer,
+  serveSandboxHook,
+} from "./sandbox-hook.ts";
 import { HeldStop } from "./held-stop.ts";
 import { readTokenFile } from "../token-file.ts";
 import {
@@ -667,10 +671,7 @@ export async function serveMcpHttp(
     });
     stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
       stop: heldStop,
-      save: async () => {
-        await manager.syncToStorage();
-        return manager.sandboxSaving();
-      },
+      save: (options) => saveSandboxServer(manager, options),
       collect: () => manager.collectGarbage(),
       restore: async (savedAtMs, stopReason) => {
         restoreSandboxServer(manager, savedAtMs, stopReason);

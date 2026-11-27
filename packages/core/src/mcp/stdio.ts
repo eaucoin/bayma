@@ -10,7 +10,11 @@ import type {
 import { createMcpApplication } from "./application.ts";
 import { createModelSurface } from "./model-surface.ts";
 import { SubscribedResourceUpdatePublisher } from "./events.ts";
-import { restoreSandboxServer, serveSandboxHook } from "./sandbox-hook.ts";
+import {
+  restoreSandboxServer,
+  saveSandboxServer,
+  serveSandboxHook,
+} from "./sandbox-hook.ts";
 import { shutdownAndExit } from "./shutdown.ts";
 import { validateSnapshotTokenLimit } from "./exec-snapshot.ts";
 import { traceMcpTransport } from "./telemetry.ts";
@@ -78,10 +82,7 @@ export async function serveMcpStdio(
   let stopSandboxHook: () => Promise<void>;
   try {
     stopSandboxHook = await serveSandboxHook(engine.catalogStore.rootDir, {
-      save: async () => {
-        await manager.syncToStorage();
-        return manager.sandboxSaving();
-      },
+      save: (options) => saveSandboxServer(manager, options),
       collect: () => manager.collectGarbage(),
       restore: async (savedAtMs, stopReason) =>
         restoreSandboxServer(manager, savedAtMs, stopReason),

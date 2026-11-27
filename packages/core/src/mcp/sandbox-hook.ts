@@ -35,9 +35,10 @@ export interface SandboxHookHandlers {
   /**
    * Before the sandbox is saved, as the server is saved: put what sessions
    * committed on storage, so that falling back to their checkpoints loses
-   * nothing, and say what the save catches.
+   * nothing, unless the save's host syncs the sandbox's filesystems itself
+   * once it is answered (`hostSyncs`), and say what the save catches.
    */
-  save: () => Promise<SandboxSave>;
+  save: (options: { hostSyncs: boolean }) => Promise<SandboxSave>;
   /**
    * Once a save that ends the sandbox has what it catches, before the server
    * collects its own garbage: have the sessions' runtimes collect theirs,
@@ -55,6 +56,21 @@ export interface SandboxHookHandlers {
    * with the next, where none is held yet.
    */
   stop?: Pick<HeldStop, "restored" | "resumed" | "goOn">;
+}
+
+/**
+ * What a server does as its sandbox is saved: it syncs what sessions committed
+ * to storage, unless the save's host syncs the sandbox's filesystems itself
+ * once the server has answered it (`hostSyncs`), which a sync of the server's
+ * own, a process it starts, would only repeat, its pages copied for the start
+ * written again by the save; and says what the save catches.
+ */
+export async function saveSandboxServer(
+  manager: Pick<SessionManager, "syncToStorage" | "sandboxSaving">,
+  { hostSyncs }: { hostSyncs: boolean },
+): Promise<SandboxSave> {
+  if (!hostSyncs) await manager.syncToStorage();
+  return manager.sandboxSaving();
 }
 
 /**
@@ -190,11 +206,16 @@ export async function serveSandboxHook(
         try {
           caught = await inSpan(
             "bayma.sandbox.save",
-            { "bayma.sandbox.save.leaves_running": request.leavesRunning },
+            {
+              "bayma.sandbox.save.leaves_running": request.leavesRunning,
+              "bayma.sandbox.save.host_syncs": request.hostSyncs,
+            },
             async () => {
               // No file is held open by work that would move on with it.
               await filesClosed();
-              const saving = await handlers.save();
+              const saving = await handlers.save({
+                hostSyncs: request.hostSyncs,
+              });
               if (!request.leavesRunning) await collectGarbage();
               return saving;
             },
