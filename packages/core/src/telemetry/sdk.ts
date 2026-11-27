@@ -51,26 +51,44 @@ import type { Sdk } from "./index.ts";
 // made as the SDK would make them, so that a restored sandbox can end the
 // connections they keep (exportAgents).
 
+/** The bearer an export carries: the token a file holds, as last read. */
+interface Bearer {
+  /** The headers of an export, which fails while no token could be read. */
+  headers: () => Promise<Record<string, string>>;
+  /** Reads the token again, as the SDK reconnects. */
+  reread: () => void;
+}
+
 /**
- * The headers of an export carrying the token `file` holds as its bearer,
- * read for each export. An export whose token cannot be read fails, which is
- * said on stderr, once until a token is read again.
+ * The bearer of the token `file` holds, read now, as the server starts, and
+ * again only as the SDK reconnects, as its sandbox is restored, perhaps for
+ * another host with a token of its own: never as an export goes, as a file
+ * open as the sandbox is saved must be as it was when the sandbox is restored,
+ * which a host rewriting the token for the restore would refuse it for. An
+ * export while no token could be read fails, which is said on stderr, once
+ * until a token is read again.
  */
-function bearerHeaders(file: string): () => Promise<Record<string, string>> {
-  let failing = false;
-  return async () => {
-    try {
-      const token = readTokenFile(file, "the telemetry bearer token");
-      failing = false;
+function bearerOf(file: string): Bearer {
+  const read = () => readTokenFile(file, "the telemetry bearer token");
+  let token: string | undefined = read();
+  let failure: unknown;
+  return {
+    headers: async () => {
+      if (token === undefined) throw failure;
       return { authorization: `Bearer ${token}` };
-    } catch (error) {
-      if (!failing)
-        process.stderr.write(
-          `bayma: telemetry: not exported: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      failing = true;
-      throw error;
-    }
+    },
+    reread: () => {
+      try {
+        token = read();
+      } catch (error) {
+        if (token !== undefined)
+          process.stderr.write(
+            `bayma: telemetry: not exported: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        token = undefined;
+        failure = error;
+      }
+    },
   };
 }
 
@@ -153,7 +171,7 @@ function exportAgents(): Agents {
  * Starts the SDK for `exports`, with `attributes` as the resource beneath
  * what the environment and the host and process detectors say, and with the
  * token `bearerTokenFile` holds, when given, as every export's bearer, read
- * for each export.
+ * now and as the SDK reconnects (bearerOf).
  */
 export function startSdk(
   exports: readonly SignalExport[],
@@ -164,11 +182,9 @@ export function startSdk(
   // makes each exporter's itself, as the SDK would.
   const agents = exportAgents();
   const bearer =
-    bearerTokenFile === undefined
-      ? {}
-      : { headers: bearerHeaders(bearerTokenFile) };
+    bearerTokenFile === undefined ? undefined : bearerOf(bearerTokenFile);
   const exporterOptions = (signal: SignalExport["signal"]) => ({
-    ...bearer,
+    ...(bearer === undefined ? {} : { headers: bearer.headers }),
     httpAgentOptions: agents.of(signal),
   });
   const resource = defaultResource()
@@ -254,7 +270,10 @@ export function startSdk(
     shutdown: async () => {
       await Promise.all(stops.map((stop) => stop()));
     },
-    reconnect: agents.end,
+    reconnect: () => {
+      agents.end();
+      bearer?.reread();
+    },
     flush: async () => {
       await Promise.all(flushes.map((flush) => flush()));
     },

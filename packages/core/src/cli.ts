@@ -145,7 +145,8 @@ Commands:
       token as Authorization: Bearer, read again once its sandbox is
       restored, for its new host's token; with --telemetry-token-file,
       each export of its telemetry carries that file's token as its
-      bearer, read for each export. GET /status answers, as JSON, how
+      bearer, read as it starts and again once its sandbox is restored.
+      GET /status answers, as JSON, how
       many execs are running and queued in every session (execsRunning,
       execsQueued), those running by their sessions' and their own IDs
       (running: sessionId, execId), when none is, since when
