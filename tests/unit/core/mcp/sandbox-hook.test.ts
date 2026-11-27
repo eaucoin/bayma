@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   holdingFiles,
   restoreSandboxServer,
+  saveSandboxServer,
   SandboxSaveOutlived,
   markSandboxResumed,
   parseSandboxHookMode,
@@ -235,12 +236,65 @@ test("a save that ends the sandbox has the runtimes collect their garbage once i
         'collected {"type":"major","execution":"sync","flavor":"last-resort"}',
       ]);
       expect(await ask(dir, "save at once\n")).toBe(
-        "a save is told nothing past its mode but leave-running\n",
+        "a save is told nothing past its mode but leave-running, syncs, or both, in that order\n",
       );
     } finally {
       await stop();
     }
   });
+});
+
+test("a save whose host syncs the sandbox's filesystems once it is answered, as it says, leaves the server's own sync", async () => {
+  await withHookDir(async (dir) => {
+    const told: boolean[] = [];
+    const { handlers } = recording();
+    handlers.save = async ({ hostSyncs }) => {
+      told.push(hostSyncs);
+      return CAUGHT;
+    };
+    const stop = await serveSandboxHook(dir, handlers);
+    try {
+      for (const request of [
+        "save leave-running syncs\n",
+        "save syncs\n",
+        "save leave-running\n",
+        "save\n",
+      ]) {
+        expect(JSON.parse((await ask(dir, request)).slice(3))).toEqual(CAUGHT);
+        await runSandboxHook(dir, "resume");
+      }
+      // The hook, which a host whose save syncs never runs, never says so.
+      await runSandboxHook(dir, "save", { leavesRunning: true });
+      await runSandboxHook(dir, "resume");
+      expect(told).toEqual([true, true, false, false, false]);
+      for (const request of [
+        "save syncs leave-running\n",
+        "save syncs syncs\n",
+        "save leave-running leave-running\n",
+      ])
+        expect(await ask(dir, request)).toBe(
+          "a save is told nothing past its mode but leave-running, syncs, or both, in that order\n",
+        );
+      expect(told).toHaveLength(5);
+    } finally {
+      await stop();
+    }
+  });
+});
+
+test("a server's save syncs what sessions committed to storage unless its host syncs the sandbox's filesystems itself", async () => {
+  for (const hostSyncs of [false, true]) {
+    const calls: string[] = [];
+    const manager = {
+      syncToStorage: async () => void calls.push("synced"),
+      sandboxSaving: () => {
+        calls.push("caught");
+        return CAUGHT;
+      },
+    };
+    expect(await saveSandboxServer(manager, { hostSyncs })).toEqual(CAUGHT);
+    expect(calls).toEqual(hostSyncs ? ["caught"] : ["synced", "caught"]);
+  }
 });
 
 test("a save that ends the sandbox of a server Node runs without its garbage collection exposed collects none, said once", async () => {
