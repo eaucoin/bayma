@@ -421,17 +421,18 @@ test.serial(
         const deadline = Date.now() + 10_000;
         const named = (name: string) =>
           sink.spans.filter((span) => span.name === name);
-        while (named("bayma.sandbox.save").length < 2 && Date.now() < deadline)
+        while (named("bayma.sandbox.save").length < 1 && Date.now() < deadline)
           await Bun.sleep(50);
+        // The save that left the sandbox running is timed as a metric alone.
         const saves = named("bayma.sandbox.save");
         expect(
           saves.map(
             (save) => save.attributes["bayma.sandbox.save.leaves_running"],
           ),
-        ).toEqual([true, false]);
+        ).toEqual([false]);
         const [collected, ...again] = named("bayma.sandbox.collect");
         expect(again).toEqual([]);
-        expect(collected!.parentSpanId).toBe(saves[1]!.spanId);
+        expect(collected!.parentSpanId).toBe(saves[0]!.spanId);
         expect(collected!.attributes["bayma.sandbox.collect.runtimes"]).toBe(1);
         const before = collected!.attributes["bayma.server.heap.before"];
         expect(before).toBeNumber();

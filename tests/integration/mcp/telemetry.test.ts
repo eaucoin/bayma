@@ -303,6 +303,66 @@ async function cuttableWayToSink(): Promise<{
   };
 }
 
+test(
+  "a save that leaves the sandbox running, and its resume, are timed as metrics by outcome, not spans; a save that ends it, and its restore, are spans",
+  async () => {
+    const server = await launchMcpHttpServer({
+      env: exporting({
+        OTEL_BSP_SCHEDULE_DELAY: "100",
+        OTEL_METRIC_EXPORT_INTERVAL: "100",
+      }),
+    });
+    const ok = { status: 0, stderr: "" };
+    const spans = (name: string) =>
+      sink.spans.filter(
+        (candidate) =>
+          candidate.name === name &&
+          candidate.resource["process.pid"] === server.child.pid,
+      );
+    try {
+      await runSandboxHook(server.stateDir, "save", { leavesRunning: true });
+      expect(await runSandboxHookCommand(server.stateDir, "resume")).toEqual(
+        ok,
+      );
+      for (const name of [
+        "bayma.sandbox.save.duration",
+        "bayma.sandbox.resume.duration",
+      ])
+        expect((await readingOf(name)).points).toContainEqual(
+          expect.objectContaining({ "bayma.sandbox.outcome": "ok" }),
+        );
+      expect(await runSandboxHookCommand(server.stateDir, "save")).toEqual(ok);
+      expect(await runSandboxHookCommand(server.stateDir, "restore")).toEqual(
+        ok,
+      );
+      await waitForSpan(spans, "bayma.sandbox.restore");
+      expect(
+        spans("bayma.sandbox.save").map(
+          (save) => save.attributes["bayma.sandbox.save.leaves_running"],
+        ),
+      ).toEqual([false]);
+      expect(spans("bayma.sandbox.resume")).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+/** The first span `spans` finds named `name`, once it does. */
+async function waitForSpan(
+  spans: (name: string) => ReceivedSpan[],
+  name: string,
+): Promise<ReceivedSpan> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const [found] = spans(name);
+    if (found) return found;
+    await sleep(50);
+  }
+  throw new Error(`the sink received no ${name} from the server`);
+}
+
 /**
  * A way to the sink over TCP that counts the connections its clients keep
  * open to it.
@@ -347,6 +407,9 @@ test(
       env: exporting({
         OTEL_EXPORTER_OTLP_ENDPOINT: way.url,
         OTEL_BSP_SCHEDULE_DELAY: "100",
+        // Metrics, which a save that leaves the sandbox running is timed as,
+        // exported over connections the server keeps.
+        OTEL_METRIC_EXPORT_INTERVAL: "100",
       }),
     });
     /** Whether `until` holds within 2 s. */

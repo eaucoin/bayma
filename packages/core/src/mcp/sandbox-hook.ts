@@ -20,7 +20,7 @@ import {
   flushTelemetry,
   reconnectTelemetry,
 } from "../telemetry/index.ts";
-import { inSpan, report } from "../telemetry/record.ts";
+import { histogram, inSpan, report } from "../telemetry/record.ts";
 import {
   MAX_STOP_REASON_BYTES,
   parseSandboxHookRequest,
@@ -118,6 +118,49 @@ const SAVE_EXPIRY_MS = 10 * 60_000;
 // among it.
 const TELEMETRY_FLUSH_TIMEOUT_MS = 1_000;
 
+/** Seconds, from a save's few milliseconds to its bound. */
+const HOOK_SECONDS = [
+  0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30,
+];
+
+// A save that leaves the sandbox running, and the resume after it, are
+// timed as metrics rather than as spans: a span is exported within seconds
+// of its end, and what the export writes is in the next save, ~1.5 MiB of an
+// idle session's; metrics go out on their own interval, saves or not.
+const liveSaveDuration = histogram("bayma.sandbox.save.duration", {
+  unit: "s",
+  description:
+    "How long the server took to ready a save that left its sandbox running, by outcome.",
+  advice: { explicitBucketBoundaries: HOOK_SECONDS },
+});
+const resumeDuration = histogram("bayma.sandbox.resume.duration", {
+  unit: "s",
+  description:
+    "How long the server took to run on after a save that left its sandbox running, by outcome.",
+  advice: { explicitBucketBoundaries: HOOK_SECONDS },
+});
+
+/**
+ * Runs `work`, recording how long it took in `duration`, with its outcome,
+ * ok or failed, as `bayma.sandbox.outcome`.
+ */
+async function timed<T>(
+  duration: ReturnType<typeof histogram>,
+  work: () => Promise<T>,
+): Promise<T> {
+  const start = performance.now();
+  let outcome = "failed";
+  try {
+    const done = await work();
+    outcome = "ok";
+    return done;
+  } finally {
+    duration.record((performance.now() - start) / 1000, {
+      "bayma.sandbox.outcome": outcome,
+    });
+  }
+}
+
 /**
  * Hears the hook for the server whose state directory, which it holds the
  * lease of, is `stateDir`, the span `bayma.sandbox.<mode>` recording each
@@ -138,6 +181,9 @@ export async function serveSandboxHook(
   let savedAtMs: number | undefined;
   // How many saves the server made: a save given up on is the last one.
   let saves = 0;
+  // Whether the last save left the sandbox running, which its resume is
+  // timed as.
+  let leftRunning = false;
   // Whether the server was restored from a save its state directory had moved
   // on from.
   let outlived = false;
@@ -216,22 +262,26 @@ export async function serveSandboxHook(
         markSandboxSaved();
         let caught: SandboxSave;
         try {
-          caught = await inSpan(
-            "bayma.sandbox.save",
-            {
-              "bayma.sandbox.save.leaves_running": request.leavesRunning,
-              "bayma.sandbox.save.host_syncs": request.hostSyncs,
-            },
-            async () => {
-              // No file is held open by work that would move on with it.
-              await filesClosed();
-              const saving = await handlers.save({
-                hostSyncs: request.hostSyncs,
-              });
-              if (!request.leavesRunning) await collectGarbage();
-              return saving;
-            },
-          );
+          // No file is held open by work that would move on with it.
+          const readying = async () => {
+            await filesClosed();
+            const saving = await handlers.save({
+              hostSyncs: request.hostSyncs,
+            });
+            if (!request.leavesRunning) await collectGarbage();
+            return saving;
+          };
+          leftRunning = request.leavesRunning;
+          caught = request.leavesRunning
+            ? await timed(liveSaveDuration, readying)
+            : await inSpan(
+                "bayma.sandbox.save",
+                {
+                  "bayma.sandbox.save.leaves_running": false,
+                  "bayma.sandbox.save.host_syncs": request.hostSyncs,
+                },
+                readying,
+              );
         } catch (error) {
           runOn();
           throw error;
@@ -300,7 +350,8 @@ export async function serveSandboxHook(
         return undefined;
       }
       case "resume":
-        await inSpan("bayma.sandbox.resume", {}, async () => runOn());
+        if (leftRunning) await timed(resumeDuration, async () => runOn());
+        else await inSpan("bayma.sandbox.resume", {}, async () => runOn());
         return undefined;
       case "stop":
         // Saved, the server waits to run on: going on with its stop now would

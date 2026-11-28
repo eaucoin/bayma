@@ -286,7 +286,13 @@ ${MEMORY_KILLS_APART_MS / 1_000} s, which quarantines its session.
 
 OpenTelemetry traces, metrics, and logs of bayma's work are exported over
 OTLP to wherever OTEL_EXPORTER_OTLP_ENDPOINT and OpenTelemetry's other
-standard variables say; with none set, nothing is exported.`);
+standard variables say; with none set, nothing is exported. A save of the
+sandbox that leaves it running, and the resume after it, are timed as the
+histograms bayma.sandbox.save.duration and bayma.sandbox.resume.duration,
+by bayma.sandbox.outcome (ok or failed), exported on the metrics' interval,
+rather than as spans, whose export soon after each save the next save would
+hold: a save that ends the sandbox, the restore from it, and execs are
+spans.`);
 }
 
 /**
