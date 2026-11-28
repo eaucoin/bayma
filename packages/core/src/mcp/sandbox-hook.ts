@@ -16,6 +16,11 @@ import type { HeldStop } from "./held-stop.ts";
 import type { SandboxSave } from "../session/model.ts";
 import type { SessionManager } from "../session/session-manager.ts";
 import {
+  endRestoreProfile,
+  markRestore,
+  profileFromSave,
+} from "./restore-profile.ts";
+import {
   disconnectTelemetry,
   flushTelemetry,
   reconnectTelemetry,
@@ -242,6 +247,7 @@ export async function serveSandboxHook(
           // server restored from the save would read their ends first.
           disconnectTelemetry();
           handlers.ending?.();
+          profileFromSave();
         }
         savedAtMs = Date.now();
         const save = ++saves;
@@ -260,10 +266,12 @@ export async function serveSandboxHook(
         return JSON.stringify(caught);
       }
       case "restore": {
+        markRestore("handler");
         // Whatever comes of the restore, the connections telemetry kept are
         // gone with the sandbox's old network, which would hold what it
         // exports next, this restore's span among it, until they timed out.
         reconnectTelemetry();
+        markRestore("reconnected");
         const restoredFrom = savedAtMs;
         if (restoredFrom === undefined)
           throw new Error("the server was not saved, to be restored");
@@ -334,11 +342,15 @@ export async function serveSandboxHook(
       socket.removeAllListeners("data");
       // What the mode takes may take longer than a request may.
       sendsNothing.clear();
+      markRestore("request");
       queue(() =>
         handle(parseSandboxHookRequest(request.subarray(0, end).toString())),
       ).then(
-        (answer) =>
-          socket.end(answer === undefined ? "ok\n" : `ok ${answer}\n`),
+        (answer) => {
+          socket.end(answer === undefined ? "ok\n" : `ok ${answer}\n`);
+          markRestore("answered");
+          endRestoreProfile();
+        },
         (error: unknown) => socket.end(`${failureMessage(error)}\n`),
       );
     });
